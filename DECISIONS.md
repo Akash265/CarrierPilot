@@ -614,4 +614,10 @@ All 3/3 companies now return `status=ok` with 100% citation coverage (exceeds th
 **Known gap:** deleting a job cascades rows but leaves MinIO objects — the Phase 9 retention job must sweep them.
 **What it affects:** `packages/db/src/schema/generatedDocuments.ts`, migrations `0019_*`, `0020_generated_documents_rls.sql`.
 
+### D82. The exported resume is the whole profile with guard-applied rewordings first; records are never reworded; no street address
+**Decision:** `buildResumeModel` renders every profile bullet. Within each role (and for projects and achievements) the optimizer's guard-applied `selectedBullets` come first in the optimizer's order using `optimizedText`, followed by the untouched items in profile order with their original text. Education and certifications are always rendered verbatim; skills are reordered by the selection but always use the profile's names. `rejectedClaims` are never read. The header has name, email, phone and LinkedIn only — the street address is omitted. An applied bullet citing an unknown fact throws (a bug: the export pipeline has already verified the profile hash).
+**Why:** Nothing the user has stated disappears silently, and nothing the guard rejected can appear (spec decision 1, D63). Records (degrees, certifications, skill names) are facts, not prose, so rewording them adds risk and no value. Minimising personal data on a document sent to third parties (CLAUDE.md §9).
+**Alternatives considered:** Only the optimized selection (rejected by the user in brainstorming); applying `optimizedText` to every source type (rejected: rewording records).
+**What it affects:** `packages/document-export/src/model/{resumeProfile,buildResumeModel}.ts`.
+
 *Entries are appended chronologically. Do not edit or delete past entries when a decision is later reversed — add a new entry that supersedes it and cross-reference the original.*
