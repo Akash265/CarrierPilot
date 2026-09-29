@@ -66,16 +66,19 @@ jobs:
         # entrypoint requires one (`server /data ...`) to actually start the
         # server -- without it the container just prints usage and never
         # becomes healthy. Run it as a plain background container instead,
-        # matching infra/docker-compose.yml's config (same quay.io image and
-        # pinned tag -- minio/minio is gone from Docker Hub, so `docker run`
-        # there fails with exit 125), and poll its health
+        # using the same image as infra/docker-compose.yml, and poll its health
         # endpoint the same way postgres/redis's `--health-*` options do.
+        # Image: minio/minio is gone from Docker Hub and quay.io/minio/minio now
+        # answers anonymous pulls with 401, so both fail with exit 125. Chainguard's
+        # MinIO build is anonymously pullable; its free tier only publishes `latest`,
+        # so it is pinned by digest (DECISIONS.md D88). Its entrypoint is
+        # /usr/bin/minio, so the `server /data ...` arguments are unchanged.
         run: |
           docker run -d --name minio \
             -p 9000:9000 -p 9001:9001 \
             -e MINIO_ROOT_USER=minioadmin \
             -e MINIO_ROOT_PASSWORD=minioadmin \
-            quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z server /data --console-address ":9001"
+            cgr.dev/chainguard/minio@sha256:71674988a1c7ddd5724928633199152b11e4ddefd6c6ce2d60772ff4a8f22ca9 server /data --console-address ":9001"
           for i in $(seq 1 20); do
             if curl -sf http://localhost:9000/minio/health/live >/dev/null; then
               echo "MinIO is healthy"

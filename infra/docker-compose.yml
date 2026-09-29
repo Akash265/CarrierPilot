@@ -29,10 +29,13 @@ services:
       retries: 10
 
   minio:
-    # The minio/minio repository was removed from Docker Hub, so `docker pull`
-    # fails there (exit 125 in CI). Quay still serves it; pinned to the release
-    # this project was built and tested against rather than a moving `latest`.
-    image: quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z
+    # minio/minio was removed from Docker Hub and quay.io/minio/minio now rejects
+    # anonymous pulls (401). Chainguard's MinIO build is anonymously pullable; its
+    # free tier only publishes `latest`, so it is pinned by digest (DECISIONS.md D88).
+    image: cgr.dev/chainguard/minio@sha256:71674988a1c7ddd5724928633199152b11e4ddefd6c6ce2d60772ff4a8f22ca9
+    # The image runs as uid 65532 by default; existing minio_data volumes were
+    # written as root by the previous image, so run as root to keep them usable.
+    user: "0:0"
     restart: unless-stopped
     command: server /data --console-address ":9001"
     environment:
@@ -44,7 +47,8 @@ services:
     volumes:
       - minio_data:/data
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      # The image has no curl; its bundled `mc` checks the same liveness endpoint.
+      test: ["CMD", "mc", "ready", "local"]
       interval: 5s
       timeout: 5s
       retries: 10
