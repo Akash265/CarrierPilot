@@ -38,11 +38,18 @@ export async function POST(request: Request) {
       kind === "resume"
         ? await exportResume(db, storage, { userId: env.DEFAULT_USER_ID, jobId, optimizationId: sourceId, format })
         : await exportPitch(db, storage, { userId: env.DEFAULT_USER_ID, jobId, pitchId: sourceId, format });
-    const [source] = await withUserContext(db, env.DEFAULT_USER_ID, (tx) =>
-      kind === "resume"
-        ? tx.select({ version: resumeOptimizations.version }).from(resumeOptimizations).where(eq(resumeOptimizations.id, sourceId)).limit(1)
-        : tx.select({ version: applicationPitches.version }).from(applicationPitches).where(eq(applicationPitches.id, sourceId)).limit(1)
-    );
+    // Content de-dup can return a row created for a different version of the same job (identical rendered
+    // model -> identical content hash), so the version must come from the row's OWN source id, not the
+    // sourceId the caller requested -- otherwise the response and the documents list (which already joins
+    // on the row's own ids, see listDocuments.ts) would disagree.
+    const versionSourceId = kind === "resume" ? row.resumeOptimizationId : row.applicationPitchId;
+    const [source] = versionSourceId
+      ? await withUserContext(db, env.DEFAULT_USER_ID, (tx) =>
+          kind === "resume"
+            ? tx.select({ version: resumeOptimizations.version }).from(resumeOptimizations).where(eq(resumeOptimizations.id, versionSourceId)).limit(1)
+            : tx.select({ version: applicationPitches.version }).from(applicationPitches).where(eq(applicationPitches.id, versionSourceId)).limit(1)
+        )
+      : [];
     return NextResponse.json({ document: toDocumentView(row, source?.version ?? null) }, { status: 201 });
   } catch (error) {
     if (error instanceof DocumentExportError) return exportErrorResponse(error);
