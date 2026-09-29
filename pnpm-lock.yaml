@@ -29,6 +29,9 @@ importers:
       '@ai-career/db':
         specifier: workspace:*
         version: link:../../packages/db
+      '@ai-career/document-export':
+        specifier: workspace:*
+        version: link:../../packages/document-export
       '@ai-career/ingestion':
         specifier: workspace:*
         version: link:../../packages/ingestion
@@ -53,6 +56,9 @@ importers:
       next:
         specifier: 16.3.4
         version: 16.3.4(@babel/core@7.29.7)(@types/node@20.19.43)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
+      pdfkit:
+        specifier: ^0.20.2
+        version: 0.20.2
       react:
         specifier: 19.2.8
         version: 19.2.8

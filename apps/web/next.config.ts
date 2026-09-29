@@ -13,6 +13,9 @@ const nextConfig: NextConfig = {
   // into transformation, and protects against breakage if Webpack is ever
   // selected instead of Turbopack.
   transpilePackages: ["@ai-career/config", "@ai-career/db"],
+  // pdfkit reads its built-in font metric files (.afm) from its own package directory at runtime, which breaks
+  // when Next bundles it; keep it external so Node loads it from node_modules (DECISIONS.md D85).
+  serverExternalPackages: ["pdfkit"],
 };
 
 export default nextConfig;
