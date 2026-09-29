@@ -4,10 +4,11 @@ import { NextResponse } from "next/server";
 import { eq } from "drizzle-orm";
 import { loadEnv } from "@ai-career/config";
 import { closeDbClient, createDbClient, schema, withUserContext } from "@ai-career/db";
-import { createStorageClient, getGeneratedDocument } from "@ai-career/storage";
+import { createStorageClient, getGeneratedDocument, statGeneratedDocument } from "@ai-career/storage";
 import { CONTENT_TYPES, contentDisposition } from "../../../../../lib/documents/serializeDocument";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const STORAGE_UNAVAILABLE_MESSAGE = "Document storage is unavailable. Try again.";
 const { generatedDocuments } = schema;
 
 /** The row is looked up under RLS first, so a known id of another user's document is a plain 404. */
@@ -27,7 +28,7 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
     try {
       stream = await getGeneratedDocument(createStorageClient(env), doc.objectKey);
     } catch {
-      return NextResponse.json({ error: "Document storage is unavailable. Try again." }, { status: 502 });
+      return NextResponse.json({ error: STORAGE_UNAVAILABLE_MESSAGE }, { status: 502 });
     }
     return new Response(Readable.toWeb(stream) as unknown as ReadableStream<Uint8Array>, {
       status: 200,
@@ -46,9 +47,10 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
 
 /**
  * Same RLS-scoped lookup as GET, no body: lets a download link be preflighted (DownloadButtons,
- * DocumentsList) before navigating the whole app to it, so an unknown or another user's document shows as
- * an inline error instead of a raw JSON 404 page. Does not touch storage, so it does not surface a
- * storage_unavailable 502 -- only whether the row itself is visible to this user.
+ * DocumentsList) before navigating the whole app to it, so an unknown/another user's document (404) or an
+ * unreachable storage backend (502, same fixed message as GET) shows as an inline error instead of a raw
+ * JSON error page. Confirms the object with a cheap `statGeneratedDocument` (no download) rather than
+ * `getGeneratedDocument`'s full stream, since a preflight only needs to know reachability.
  */
 export async function HEAD(_request: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -58,9 +60,19 @@ export async function HEAD(_request: Request, { params }: { params: Promise<{ id
   const db = createDbClient(env);
   try {
     const [doc] = await withUserContext(db, env.DEFAULT_USER_ID, (tx) =>
-      tx.select({ id: generatedDocuments.id }).from(generatedDocuments).where(eq(generatedDocuments.id, id)).limit(1)
+      tx.select({ id: generatedDocuments.id, objectKey: generatedDocuments.objectKey }).from(generatedDocuments).where(eq(generatedDocuments.id, id)).limit(1)
     );
-    return new Response(null, { status: doc ? 200 : 404 });
+    if (!doc) return new Response(null, { status: 404 });
+
+    try {
+      await statGeneratedDocument(createStorageClient(env), doc.objectKey);
+    } catch {
+      // HEAD responses carry no body over the wire, but returning the same fixed message GET uses keeps
+      // this handler's failure branch symmetric with GET's, and callers that inspect the Response object
+      // directly (as the route tests do) can still assert on it.
+      return NextResponse.json({ error: STORAGE_UNAVAILABLE_MESSAGE }, { status: 502 });
+    }
+    return new Response(null, { status: 200 });
   } finally {
     await closeDbClient(db);
   }
