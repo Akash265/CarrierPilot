@@ -4,22 +4,22 @@ import { useEffect, useState } from "react";
 import { DownloadButtons } from "./DownloadButtons";
 import { EvidenceList, type EvidenceView } from "./EvidenceList";
 
-type BulletKind = "company" | "role" | "candidate";
+type ParagraphRole = "opening" | "company" | "evidence" | "closing";
 type ResearchStatus = "ok" | "no_results" | "failed";
 
-interface PitchBulletView {
-  kind: BulletKind;
+interface ParagraphView {
+  role: ParagraphRole;
   text: string;
   supported: boolean | null;
   unsupportedReason: string | null;
   evidence: EvidenceView[];
 }
-interface PitchView {
+interface CoverLetterView {
   id: string;
   version: number;
   origin: "generated" | "user_edited";
-  parentPitchId: string | null;
-  bullets: PitchBulletView[];
+  parentCoverLetterId: string | null;
+  paragraphs: ParagraphView[];
   requiresReview: boolean;
   researchStatus: ResearchStatus;
   researchedAt: string | null;
@@ -37,40 +37,26 @@ interface ResearchView {
 type ListState =
   | { kind: "loading" }
   | { kind: "error" }
-  | { kind: "ready"; versions: PitchView[]; research: ResearchView | null; selectedId: string | null };
+  | { kind: "ready"; versions: CoverLetterView[]; research: ResearchView | null; selectedId: string | null };
 
-const BULLET_LABELS: Record<BulletKind, string> = {
+const ROLE_LABELS: Record<ParagraphRole, string> = {
+  opening: "Opening",
   company: "Why this company",
-  role: "Why this role",
-  candidate: "Why me",
+  evidence: "Evidence of fit",
+  closing: "Closing",
 };
 
-export function researchAgeLabel(researchedAt: string, now: number = Date.now()): string {
-  const days = Math.floor((now - Date.parse(researchedAt)) / 86_400_000);
-  if (days <= 0) return "today";
-  if (days === 1) return "1 day ago";
-  return `${days} days ago`;
-}
-
-export function PitchPanel({ jobId }: { jobId: string }) {
+export function CoverLetterPanel({ jobId }: { jobId: string }) {
   const [state, setState] = useState<ListState>({ kind: "loading" });
-  const [busy, setBusy] = useState<null | "generate" | "refresh" | "save">(null);
+  const [busy, setBusy] = useState<null | "generate" | "save">(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [draft, setDraft] = useState<string[] | null>(null);
   const [copied, setCopied] = useState(false);
-  const base = `/api/application-pitches/${encodeURIComponent(jobId)}`;
+  const base = `/api/cover-letters/${encodeURIComponent(jobId)}`;
 
-  // A promise chain (state set inside callbacks), matching ResumeOptimizationPanel: the React lint rule
-  // react-hooks/set-state-in-effect rejects setState calls in an async function an effect invokes directly.
-  //
-  // By default a reload keeps whatever version is currently selected (if it still exists in the
-  // reloaded list) -- a plain Refresh must never silently jump the selection to a different version
-  // out from under an in-progress read. Only generate() and a successful save() pass
-  // { selectNewest: true } to explicitly jump to the newest version. The initial mount has no prior
-  // selection (state.kind is "loading", not "ready"), so it naturally falls through to newest too.
-  // `isStale` lets a caller opt out of applying a response that is no longer relevant (the load
-  // effect below uses it to guard against a jobId change racing an in-flight fetch); other callers
-  // (post()'s reload, the initial synchronous call) omit it and always apply their response.
+  // Same promise-chain pattern as PitchPanel: react-hooks/set-state-in-effect forbids setState calls
+  // in an async function an effect invokes directly. A plain reload keeps the current selection (if it
+  // still exists); only generate() and a successful save() pass { selectNewest: true }.
   const load = (opts: { selectNewest?: boolean; isStale?: () => boolean } = {}) =>
     fetch(base)
       .then((res) => {
@@ -79,7 +65,7 @@ export function PitchPanel({ jobId }: { jobId: string }) {
       })
       .then((body) => {
         if (opts.isStale?.()) return;
-        const versions = body.versions as PitchView[];
+        const versions = body.versions as CoverLetterView[];
         const research = (body.research as ResearchView | null) ?? null;
         setState((prev) => {
           let selectedId = versions[0]?.id ?? null;
@@ -104,7 +90,7 @@ export function PitchPanel({ jobId }: { jobId: string }) {
   }, [jobId]);
 
   const post = async (
-    kind: "generate" | "refresh" | "save",
+    kind: "generate" | "save",
     url: string,
     init: RequestInit,
     fallback: string,
@@ -130,11 +116,11 @@ export function PitchPanel({ jobId }: { jobId: string }) {
     }
   };
 
-  if (state.kind === "loading") return <p>Loading pitch...</p>;
+  if (state.kind === "loading") return <p>Loading cover letter...</p>;
   if (state.kind === "error") {
     return (
       <p role="alert" className="text-red-600">
-        Could not load the pitch.{" "}
+        Could not load the cover letter.{" "}
         <button type="button" onClick={() => load()} className="underline">
           Retry
         </button>
@@ -143,16 +129,15 @@ export function PitchPanel({ jobId }: { jobId: string }) {
   }
 
   const selected = state.versions.find((v) => v.id === state.selectedId) ?? null;
-  const unsupported = selected?.bullets.filter((b) => b.supported === false) ?? [];
+  const unsupported = selected?.paragraphs.filter((p) => p.supported === false) ?? [];
 
-  const generate = () => post("generate", `${base}/run`, {}, "Could not generate a pitch.", { selectNewest: true });
-  const refresh = () => post("refresh", `${base}/research/refresh`, {}, "Could not refresh company research.");
+  const generate = () => post("generate", `${base}/run`, {}, "Could not generate a cover letter.", { selectNewest: true });
   const save = async () => {
     if (!selected || !draft) return;
     const ok = await post(
       "save",
       `${base}/edit`,
-      { headers: { "Content-Type": "application/json" }, body: JSON.stringify({ baseVersionId: selected.id, bullets: draft }) },
+      { headers: { "Content-Type": "application/json" }, body: JSON.stringify({ baseVersionId: selected.id, paragraphs: draft }) },
       "Could not save your edit.",
       { selectNewest: true }
     );
@@ -161,45 +146,34 @@ export function PitchPanel({ jobId }: { jobId: string }) {
   const copy = () => {
     if (!selected) return;
     navigator.clipboard
-      .writeText(selected.bullets.map((b) => `• ${b.text}`).join("\n"))
+      .writeText(selected.paragraphs.map((p) => p.text).join("\n\n"))
       .then(() => setCopied(true))
       .catch(() => setActionError("Could not copy to the clipboard."));
   };
 
   return (
-    <section aria-labelledby="pitch-heading" className="flex flex-col gap-3">
+    <section aria-labelledby="cover-letter-heading" className="flex flex-col gap-3">
       <div className="flex items-center justify-between">
-        <h2 id="pitch-heading" className="font-medium">Hiring manager pitch</h2>
+        <h2 id="cover-letter-heading" className="font-medium">Cover letter</h2>
         <button
           type="button"
           onClick={generate}
           disabled={busy !== null || draft !== null}
           className="rounded bg-black px-3 py-1.5 text-sm text-white disabled:opacity-50"
         >
-          {busy === "generate" ? "Generating..." : selected ? "Regenerate" : "Generate Pitch"}
+          {busy === "generate" ? "Generating..." : selected ? "Regenerate" : "Generate Cover Letter"}
         </button>
       </div>
+      <p className="text-sm text-gray-600">
+        Optional: use it only if the application asks for one. The hiring manager pitch is the primary document.
+      </p>
       {busy === "generate" && (
         <p className="text-sm text-gray-600">Researching a company for the first time can take up to a minute.</p>
       )}
       {actionError && <p role="alert" className="text-sm text-red-600">{actionError}</p>}
 
-      {state.research && (
-        <p className="text-sm text-gray-600">
-          <span>
-            {/* Whether to show the age or the "unavailable" note is driven by the SELECTED pitch's own
-                researchStatus snapshot (the research that pitch was actually generated with) when a pitch
-                is selected, falling back to the current research's status only when there is none. The
-                age value itself always comes from the current research (state.research), never the pitch's
-                snapshot timestamp. */}
-            {(selected ? selected.researchStatus : state.research.status) === "ok"
-              ? `Company researched ${researchAgeLabel(state.research.researchedAt)}`
-              : "Web research unavailable — the company bullet is based on posting data only"}
-          </span>{" "}
-          <button type="button" onClick={refresh} disabled={busy !== null || draft !== null} className="underline disabled:opacity-50">
-            {busy === "refresh" ? "Refreshing..." : "Refresh"}
-          </button>
-        </p>
+      {selected && selected.researchStatus !== "ok" && (
+        <p className="text-sm text-gray-600">Web research unavailable — the company paragraph is based on posting data only</p>
       )}
 
       {state.versions.length > 1 && (
@@ -227,54 +201,54 @@ export function PitchPanel({ jobId }: { jobId: string }) {
           <p className="font-medium text-yellow-800">Review needed</p>
           {unsupported.length > 0 ? (
             <ul>
-              {unsupported.map((b) => (
-                <li key={b.kind}>{BULLET_LABELS[b.kind]}: {b.unsupportedReason}</li>
+              {unsupported.map((p, i) => (
+                <li key={i}>{ROLE_LABELS[p.role]}: {p.unsupportedReason}</li>
               ))}
             </ul>
           ) : (
-            <p>The model flagged this pitch for review.</p>
+            <p>The model flagged this cover letter for review.</p>
           )}
         </div>
       )}
 
       {selected && draft === null && (
         <>
-          <ul className="flex flex-col gap-2">
-            {selected.bullets.map((b) => (
-              <li key={b.kind} className="rounded border p-2 text-sm">
+          <ol className="flex flex-col gap-2">
+            {selected.paragraphs.map((p, i) => (
+              <li key={i} className="rounded border p-2 text-sm">
                 <p className="text-xs font-medium uppercase text-gray-600">
-                  {BULLET_LABELS[b.kind]}
-                  {b.supported === null && <span className="ml-2 rounded bg-gray-100 px-1.5 py-0.5 normal-case">your wording</span>}
-                  {b.supported === false && <span className="ml-2 rounded bg-yellow-100 px-1.5 py-0.5 normal-case">unsupported</span>}
+                  {ROLE_LABELS[p.role]}
+                  {p.supported === null && <span className="ml-2 rounded bg-gray-100 px-1.5 py-0.5 normal-case">your wording</span>}
+                  {p.supported === false && <span className="ml-2 rounded bg-yellow-100 px-1.5 py-0.5 normal-case">unsupported</span>}
                 </p>
-                <p>{b.text}</p>
-                <EvidenceList evidence={b.evidence} />
+                <p className="whitespace-pre-wrap">{p.text}</p>
+                <EvidenceList evidence={p.evidence} />
               </li>
             ))}
-          </ul>
+          </ol>
           <div className="flex gap-2">
-            <button type="button" onClick={() => setDraft(selected.bullets.map((b) => b.text))} disabled={busy !== null} className="rounded border px-3 py-1.5 text-sm">
+            <button type="button" onClick={() => setDraft(selected.paragraphs.map((p) => p.text))} disabled={busy !== null} className="rounded border px-3 py-1.5 text-sm">
               Edit
             </button>
             <button type="button" onClick={copy} className="rounded border px-3 py-1.5 text-sm">
               Copy
             </button>
             {copied && <span className="self-center text-sm text-gray-600">Copied</span>}
-            <DownloadButtons key={selected.id} jobId={jobId} kind="pitch" sourceId={selected.id} disabled={busy !== null} />
+            <DownloadButtons key={selected.id} jobId={jobId} kind="cover_letter" sourceId={selected.id} disabled={busy !== null} />
           </div>
         </>
       )}
 
       {selected && draft !== null && (
         <div className="flex flex-col gap-2">
-          {selected.bullets.map((b, i) => (
-            <label key={b.kind} className="flex flex-col gap-1 text-sm">
-              <span className="font-medium">{BULLET_LABELS[b.kind]}</span>
+          {selected.paragraphs.map((p, i) => (
+            <label key={i} className="flex flex-col gap-1 text-sm">
+              <span className="font-medium">{ROLE_LABELS[p.role]}</span>
               <textarea
-                aria-label={BULLET_LABELS[b.kind]}
+                aria-label={ROLE_LABELS[p.role]}
                 value={draft[i]}
-                maxLength={600}
-                rows={3}
+                maxLength={1200}
+                rows={5}
                 onChange={(e) => setDraft(draft.map((d, j) => (j === i ? e.target.value : d)))}
                 className="rounded border p-2"
               />
@@ -291,7 +265,7 @@ export function PitchPanel({ jobId }: { jobId: string }) {
         </div>
       )}
 
-      {!selected && <p className="text-sm text-gray-600">No pitch generated yet for this job.</p>}
+      {!selected && <p className="text-sm text-gray-600">No cover letter generated yet for this job.</p>}
     </section>
   );
 }

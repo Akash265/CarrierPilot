@@ -5,7 +5,7 @@ import { DOCUMENTS_CHANGED_EVENT } from "./DownloadButtons";
 
 interface DocumentView {
   id: string;
-  kind: "resume" | "pitch";
+  kind: "resume" | "pitch" | "cover_letter" | "interview_prep";
   format: "pdf" | "docx";
   sourceVersion: number | null;
   downloadFilename: string;
@@ -13,6 +13,13 @@ interface DocumentView {
   createdAt: string;
   downloadUrl: string;
 }
+
+const KIND_LABELS: Record<DocumentView["kind"], string> = {
+  resume: "Resume",
+  pitch: "Pitch",
+  cover_letter: "Cover letter",
+  interview_prep: "Interview prep",
+};
 
 type State = { kind: "loading" } | { kind: "error" } | { kind: "ready"; documents: DocumentView[] };
 
@@ -77,7 +84,7 @@ export function DocumentsList({
         <ul className="flex flex-col gap-1 text-sm">
           {state.documents.map((d) => (
             <li key={d.id}>
-              {d.kind === "resume" ? "Resume" : "Pitch"} v{d.sourceVersion ?? "?"} · {d.format.toUpperCase()} ·{" "}
+              {KIND_LABELS[d.kind]} v{d.sourceVersion ?? "?"} · {d.format.toUpperCase()} ·{" "}
               {new Date(d.createdAt).toLocaleString()} ·{" "}
               <button type="button" className="underline" onClick={() => handleDownload(d.downloadUrl)}>Download</button>
             </li>
