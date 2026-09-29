@@ -7,3 +7,5 @@ export { contactLine, dateRange, type ResumeContact, type ResumeProfile } from "
 export { buildResumeModel } from "./model/buildResumeModel";
 export { buildPitchModel } from "./model/buildPitchModel";
 export { renderPdf } from "./render/renderPdf";
+export { renderDocx } from "./render/renderDocx";
+export { renderDocument } from "./render/renderDocument";
