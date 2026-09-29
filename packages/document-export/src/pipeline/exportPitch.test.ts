@@ -59,6 +59,16 @@ describe("exportPitch", () => {
     for (const s of ["Why I'm a fit for Backend Engineer at GitLab", "Jane Doe", "Company line.", "Role line.", "Candidate line."]) expect(text).toContain(s);
   });
 
+  it("exports a generated pitch flagged requires_review by the model's self-report alone, when every bullet is supported", async () => {
+    const { jobId } = await seedResumeFixture(testDb, USER);
+    const bullets = [bullet("company", "Company line.", true), bullet("role", "Role line.", true), bullet("candidate", "Candidate line.", true)];
+    const [row] = await testDb.adminSql`
+      INSERT INTO application_pitches (user_id, job_id, version, origin, research_status_snapshot, bullets, requires_review, generation_model)
+      VALUES (${USER}, ${jobId}, 1, 'generated', 'ok', ${JSON.stringify(bullets)}::jsonb, true, 'm')
+      RETURNING id`;
+    await expect(exportPitch(testDb.db, storage, { userId: USER, jobId, pitchId: row.id as string, format: "pdf" })).resolves.toMatchObject({ kind: "pitch" });
+  });
+
   it("refuses a generated pitch with an unsupported bullet (pitch_unsupported)", async () => {
     const { jobId } = await seedResumeFixture(testDb, USER);
     const pitchId = await insertPitch(jobId, "generated", false);
