@@ -8,10 +8,10 @@ import { ensureCompanyResearch, type CompanyResearchWithFacts } from "../researc
 import { buildEvidenceIndex, type PitchEvidenceItem } from "../pitch/buildEvidenceIndex";
 import { ApplicationGenerationError } from "./generationError";
 
-const { jobs, jobMatches, jobRequirements } = schema;
+const { jobs, jobMatches } = schema;
 
 export type JobRow = typeof jobs.$inferSelect;
-export type JobRequirementRow = typeof jobRequirements.$inferSelect;
+export type JobRequirementRow = (typeof schema.jobRequirements)["$inferSelect"];
 
 export interface ApplicationContextEnv {
   ANTHROPIC_MODEL_FAST: string;
