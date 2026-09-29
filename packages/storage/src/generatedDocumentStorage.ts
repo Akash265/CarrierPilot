@@ -24,6 +24,12 @@ export async function getGeneratedDocument(client: Client, objectKey: string): P
   return client.getObject(GENERATED_DOCUMENTS_BUCKET, objectKey);
 }
 
+/** Confirms the object exists without downloading it (a HEAD-style check) -- rejects if it does not, or if
+ *  the storage backend cannot be reached. */
+export async function statGeneratedDocument(client: Client, objectKey: string): Promise<void> {
+  await client.statObject(GENERATED_DOCUMENTS_BUCKET, objectKey);
+}
+
 export async function deleteGeneratedDocument(client: Client, objectKey: string): Promise<void> {
   await client.removeObject(GENERATED_DOCUMENTS_BUCKET, objectKey);
 }

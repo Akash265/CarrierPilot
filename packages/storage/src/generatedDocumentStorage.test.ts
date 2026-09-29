@@ -2,7 +2,7 @@ import { describe, it, expect, afterAll } from "vitest";
 import type { Readable } from "node:stream";
 import { createStorageClient } from "./client";
 import {
-  uploadGeneratedDocument, getGeneratedDocument, deleteGeneratedDocument, GENERATED_DOCUMENTS_BUCKET,
+  uploadGeneratedDocument, getGeneratedDocument, deleteGeneratedDocument, statGeneratedDocument, GENERATED_DOCUMENTS_BUCKET,
 } from "./generatedDocumentStorage";
 
 const client = createStorageClient({
@@ -43,5 +43,16 @@ describe("generated document storage", () => {
     created.push(a.objectKey, b.objectKey);
     expect(a.objectKey).not.toBe(b.objectKey);
     expect(a.objectKey.endsWith(".docx")).toBe(true);
+  });
+
+  describe("statGeneratedDocument", () => {
+    it("resolves for an object that exists and rejects for one that does not", async () => {
+      const userId = "00000000-0000-0000-0000-000000000001";
+      const { objectKey } = await uploadGeneratedDocument(client, { userId, buffer: Buffer.from("x"), extension: "pdf" });
+      created.push(objectKey);
+
+      await expect(statGeneratedDocument(client, objectKey)).resolves.toBeUndefined();
+      await expect(statGeneratedDocument(client, `${userId}/does-not-exist.pdf`)).rejects.toThrow();
+    });
   });
 });
