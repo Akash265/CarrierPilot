@@ -31,3 +31,9 @@ export {
   prepareApplicationContext,
   type ApplicationContext, type ApplicationContextEnv, type PrepareApplicationContextOptions, type JobRow, type JobRequirementRow,
 } from "./pipeline/prepareApplicationContext";
+export { CoverLetterDraftSchema, CoverLetterDraftParagraphSchema, isValidParagraphOrder, type CoverLetterDraft } from "./coverLetter/coverLetterSchema";
+export { generateCoverLetter, CoverLetterGenerationValidationError, type GenerateCoverLetterInput } from "./coverLetter/generateCoverLetter";
+export { applyCoverLetterGuard, COVER_LETTER_CITATION_RULES, type CoverLetterGuardResult } from "./coverLetter/applyCoverLetterGuard";
+export { insertCoverLetterVersion, type CoverLetterRow, type NewCoverLetterVersion } from "./pipeline/insertCoverLetterVersion";
+export { runCoverLetterGeneration, type RunCoverLetterGenerationResult } from "./pipeline/runCoverLetterGeneration";
+export { createEditedCoverLetter, EditCoverLetterBodySchema, CoverLetterEditError, type EditCoverLetterBody } from "./pipeline/createEditedCoverLetter";
