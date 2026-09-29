@@ -1,11 +1,24 @@
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from "vitest";
 import { extractText } from "@ai-career/ai";
 import { withUserContext } from "@ai-career/db";
 import { buildResumeSnapshot, type AppliedBullet } from "@ai-career/resume-optimization";
-import { GENERATED_DOCUMENTS_BUCKET, createStorageClient, getGeneratedDocument } from "@ai-career/storage";
+import { GENERATED_DOCUMENTS_BUCKET, createStorageClient, getGeneratedDocument, uploadGeneratedDocument } from "@ai-career/storage";
 import { openTestDb, wipeUser, testStorageClient, seedResumeFixture, insertOptimization, type TestDb } from "../testing/db";
 import { exportResume } from "./exportResume";
 import { DocumentExportError } from "../errors";
+import { renderPdf } from "../render/renderPdf";
+import { modelContentHash } from "../model/hash";
+import { RENDERER_VERSION } from "../model/types";
+
+// Keeps every other test's real rendering behavior (passthrough to the actual renderDocument), while
+// letting the "losing concurrent export" test below install a one-time override that injects a winner
+// row between storeDocument's hash computation and its own insert -- the only way to deterministically
+// force that branch instead of hoping a real Promise.all race lands on it (fix wave item D).
+vi.mock("../render/renderDocument", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../render/renderDocument")>();
+  return { ...actual, renderDocument: vi.fn(actual.renderDocument) };
+});
+const { renderDocument } = await import("../render/renderDocument");
 
 const USER = "00000000-0000-0000-0000-0000000000de";
 const storage = testStorageClient();
@@ -96,6 +109,38 @@ describe("exportResume", () => {
     const rows = await testDb.adminSql`SELECT object_key FROM generated_documents WHERE user_id = ${USER}`;
     expect(rows).toHaveLength(1);
     expect(await listUserObjectKeys()).toEqual([rows[0].object_key]);
+  });
+
+  it("deterministically exercises the losing side of a concurrent identical export: deletes its own upload, returns the pre-existing winner", async () => {
+    const { jobId, optimizationId } = await fixtureWithOptimization();
+    let winnerId = "";
+    let winnerKey = "";
+
+    // Runs inside storeDocument, after it has computed contentHash but before its own insert: insert a
+    // "winning" row (with a real uploaded object) for the exact same (user, job, kind, format,
+    // contentHash) key first, then hand back a real render so storeDocument's own upload (the loser's)
+    // still happens and can be observed being cleaned up.
+    vi.mocked(renderDocument).mockImplementationOnce(async (model, format) => {
+      const contentHash = modelContentHash(model, format);
+      const winnerBuffer = await renderPdf(model);
+      const uploaded = await uploadGeneratedDocument(storage, { userId: USER, buffer: winnerBuffer, extension: format });
+      winnerKey = uploaded.objectKey;
+      const [row] = await testDb.adminSql`
+        INSERT INTO generated_documents (user_id, job_id, kind, format, resume_optimization_id, object_key, byte_size, content_hash, renderer_version, download_filename)
+        VALUES (${USER}, ${jobId}, 'resume', ${format}, ${optimizationId}, ${winnerKey}, ${winnerBuffer.length}, ${contentHash}, ${RENDERER_VERSION}, 'Winner - Resume.pdf')
+        RETURNING id`;
+      winnerId = row.id as string;
+      return renderPdf(model); // the loser's own render, uploaded next by storeDocument itself, then deleted
+    });
+
+    const result = await run(jobId, optimizationId);
+
+    expect(winnerId).not.toBe("");
+    expect(result.id).toBe(winnerId);
+    const rows = await testDb.adminSql`SELECT id, object_key FROM generated_documents WHERE user_id = ${USER}`;
+    expect(rows).toHaveLength(1);
+    expect(rows[0].id).toBe(winnerId);
+    expect(await listUserObjectKeys()).toEqual([winnerKey]);
   });
 
   it("stores separate rows, each with its own jobId and company, for identical content exported under two different jobs", async () => {
