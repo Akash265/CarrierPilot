@@ -3,8 +3,10 @@ import { pgTable, pgEnum, uuid, text, integer, timestamp, uniqueIndex, index, ch
 import { jobs } from "./jobs";
 import { resumeOptimizations } from "./resumeOptimizations";
 import { applicationPitches } from "./applicationPitches";
+import { coverLetters } from "./coverLetters";
+import { interviewPreparations } from "./interviewPreparations";
 
-export const generatedDocumentKindEnum = pgEnum("generated_document_kind", ["resume", "pitch"]);
+export const generatedDocumentKindEnum = pgEnum("generated_document_kind", ["resume", "pitch", "cover_letter", "interview_prep"]);
 export const generatedDocumentFormatEnum = pgEnum("generated_document_format", ["pdf", "docx"]);
 
 /**
@@ -14,8 +16,9 @@ export const generatedDocumentFormatEnum = pgEnum("generated_document_format", [
  * (user_id, job_id, kind, format, content_hash) de-duplicates identical exports and is the concurrency
  * backstop. job_id is part of the key (not just an FK) because the resume/pitch model carries nothing
  * job-specific -- without it, exporting for job B could return job A's row (D84).
- * The source column that does not match `kind` is always null; the matching one may later become null
- * through ON DELETE SET NULL, so it is not required non-null here (the pipeline always sets it).
+ * The source column (resumeOptimizationId / applicationPitchId / coverLetterId / interviewPreparationId)
+ * that does not match `kind` is always null; the matching one may later become null through ON DELETE
+ * SET NULL, so it is not required non-null here (the pipeline always sets it).
  * Known gap: deleting a job cascades these rows but not their MinIO objects (Phase 9 retention sweeps them).
  */
 export const generatedDocuments = pgTable(
@@ -32,6 +35,8 @@ export const generatedDocuments = pgTable(
     format: generatedDocumentFormatEnum("format").notNull(),
     resumeOptimizationId: uuid("resume_optimization_id").references(() => resumeOptimizations.id, { onDelete: "set null" }),
     applicationPitchId: uuid("application_pitch_id").references(() => applicationPitches.id, { onDelete: "set null" }),
+    coverLetterId: uuid("cover_letter_id").references(() => coverLetters.id, { onDelete: "set null" }),
+    interviewPreparationId: uuid("interview_preparation_id").references(() => interviewPreparations.id, { onDelete: "set null" }),
     objectKey: text("object_key").notNull(),
     byteSize: integer("byte_size").notNull(),
     contentHash: text("content_hash").notNull(),
@@ -43,9 +48,15 @@ export const generatedDocuments = pgTable(
     userJobKindFormatHashUniq: uniqueIndex("generated_documents_user_job_kind_format_hash_uniq").on(t.userId, t.jobId, t.kind, t.format, t.contentHash),
     jobIdIdx: index("generated_documents_job_id_idx").on(t.jobId),
     byteSizePositive: check("generated_documents_byte_size_positive", sql`${t.byteSize} > 0`),
+    // Every source column other than the one matching `kind` is null. `kind::text` (not a bare enum
+    // literal): drizzle's migrator applies all pending migrations in ONE transaction, and Postgres
+    // rejects using an enum value added by ALTER TYPE ... ADD VALUE in the same transaction.
     sourceMatchesKind: check(
       "generated_documents_source_matches_kind",
-      sql`(${t.kind} = 'resume' AND ${t.applicationPitchId} IS NULL) OR (${t.kind} = 'pitch' AND ${t.resumeOptimizationId} IS NULL)`
+      sql`(${t.resumeOptimizationId} IS NULL OR ${t.kind}::text = 'resume')
+        AND (${t.applicationPitchId} IS NULL OR ${t.kind}::text = 'pitch')
+        AND (${t.coverLetterId} IS NULL OR ${t.kind}::text = 'cover_letter')
+        AND (${t.interviewPreparationId} IS NULL OR ${t.kind}::text = 'interview_prep')`
     ),
   })
 );

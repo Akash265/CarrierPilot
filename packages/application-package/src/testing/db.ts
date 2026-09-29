@@ -46,6 +46,8 @@ export async function openTestDb(): Promise<TestDb> {
 
 /** Deletes in FK-dependency order, scoped to one user (other suites share the database concurrently). */
 export async function wipeUser(adminSql: postgres.Sql, userId: string): Promise<void> {
+  await adminSql`DELETE FROM cover_letters WHERE user_id = ${userId}`;
+  await adminSql`DELETE FROM interview_preparations WHERE user_id = ${userId}`;
   await adminSql`DELETE FROM application_pitches WHERE user_id = ${userId}`;
   await adminSql`DELETE FROM company_research WHERE user_id = ${userId}`; // cascades company_research_facts
   await adminSql`DELETE FROM job_requirements WHERE user_id = ${userId}`;

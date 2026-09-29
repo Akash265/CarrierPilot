@@ -155,6 +155,20 @@
       "when": 1790666535908,
       "tag": "0021_fair_proteus",
       "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1790704620838,
+      "tag": "0022_black_ultimates",
+      "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1790704631706,
+      "tag": "0023_cover_letter_interview_prep_rls",
+      "breakpoints": true
     }
   ]
 }
