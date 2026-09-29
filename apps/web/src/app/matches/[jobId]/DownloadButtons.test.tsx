@@ -66,6 +66,23 @@ describe("DownloadButtons", () => {
     expect(fetchMock).toHaveBeenCalledWith("/api/documents/d1/download", { method: "HEAD" });
   });
 
+  it("shows the preflight error (not the generic export error) and does not navigate when the HEAD fetch itself throws", async () => {
+    const fetchMock = vi.fn((url: string, init?: RequestInit) => {
+      if (init?.method === "HEAD") return Promise.reject(new Error("network error"));
+      return Promise.resolve({
+        ok: true,
+        status: 201,
+        json: async () => ({ document: { downloadUrl: "/api/documents/d1/download" } }),
+      } as Response);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const navigate = vi.fn();
+    render(<DownloadButtons jobId="j1" kind="resume" sourceId="o1" navigate={navigate} />);
+    fireEvent.click(screen.getByRole("button", { name: "Download PDF" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(/could not download/i);
+    expect(navigate).not.toHaveBeenCalled();
+  });
+
   it("disables both buttons when disabled", () => {
     render(<DownloadButtons jobId="j1" kind="pitch" sourceId="p1" disabled navigate={vi.fn()} />);
     expect(screen.getByRole("button", { name: "Download PDF" })).toBeDisabled();

@@ -860,8 +860,16 @@ schema and the Zod schema in lockstep by hand; re-run `eval:pitch`). Changing gr
         DO NOTHING (loser deletes its upload, returns the winner). If the insert throws for any other reason,
         `storeDocument` also deletes the just-uploaded object before rethrowing, so a failed insert never leaves
         an orphaned object with resume PII in MinIO.
-  -> 201 `{ document }`; the button dispatches `documents:changed` (DocumentsList reloads) and navigates to
-     `GET /api/documents/[id]/download`, which finds the row under RLS and streams the object with attachment headers.
+  -> 201 `{ document }`; `DownloadButtons` dispatches `documents:changed` (DocumentsList reloads), then preflights
+     with `HEAD /api/documents/[id]/download` (own try/catch around the fetch, separate from the export's own
+     error handling) — the route looks the row up under RLS (404 if missing/another user's) then calls
+     `statGeneratedDocument` (`packages/storage`) for a cheap existence check (502 with a fixed message if the
+     object is unreachable), 200 with an empty body otherwise — and only on a 2xx preflight does it call
+     `navigate` to `GET /api/documents/[id]/download`, which repeats the RLS lookup and streams the object with
+     attachment headers. A failed preflight (404/502 response, or the HEAD fetch itself throwing) shows an
+     inline error instead of navigating the whole app to a raw JSON response.
+     `DocumentsList`'s own "Download" control is a button (not a link) that runs the same HEAD-preflight-then-
+     navigate logic against a document's `downloadUrl`, showing its own inline alert on failure.
 
 `exportResume` reads `buildResumeSnapshot` and `loadResumeProfile` inside one `withUserContext(..., { isolationLevel:
 "repeatable read" })` transaction (the new optional `isolationLevel` on `withUserContext`, `packages/db/src/rls.ts`),

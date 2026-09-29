@@ -39,9 +39,15 @@ export function DownloadButtons({
       window.dispatchEvent(new Event(DOCUMENTS_CHANGED_EVENT));
       const downloadUrl = body.document.downloadUrl as string;
       // Preflight before navigating: a 404/502 JSON error response would otherwise navigate the whole app
-      // to a raw JSON page instead of showing an inline error.
-      const head = await fetch(downloadUrl, { method: "HEAD" });
-      if (!head.ok) {
+      // to a raw JSON page instead of showing an inline error. Own try/catch: the export already succeeded
+      // by this point, so a network error on the HEAD itself must not surface as "could not export".
+      try {
+        const head = await fetch(downloadUrl, { method: "HEAD" });
+        if (!head.ok) {
+          setError("Could not download the document. Try again.");
+          return;
+        }
+      } catch {
         setError("Could not download the document. Try again.");
         return;
       }
