@@ -9,3 +9,6 @@ export { buildPitchModel } from "./model/buildPitchModel";
 export { renderPdf } from "./render/renderPdf";
 export { renderDocx } from "./render/renderDocx";
 export { renderDocument } from "./render/renderDocument";
+export { loadResumeProfile } from "./pipeline/loadResumeProfile";
+export { storeDocument, type GeneratedDocumentRow, type StoreDocumentInput } from "./pipeline/storeDocument";
+export { exportResume, type ExportResumeInput } from "./pipeline/exportResume";
