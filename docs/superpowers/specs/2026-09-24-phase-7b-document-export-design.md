@@ -79,7 +79,7 @@ interface DocumentModel {
 }
 ```
 
-Every string in a model passes `hasUnsafeText` = false or the export fails with `invalid_content` (defense in depth; profile text was validated at confirm time).
+Every string in a model passes `hasUnsafeText` = false or the export fails with `invalid_content` (defense in depth; profile text was validated at confirm time). `storeDocument` runs the model through `normalizeModel` first — stripping/replacing XML-illegal control characters (D86) — and only then checks `hasUnsafeText` and computes the content hash, so both the safety check and the stored file reflect the cleaned text, not the raw model.
 
 ### 4.2 `buildResumeModel(profile, appliedBullets)` — pure
 
@@ -159,7 +159,7 @@ Status codes: 400 invalid body / bad JSON / source_mismatch; 404 non-UUID or unk
 - Object keys are generated (`{userId}/{uuid}.{ext}`); the user-visible name only appears in `Content-Disposition`, sanitized.
 - Download route looks the row up under RLS before reading storage, so one user can never fetch another's object even with a known id.
 - Profile changes after an optimization block resume export (no mixing old wording into a new profile); unsupported generated pitch bullets block pitch export.
-- `hasUnsafeText` on every model string.
+- `hasUnsafeText` on every model string, run after `normalizeModel` has already stripped/replaced XML-illegal control characters (D86) — so the check and the stored/hashed content agree.
 - Storage upload happens outside the DB transaction; an insert that loses a race deletes its own orphaned upload.
 
 ## 8. Testing
