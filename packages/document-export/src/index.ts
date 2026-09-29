@@ -12,3 +12,4 @@ export { renderDocument } from "./render/renderDocument";
 export { loadResumeProfile } from "./pipeline/loadResumeProfile";
 export { storeDocument, type GeneratedDocumentRow, type StoreDocumentInput } from "./pipeline/storeDocument";
 export { exportResume, type ExportResumeInput } from "./pipeline/exportResume";
+export { exportPitch, type ExportPitchInput } from "./pipeline/exportPitch";
