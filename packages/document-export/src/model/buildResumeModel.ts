@@ -1,6 +1,6 @@
 import type { AppliedBullet } from "@ai-career/resume-optimization";
 import type { DocumentBlock, DocumentModel } from "./types";
-import { contactLine, dateRange, type ResumeProfile } from "./resumeProfile";
+import { certDates, contactLine, dateRange, present, type ResumeProfile } from "./resumeProfile";
 
 /** Items the optimizer selected (in its order) with its text, then the rest (in profile order) with their own text. */
 function selectedFirst<T extends { id: string }>(
@@ -15,12 +15,18 @@ function selectedFirst<T extends { id: string }>(
   for (const a of applied) {
     if (a.sourceType !== sourceType) continue;
     const item = byId.get(a.sourceFactId);
-    if (!item) continue; // belongs to another group (e.g. a different role) -- the caller checks global existence
+    if (!item || used.has(item.id)) continue; // wrong group, or a duplicate applied entry -- first occurrence wins
     chosen.push({ item, text: a.optimizedText });
     used.add(item.id);
   }
   for (const item of items) if (!used.has(item.id)) chosen.push({ item, text: originalText(item) });
   return chosen;
+}
+
+/** Joins the non-blank parts with " · ", or null if none are present. */
+function joinPresent(parts: (string | null)[]): string | null {
+  const kept = parts.filter(present);
+  return kept.length > 0 ? kept.join(" · ") : null;
 }
 
 /**
@@ -29,16 +35,20 @@ function selectedFirst<T extends { id: string }>(
  * never reworded. rejectedClaims are never an input. No street address.
  */
 export function buildResumeModel(profile: ResumeProfile, applied: AppliedBullet[]): DocumentModel {
+  // Keyed by "sourceType:id" so an id that only exists under a different source type is treated as unknown, not
+  // silently matched against the wrong collection (an id is only unique within its own source type).
   const knownIds = new Set<string>([
-    ...profile.experiences.flatMap((e) => e.bullets.map((b) => b.id)),
-    ...profile.achievements.map((a) => a.id),
-    ...profile.projects.map((p) => p.id),
-    ...profile.certifications.map((c) => c.id),
-    ...profile.education.map((e) => e.id),
-    ...profile.skills.map((s) => s.id),
+    ...profile.experiences.flatMap((e) => e.bullets.map((b) => `work_experience_bullet:${b.id}`)),
+    ...profile.achievements.map((a) => `achievement:${a.id}`),
+    ...profile.projects.map((p) => `project:${p.id}`),
+    ...profile.certifications.map((c) => `certification:${c.id}`),
+    ...profile.education.map((e) => `education:${e.id}`),
+    ...profile.skills.map((s) => `skill:${s.id}`),
   ]);
   for (const a of applied) {
-    if (!knownIds.has(a.sourceFactId)) throw new Error(`applied bullet cites unknown source fact ${a.sourceFactId}`);
+    if (!knownIds.has(`${a.sourceType}:${a.sourceFactId}`)) {
+      throw new Error(`applied bullet cites unknown source fact ${a.sourceFactId}`);
+    }
   }
 
   const blocks: DocumentBlock[] = [];
@@ -49,7 +59,7 @@ export function buildResumeModel(profile: ResumeProfile, applied: AppliedBullet[
       blocks.push({
         type: "entry",
         title: exp.title,
-        subtitle: [exp.company, exp.location].filter((s): s is string => !!s && s.trim().length > 0).join(" · "),
+        subtitle: joinPresent([exp.company, exp.location]),
         meta: dateRange(exp.startDate, exp.endDate),
       });
       const bullets = selectedFirst(exp.bullets, applied, "work_experience_bullet", (b) => b.text);
@@ -60,7 +70,7 @@ export function buildResumeModel(profile: ResumeProfile, applied: AppliedBullet[
   if (profile.projects.length > 0) {
     blocks.push({ type: "heading", text: "Projects" });
     for (const { item, text } of selectedFirst(profile.projects, applied, "project", (p) => p.description)) {
-      blocks.push({ type: "entry", title: item.name, subtitle: item.url, meta: null });
+      blocks.push({ type: "entry", title: item.name, subtitle: present(item.url) ? item.url : null, meta: null });
       blocks.push({ type: "paragraph", text });
     }
   }
@@ -75,8 +85,8 @@ export function buildResumeModel(profile: ResumeProfile, applied: AppliedBullet[
     for (const e of profile.education) {
       blocks.push({
         type: "entry",
-        title: e.fieldOfStudy ? `${e.degree} in ${e.fieldOfStudy}` : e.degree,
-        subtitle: e.gpa ? `${e.institution} · GPA ${e.gpa}` : e.institution,
+        title: present(e.fieldOfStudy) ? `${e.degree} in ${e.fieldOfStudy}` : e.degree,
+        subtitle: present(e.gpa) ? `${e.institution} · GPA ${e.gpa}` : e.institution,
         meta: dateRange(e.startDate, e.endDate),
       });
     }
@@ -89,7 +99,7 @@ export function buildResumeModel(profile: ResumeProfile, applied: AppliedBullet[
         type: "entry",
         title: c.name,
         subtitle: c.issuer,
-        meta: c.issueDate && c.expiryDate ? `${c.issueDate} – ${c.expiryDate}` : c.issueDate ?? (c.expiryDate ? `Expires ${c.expiryDate}` : null),
+        meta: certDates(c.issueDate, c.expiryDate),
       });
     }
   }

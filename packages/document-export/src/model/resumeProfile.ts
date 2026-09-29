@@ -32,7 +32,8 @@ export interface ResumeProfile {
   skills: { id: string; name: string }[];
 }
 
-const present = (s: string | null | undefined): s is string => typeof s === "string" && s.trim().length > 0;
+/** True for a non-blank string. Blank/whitespace-only text is nullable text left empty by LLM extraction, not a value. */
+export const present = (s: string | null | undefined): s is string => typeof s === "string" && s.trim().length > 0;
 
 export function contactLine(contact: ResumeContact): string | null {
   const parts = [contact.email, contact.phoneNumber, contact.linkedinUrl].filter(present);
@@ -43,5 +44,13 @@ export function dateRange(start: string | null, end: string | null): string | nu
   if (present(start) && present(end)) return `${start} – ${end}`;
   if (present(start)) return `${start} – present`;
   if (present(end)) return end;
+  return null;
+}
+
+/** Certification meta: unlike dateRange, an expiry-only certification reads as "Expires <date>", not a bare date. */
+export function certDates(issueDate: string | null, expiryDate: string | null): string | null {
+  if (present(issueDate) && present(expiryDate)) return `${issueDate} – ${expiryDate}`;
+  if (present(issueDate)) return issueDate;
+  if (present(expiryDate)) return `Expires ${expiryDate}`;
   return null;
 }

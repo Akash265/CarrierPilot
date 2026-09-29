@@ -109,4 +109,58 @@ describe("buildResumeModel", () => {
   it("throws when an applied bullet cites a fact that is not in the profile (a bug, not a user error)", () => {
     expect(() => buildResumeModel(profile, [applied("ghost", "work_experience_bullet", "x")])).toThrow(/ghost/);
   });
+
+  // Fix round 1
+
+  it("an applied bullet on one role leaves the other role's bullets untouched", () => {
+    const model = buildResumeModel(profile, [applied("b4", "work_experience_bullet", "Helped D loudly")]);
+    const exp = blocksAfter(model, "Experience")!;
+    expect(exp[1]).toEqual({ type: "bullets", items: ["Built A", "Built B", "Built C"] });
+    expect(exp[3]).toEqual({ type: "bullets", items: ["Helped D loudly"] });
+  });
+
+  it("renders a duplicated applied entry once, using the first occurrence's text", () => {
+    const model = buildResumeModel(profile, [
+      applied("b1", "work_experience_bullet", "Built A first"),
+      applied("b1", "work_experience_bullet", "Built A second"),
+    ]);
+    const exp = blocksAfter(model, "Experience")!;
+    expect(exp[1]).toEqual({ type: "bullets", items: ["Built A first", "Built B", "Built C"] });
+  });
+
+  it("formats certification meta from issueDate/expiryDate, treating blank strings as absent", () => {
+    const issueOnly = buildResumeModel({ ...profile, certifications: [{ ...profile.certifications[0], expiryDate: null }] }, []);
+    expect(blocksAfter(issueOnly, "Certifications")![0]).toMatchObject({ meta: "2022" });
+
+    const expiryOnly = buildResumeModel({ ...profile, certifications: [{ ...profile.certifications[0], issueDate: null }] }, []);
+    expect(blocksAfter(expiryOnly, "Certifications")![0]).toMatchObject({ meta: "Expires 2025" });
+
+    const blankIssue = buildResumeModel({ ...profile, certifications: [{ ...profile.certifications[0], issueDate: "" }] }, []);
+    expect(blocksAfter(blankIssue, "Certifications")![0]).toMatchObject({ meta: "Expires 2025" });
+
+    const bothBlank = buildResumeModel(
+      { ...profile, certifications: [{ ...profile.certifications[0], issueDate: "  ", expiryDate: "" }] },
+      []
+    );
+    expect(blocksAfter(bothBlank, "Certifications")![0]).toMatchObject({ meta: null });
+  });
+
+  it("collapses blank fieldOfStudy, gpa, project url and experience company/location to null/omitted", () => {
+    const model = buildResumeModel(
+      {
+        ...profile,
+        experiences: [{ ...profile.experiences[0], company: "  ", location: "" }],
+        projects: [{ ...profile.projects[1], url: "   " }],
+        education: [{ ...profile.education[0], fieldOfStudy: "  ", gpa: "" }],
+      },
+      []
+    );
+    expect(blocksAfter(model, "Experience")![0]).toMatchObject({ subtitle: null });
+    expect(blocksAfter(model, "Projects")![0]).toMatchObject({ subtitle: null });
+    expect(blocksAfter(model, "Education")![0]).toEqual({ type: "entry", title: "BSc", subtitle: "TU Berlin", meta: "2016 – 2020" });
+  });
+
+  it("throws when an applied bullet's id belongs to a different source type", () => {
+    expect(() => buildResumeModel(profile, [applied("b1", "achievement", "x")])).toThrow(/b1/);
+  });
 });
