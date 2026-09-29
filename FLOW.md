@@ -838,3 +838,33 @@ a `failed` result over good research writes nothing and returns 502 (`CompanyRes
 Changing the pitch prompt/schema: `pitch/generatePitch.ts` + `pitch/pitchSchema.ts` (keep the tool JSON
 schema and the Zod schema in lockstep by hand; re-run `eval:pitch`). Changing grounding rules:
 `pitch/applyPitchGuard.ts` only. Changing what counts as a web fact: `research/extractCitedFacts.ts` only.
+
+## 10. Phase 7b — Document Export & Storage
+
+"Download PDF/DOCX" in `ResumeOptimizationPanel` / `PitchPanel` (`apps/web/src/app/matches/[jobId]/DownloadButtons.tsx`)
+  -> `POST /api/documents` { kind, jobId, sourceId, format } (`apps/web/src/app/api/documents/route.ts`)
+  -> `exportResume` / `exportPitch` (`packages/document-export/src/pipeline/`)
+     1. job exists (404); the optimization/pitch belongs to the job (400 source_mismatch).
+     2. resume: current `buildResumeSnapshot` hash must equal `resume_optimizations.source_profile_content_hash`
+        (409 profile_changed); pitch: a `generated` version with any `supported === false` bullet → 409 pitch_unsupported.
+     3. profile via `loadResumeProfile` (409 no_profile; street address never read).
+     4. `buildResumeModel` / `buildPitchModel` → `DocumentModel` (pure; merge rules in D82). `buildResumeModel`
+        treats blank/whitespace profile fields as absent (`present`/`joinPresent` in `resumeProfile.ts`), de-dups
+        repeated applied-bullet entries (first occurrence wins), and keys known source ids by `sourceType:id` so
+        an id from one collection can never match another.
+     5. `storeDocument`: `assertSafeModel` → `modelContentHash` → reuse an existing row keyed by
+        `(user_id, job_id, kind, format, content_hash)` (job_id is part of the key so job B never reuses job A's
+        file — migration `0021`, D84 update), else `renderDocument` (pdfkit / docx) →
+        `uploadGeneratedDocument` (MinIO `generated-documents`, outside any transaction) → INSERT … ON CONFLICT
+        DO NOTHING (loser deletes its upload, returns the winner). If the insert throws for any other reason,
+        `storeDocument` also deletes the just-uploaded object before rethrowing, so a failed insert never leaves
+        an orphaned object with resume PII in MinIO.
+  -> 201 `{ document }`; the button dispatches `documents:changed` (DocumentsList reloads) and navigates to
+     `GET /api/documents/[id]/download`, which finds the row under RLS and streams the object with attachment headers.
+
+`exportResume` reads `buildResumeSnapshot` and `loadResumeProfile` inside one `withUserContext(..., { isolationLevel:
+"repeatable read" })` transaction (the new optional `isolationLevel` on `withUserContext`, `packages/db/src/rls.ts`),
+so a profile edit committing between the two reads cannot pair an old hash with a render of new rows.
+
+Changing layout: `packages/document-export/src/render/*` — bump `RENDERER_VERSION`. Changing what a resume contains:
+`model/buildResumeModel.ts` only. Changing fonts: `pnpm --filter @ai-career/document-export embed-fonts`.

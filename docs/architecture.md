@@ -1,6 +1,6 @@
 # Architecture — AI Career Intelligence & Application Platform
 
-Status: **Phases 0–6 and 7a are implemented** (foundation, candidate profile, career goal, job intelligence, hybrid matching, ATS resume optimization, company research + Hiring Manager Pitch); document export (7b) onward is designed but not yet built. This document describes the agreed architecture as of 2026-09-06. See `DECISIONS.md` for the rationale behind each choice. Update this file as implementation reveals deviations — it must describe what's actually built, not an aspiration.
+Status: **Phases 0–6, 7a and 7b are implemented** (foundation, candidate profile, career goal, job intelligence, hybrid matching, ATS resume optimization, company research + Hiring Manager Pitch, document export); interview prep / cover letter (7c) onward is designed but not yet built. This document describes the agreed architecture as of 2026-09-06. See `DECISIONS.md` for the rationale behind each choice. Update this file as implementation reveals deviations — it must describe what's actually built, not an aspiration.
 
 ## 1. Product framing
 
@@ -152,7 +152,7 @@ Caching: embedding cache (permanent, content-hash keyed), match-reason cache (7-
 - `career_goal_constraints` is the single source of truth for search-relevant preferences. `candidate_profiles` therefore keeps only contact fields, `years_of_experience` and `work_authorization_notes`; its earlier work-mode, salary-expectation, visa, preferred-role and industry columns and the `company_preferences` table were dropped ([D21](../DECISIONS.md)).
 - `job_sources`, `ingestion_runs`, `raw_job_postings`, `jobs`, `job_postings`, `job_duplicate_candidates` (Phase 4, [D35](../DECISIONS.md)/[D36](../DECISIONS.md)). `jobs` is derived from its postings by a pure merge; salary uses the D6 raw + normalized + currency + period + `is_parsed` shape (implemented as `salary_raw`, `salary_min`, `salary_max`, `salary_currency`, `salary_period`, `salary_is_parsed`, with the min/max annualized).
 
-Everything else (job_requirements, resume_optimizations, ats_evaluations, application_outcomes, learning_features, plus the original core tables) follows spec §19 as written. `application_pitches` deviates from spec §19's one-line description; see §14 and [D71](../DECISIONS.md).
+Everything else (job_requirements, resume_optimizations, ats_evaluations, application_outcomes, learning_features, plus the original core tables) follows spec §19 as written. `application_pitches` deviates from spec §19's one-line description; see §14 and [D71](../DECISIONS.md). `generated_documents` is not in spec §19 at all; see §15 and [D81](../DECISIONS.md).
 
 ## 9. Security & privacy
 
@@ -276,5 +276,23 @@ application_pitches (versioned; generated or user_edited; evidence snapshotted p
 - **Grounding.** Web facts are grounded by API citations (D72); pitch bullets by `applyPitchGuard` (D75). Unsupported bullets are shown, flagged, never dropped.
 - **Three new tables.** `company_research`, `company_research_facts`, `application_pitches` (D71).
 - **Execution model.** Synchronous API routes, like Phase 6. Research uses the basic `web_search_20250305` tool (D79); the first pitch for a company waits for web research, typically ~16-22s, not the ~a minute originally estimated with the newer tool.
-- **Known gaps.** No research history; `company_key` collisions share research; no domain allow/block list for search; no export (7b), interview prep or cover letter (7c). Cached internal facts ("Company has N roles…") reflect jobs at research time until Refresh; a company whose search hits `max_uses` with nothing cited is stored as `failed` and re-searched on every pitch request (a cost follow-up, not fixed here); the internal-facts query caps at 50 jobs.
+- **Known gaps.** No research history; `company_key` collisions share research; no domain allow/block list for search; no interview prep or cover letter (7c). Cached internal facts ("Company has N roles…") reflect jobs at research time until Refresh; a company whose search hits `max_uses` with nothing cited is stored as `failed` and re-searched on every pitch request (a cost follow-up, not fixed here); the internal-facts query caps at 50 jobs.
 - Full rationale: `docs/superpowers/specs/2026-09-24-phase-7a-company-research-pitch-design.md` and DECISIONS.md D69–D79.
+
+## 15. Document Export & Storage (Phase 7b)
+
+```
+profile rows + one resume_optimizations version   |   one application_pitches version
+  │ buildResumeModel (pure, D82)                   │ buildPitchModel (pure)
+  ▼                                                ▼
+DocumentModel ──► storeDocument: hash → reuse | renderPdf (pdfkit + embedded Noto Sans) / renderDocx (docx)
+                                 → MinIO "generated-documents" → generated_documents row (RLS)
+```
+
+- **Package boundary.** `packages/document-export` (`model/`, `render/`, `pipeline/`), used by `/api/documents` routes and the match page's download buttons and documents list. No LLM calls.
+- **Guarantees.** Documents contain only stored profile text and guard-applied rewordings; education/certifications/skill names never reworded; no street address (D82). Export refused when the profile changed since the optimization or a generated pitch has an unsupported bullet (D84).
+- **Machine readability.** Single column, real text, no images/tables; every renderer test extracts the text back with the same parsers used for uploads (D83).
+- **Storage.** Generated keys, RLS-first download, attachment + nosniff + no-store headers (D85); identical exports de-duplicated by content hash, scoped per job so two jobs never share a stored file (D81, D84 update, migration `0021`).
+- **Consistency.** `exportResume` reads the profile snapshot hash and the profile rows in one `REPEATABLE READ` transaction so a concurrent profile edit cannot pair an old hash with new rows (D84 update). `storeDocument` deletes its MinIO upload if the row insert fails for any reason other than the expected de-dup conflict, so a failed insert never orphans an object (D84).
+- **Known gaps.** Deleting a job leaves its MinIO objects (Phase 9 retention); plain visual design; no templates.
+- Rationale: `docs/superpowers/specs/2026-09-24-phase-7b-document-export-design.md`, DECISIONS.md D81–D85.
