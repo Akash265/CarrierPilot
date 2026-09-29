@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { extractText } from "@ai-career/ai";
 import { renderPdf } from "./renderPdf";
 import { modelStrings, expectTextInOrder } from "./roundTrip";
+import { normalizeModel } from "../model/normalizeModel";
 import type { DocumentModel } from "../model/types";
 
 const model: DocumentModel = {
@@ -41,5 +42,18 @@ describe("renderPdf", () => {
   it("renders an empty model (title only)", async () => {
     const pdf = await renderPdf({ title: "Only Title", contactLine: null, blocks: [] });
     expectTextInOrder(await extractText(pdf, "pdf"), ["Only Title"]);
+  });
+
+  it("round-trips a model with control characters once normalized (fix wave item A): renders and extracts without throwing", async () => {
+    const dirty: DocumentModel = {
+      title: "Vertical\u000BTab",
+      contactLine: "Form\u000CFeed NonChar￾End",
+      blocks: [{ type: "bullets", items: ["Ctrl\u0001One", "Pasted\u000Bline\u000Cbreak"] }],
+    };
+    const pdf = await renderPdf(normalizeModel(dirty));
+    expect(pdf.subarray(0, 5).toString()).toBe("%PDF-");
+    const text = await extractText(pdf, "pdf");
+    expectTextInOrder(text, modelStrings(normalizeModel(dirty)));
+    expect(text).not.toMatch(/[\u000B\u000C\u0001￾]/);
   });
 });

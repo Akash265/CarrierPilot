@@ -5,6 +5,7 @@ import { deleteGeneratedDocument, uploadGeneratedDocument } from "@ai-career/sto
 import { RENDERER_VERSION, type DocumentFormat, type DocumentKind, type DocumentModel } from "../model/types";
 import { modelContentHash } from "../model/hash";
 import { assertSafeModel } from "../model/assertSafeModel";
+import { normalizeModel } from "../model/normalizeModel";
 import { renderDocument } from "../render/renderDocument";
 import { DocumentExportError } from "../errors";
 
@@ -28,8 +29,14 @@ export interface StoreDocumentInput {
  * A loser of a concurrent identical export deletes its own upload and returns the winner's row (D84).
  * job_id is part of the de-dup key: the model carries nothing job-specific, so without it exporting
  * for job B could return job A's stored row (D84 update).
+ *
+ * The model is run through normalizeModel (D86) before assertSafeModel and before hashing: assertSafeModel
+ * only rejects NUL and unpaired surrogates, not XML-illegal control characters such as \u000B, which
+ * corrupt the DOCX but leave a stable content hash -- so without normalizing first, a broken document
+ * would keep being the one storeDocument reuses.
  */
-export async function storeDocument(db: DbClient, storage: Client, input: StoreDocumentInput): Promise<GeneratedDocumentRow> {
+export async function storeDocument(db: DbClient, storage: Client, rawInput: StoreDocumentInput): Promise<GeneratedDocumentRow> {
+  const input: StoreDocumentInput = { ...rawInput, model: normalizeModel(rawInput.model) };
   const inUserContext = <T>(fn: (tx: DbClient) => Promise<T>) => withUserContext(db, input.userId, fn);
   assertSafeModel(input.model);
   const contentHash = modelContentHash(input.model, input.format);

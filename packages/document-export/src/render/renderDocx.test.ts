@@ -4,6 +4,7 @@ import { extractText } from "@ai-career/ai";
 import { renderDocx } from "./renderDocx";
 import { renderDocument } from "./renderDocument";
 import { modelStrings, expectTextInOrder } from "./roundTrip";
+import { normalizeModel } from "../model/normalizeModel";
 import type { DocumentModel } from "../model/types";
 
 const model: DocumentModel = {
@@ -63,6 +64,20 @@ describe("renderDocx", () => {
     expect(xml).not.toContain('<w:pStyle w:val="Heading1"/>');
     expect(xml).not.toContain('<w:pStyle w:val="Heading2"/>');
     expect(xml).not.toContain("<w:numPr>");
+  });
+});
+
+describe("renderDocx with normalizeModel (fix wave item A)", () => {
+  it("produces a document.xml free of the control characters a reviewer's probe found (\\u000B \\u000C \\u0001 U+FFFE)", async () => {
+    const dirty: DocumentModel = {
+      title: "Vertical\u000BTab Ctrl\u0001One",
+      contactLine: "Form\u000CFeed NonChar￾End",
+      blocks: [{ type: "bullets", items: ["Pasted\u000Bline\u000Cbreak"] }],
+    };
+    const xml = await documentXml(await renderDocx(normalizeModel(dirty)));
+    expect(xml).not.toMatch(/[\u000B\u000C\u0001￾]/);
+    // and the surrounding text survived (space-joined, not silently dropped)
+    expect(xml).toContain("Vertical Tab CtrlOne");
   });
 });
 
