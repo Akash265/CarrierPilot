@@ -37,6 +37,28 @@ describe("applyInterviewPrepGuard", () => {
     expect(applyInterviewPrepGuard(EVIDENCE, GAPS, d).sections.likelyQuestions[0].unsupportedReason).toBe("cites no profile evidence");
   });
 
+  it("flags a likely question that cites the gap term's own requirement id", () => {
+    const d = base();
+    d.likelyQuestions[0] = likely(["q:q2", "p:b1"]);
+    expect(applyInterviewPrepGuard(EVIDENCE, GAPS, d).sections.likelyQuestions[0].unsupportedReason).toBe(
+      'targets a missing required term "Kubernetes"; use a gap question'
+    );
+  });
+
+  it("flags a likely question whose answer outline mentions a gap term in a different case", () => {
+    const d = base();
+    d.likelyQuestions[0] = { question: "Q?", category: "technical", answerOutline: ["Discuss KUBERNETES experience"], evidenceIds: ["q:q1", "p:b1"] };
+    expect(applyInterviewPrepGuard(EVIDENCE, GAPS, d).sections.likelyQuestions[0].unsupportedReason).toBe(
+      'targets a missing required term "Kubernetes"; use a gap question'
+    );
+  });
+
+  it("does not restrict talking points or questions-to-ask from citing a gap term's requirement id", () => {
+    const d = base();
+    d.questionsToAsk[0] = { question: "A?", evidenceIds: ["q:q2"] };
+    expect(applyInterviewPrepGuard(EVIDENCE, GAPS, d).sections.questionsToAsk[0].supported).toBe(true);
+  });
+
   it("requires talking points to cite research and questions-to-ask to cite research or a requirement", () => {
     const d = base();
     d.talkingPoints[0] = { text: "T", evidenceIds: ["q:q1"] };
@@ -58,6 +80,43 @@ describe("applyInterviewPrepGuard", () => {
     const r = applyInterviewPrepGuard(EVIDENCE, GAPS, d);
     expect(r.sections.gapQuestions[0].supported).toBe(true);
     expect(r.sections.gapQuestions[1].unsupportedReason).toBe('requirementTerm " kubernetes " already has a gap question');
+  });
+
+  it("stores the canonical gap term as requirementTerm when matched, but keeps the model's spelling for an unmatched or duplicate-blocked term", () => {
+    const d = base();
+    d.gapQuestions = [gap("KUBERNETES", ["q:q2"]), gap(" kubernetes ", ["q:q2"]), gap("SQL", ["q:q1"])];
+    const r = applyInterviewPrepGuard(EVIDENCE, GAPS, d);
+    expect(r.sections.gapQuestions[0].requirementTerm).toBe("Kubernetes");
+    expect(r.sections.gapQuestions[1].requirementTerm).toBe(" kubernetes ");
+    expect(r.sections.gapQuestions[2].requirementTerm).toBe("SQL");
+  });
+
+  it("does not reserve a gap term when the first question for it fails to cite its own requirement (first-use-wins on success)", () => {
+    const d = base();
+    d.gapQuestions = [gap("Kubernetes", ["q:q1"]), gap("Kubernetes", ["q:q2"])];
+    const r = applyInterviewPrepGuard(EVIDENCE, GAPS, d);
+    expect(r.sections.gapQuestions[0].unsupportedReason).toBe("does not cite the requirement it probes");
+    expect(r.sections.gapQuestions[1].supported).toBe(true);
+  });
+
+  it("flags every gap question when there are no computed gap terms", () => {
+    const d = base();
+    d.gapQuestions = [gap("Kubernetes", ["q:q2"])];
+    expect(applyInterviewPrepGuard(EVIDENCE, [], d).sections.gapQuestions[0].unsupportedReason).toBe('requirementTerm "Kubernetes" is not one of the missing required terms');
+  });
+
+  it("flags a gap question that cites only another gap's requirement id", () => {
+    const evidence = [...EVIDENCE, { id: "q:q3", kind: "requirement" as const, text: "[required] Terraform", sourceUrl: null }];
+    const gaps = [...GAPS, { term: "Terraform", requirementId: "q3" }];
+    const d = base();
+    d.gapQuestions = [gap("Kubernetes", ["q:q3"])];
+    expect(applyInterviewPrepGuard(evidence, gaps, d).sections.gapQuestions[0].unsupportedReason).toBe("does not cite the requirement it probes");
+  });
+
+  it("flags a gap question citing a non-existent evidence id", () => {
+    const d = base();
+    d.gapQuestions = [gap("Kubernetes", ["q:nonexistent"])];
+    expect(applyInterviewPrepGuard(EVIDENCE, GAPS, d).sections.gapQuestions[0].unsupportedReason).toContain('evidence id "q:nonexistent" does not exist');
   });
 
   it("flags a gap question that does not cite its own requirement id", () => {

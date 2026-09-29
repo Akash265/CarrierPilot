@@ -52,6 +52,13 @@ describe("generateInterviewPrep", () => {
     expect(call.system).toMatch(/never claim/i);
   });
 
+  it("instructs the model that likely questions must not target a gap term", async () => {
+    const { client, create } = clientWith(VALID);
+    await generateInterviewPrep(client, ENV, INPUT);
+    const call = create.mock.calls[0][0];
+    expect(call.system).toMatch(/likely questions must not target any term listed in the gaps block/i);
+  });
+
   it("throws InterviewPrepGenerationValidationError without a tool_use block or on schema failure", async () => {
     await expect(generateInterviewPrep(clientWith(VALID, false).client, ENV, INPUT)).rejects.toThrow(InterviewPrepGenerationValidationError);
     await expect(generateInterviewPrep(clientWith({ ...VALID, likelyQuestions: [] }).client, ENV, INPUT)).rejects.toThrow(InterviewPrepGenerationValidationError);

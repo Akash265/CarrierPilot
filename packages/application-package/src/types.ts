@@ -57,6 +57,7 @@ export const MAX_OUTLINE_LINE_CHARS = 300;
 export const MAX_FRAMING_CHARS = 800;
 export const MAX_POINT_CHARS = 400;
 export const MAX_GAP_TERMS = 5;
+export const MAX_REQUIREMENT_TERM_CHARS = 200;
 
 /** A required job term the profile evidence does not contain (computeGapTerms), with its job_requirements id. */
 export interface GapTerm {

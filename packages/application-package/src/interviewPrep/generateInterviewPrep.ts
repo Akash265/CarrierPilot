@@ -2,7 +2,8 @@ import { randomBytes } from "node:crypto";
 import type Anthropic from "@anthropic-ai/sdk";
 import type { Env } from "@ai-career/config";
 import {
-  MAX_FRAMING_CHARS, MAX_GAP_TERMS, MAX_OUTLINE_LINE_CHARS, MAX_POINT_CHARS, MAX_QUESTION_CHARS, type GapTerm,
+  LIKELY_QUESTION_CATEGORIES, MAX_FRAMING_CHARS, MAX_GAP_TERMS, MAX_OUTLINE_LINE_CHARS, MAX_POINT_CHARS, MAX_QUESTION_CHARS,
+  MAX_REQUIREMENT_TERM_CHARS, type GapTerm,
 } from "../types";
 import type { PitchEvidenceItem } from "../pitch/buildEvidenceIndex";
 import { InterviewPrepDraftSchema, type InterviewPrepDraft } from "./interviewPrepSchema";
@@ -19,9 +20,9 @@ const TOOL_INPUT_SCHEMA = {
       items: {
         type: "object",
         properties: {
-          question: { type: "string", maxLength: MAX_QUESTION_CHARS },
-          category: { type: "string", enum: ["technical", "behavioral", "role"] },
-          answerOutline: { type: "array", minItems: 1, maxItems: 5, items: { type: "string", maxLength: MAX_OUTLINE_LINE_CHARS } },
+          question: { type: "string", minLength: 1, maxLength: MAX_QUESTION_CHARS },
+          category: { type: "string", enum: [...LIKELY_QUESTION_CATEGORIES] },
+          answerOutline: { type: "array", minItems: 1, maxItems: 5, items: { type: "string", minLength: 1, maxLength: MAX_OUTLINE_LINE_CHARS } },
           evidenceIds: ids,
         },
         required: ["question", "category", "answerOutline", "evidenceIds"],
@@ -32,9 +33,9 @@ const TOOL_INPUT_SCHEMA = {
       items: {
         type: "object",
         properties: {
-          question: { type: "string", maxLength: MAX_QUESTION_CHARS },
-          requirementTerm: { type: "string", maxLength: 200 },
-          framing: { type: "string", maxLength: MAX_FRAMING_CHARS },
+          question: { type: "string", minLength: 1, maxLength: MAX_QUESTION_CHARS },
+          requirementTerm: { type: "string", minLength: 1, maxLength: MAX_REQUIREMENT_TERM_CHARS },
+          framing: { type: "string", minLength: 1, maxLength: MAX_FRAMING_CHARS },
           evidenceIds: ids,
         },
         required: ["question", "requirementTerm", "framing", "evidenceIds"],
@@ -42,11 +43,11 @@ const TOOL_INPUT_SCHEMA = {
     },
     talkingPoints: {
       type: "array", minItems: 3, maxItems: 6,
-      items: { type: "object", properties: { text: { type: "string", maxLength: MAX_POINT_CHARS }, evidenceIds: ids }, required: ["text", "evidenceIds"] },
+      items: { type: "object", properties: { text: { type: "string", minLength: 1, maxLength: MAX_POINT_CHARS }, evidenceIds: ids }, required: ["text", "evidenceIds"] },
     },
     questionsToAsk: {
       type: "array", minItems: 3, maxItems: 5,
-      items: { type: "object", properties: { question: { type: "string", maxLength: MAX_POINT_CHARS }, evidenceIds: ids }, required: ["question", "evidenceIds"] },
+      items: { type: "object", properties: { question: { type: "string", minLength: 1, maxLength: MAX_POINT_CHARS }, evidenceIds: ids }, required: ["question", "evidenceIds"] },
     },
     requiresReview: { type: "boolean" },
   },
@@ -90,7 +91,8 @@ export async function generateInterviewPrep(
       `1. likelyQuestions (5-8): questions this interviewer is likely to ask (category technical, behavioral or ` +
       `role), each with 1-5 short answer-outline points written for the candidate, built only from the ` +
       `candidate's own evidence. Each must cite at least one "q:" id (the requirement it targets) AND at least ` +
-      `one "p:" id (the candidate's evidence).\n` +
+      `one "p:" id (the candidate's evidence). Likely questions must not target any term listed in the gaps ` +
+      `block (those belong in gapQuestions only).\n` +
       `2. gapQuestions: at most one per term listed in the gaps block, never for any other term. requirementTerm ` +
       `is the term exactly as listed; cite that term's requirementId. The framing is honest advice: never claim ` +
       `or imply the candidate has experience with the missing term. It may cite related "p:" evidence as ` +
