@@ -10,6 +10,13 @@ import { InterviewPrepDraftSchema, type InterviewPrepDraft } from "./interviewPr
 
 const TOOL_NAME = "record_interview_prep";
 const ids = { type: "array", items: { type: "string" } } as const;
+const gapEvidenceIds = {
+  type: "array",
+  items: { type: "string" },
+  description:
+    'Must include this term\'s requirementId (the "q:" id shown for it in the gaps block); may also include ' +
+    'related "p:" ids as adjacent experience.',
+} as const;
 
 // Keep in lockstep with InterviewPrepDraftSchema (interviewPrepSchema.ts); the Zod schema is what is enforced.
 const TOOL_INPUT_SCHEMA = {
@@ -36,7 +43,7 @@ const TOOL_INPUT_SCHEMA = {
           question: { type: "string", minLength: 1, maxLength: MAX_QUESTION_CHARS },
           requirementTerm: { type: "string", minLength: 1, maxLength: MAX_REQUIREMENT_TERM_CHARS },
           framing: { type: "string", minLength: 1, maxLength: MAX_FRAMING_CHARS },
-          evidenceIds: ids,
+          evidenceIds: gapEvidenceIds,
         },
         required: ["question", "requirementTerm", "framing", "evidenceIds"],
       },
@@ -90,17 +97,23 @@ export async function generateInterviewPrep(
       `exactly from the evidence items' ids. Produce:\n` +
       `1. likelyQuestions (5-8): questions this interviewer is likely to ask (category technical, behavioral or ` +
       `role), each with 1-5 short answer-outline points written for the candidate, built only from the ` +
-      `candidate's own evidence. Each must cite at least one "q:" id (the requirement it targets) AND at least ` +
-      `one "p:" id (the candidate's evidence). Likely questions must not target any term listed in the gaps ` +
-      `block (those belong in gapQuestions only).\n` +
+      `candidate's own evidence. A technical or behavioral question must cite at least one "q:" id (the ` +
+      `requirement it targets) AND at least one "p:" id (the candidate's evidence). A role question (e.g. "why ` +
+      `this company" or "why this role") must cite at least one "r:" or "q:" id AND at least one "p:" id. Likely ` +
+      `questions must not target any term listed in the gaps block (those belong in gapQuestions only).\n` +
       `2. gapQuestions: at most one per term listed in the gaps block, never for any other term. requirementTerm ` +
-      `is the term exactly as listed; cite that term's requirementId. The framing is honest advice: never claim ` +
-      `or imply the candidate has experience with the missing term. It may cite related "p:" evidence as ` +
-      `adjacent experience and may suggest how to show willingness to learn.\n` +
-      `3. talkingPoints (3-6): facts about the company worth mentioning; each cites at least one "r:" id. Exactly ` +
-      `3 are always required even when there are fewer than 3 distinct research facts -- in that case, write ` +
-      `multiple talking points from the same fact(s), each drawing a different angle or implication, rather than ` +
-      `providing fewer than 3.\n` +
+      `is the term exactly as listed. evidenceIds MUST include that term's requirementId (the "q:" id shown for ` +
+      `it in the gaps block); it may also include related "p:" evidence as adjacent experience. The framing is ` +
+      `honest advice: never claim or imply the candidate has experience with the missing term, and may suggest ` +
+      `how to show willingness to learn.\n` +
+      `3. talkingPoints (at least 3, up to 6): facts about the company worth mentioning; each cites at least one ` +
+      `"r:" id. When there are fewer than 3 distinct research facts, still write at least 3 points by restating ` +
+      `the same fact's relevance to this role or to the candidate from different angles -- never invent a new ` +
+      `company fact, and never speculate about the company beyond exactly what the evidence states. Do not use ` +
+      `inference words about the company ("suggests", "signals", "indicates", "implies", "likely", "may ` +
+      `indicate", "means"); state the fact plainly and then its relevance to the role or candidate (e.g. ` +
+      `"Company X does Y, which is directly relevant to my experience doing Z" is fine; "Company X does Y, ` +
+      `which suggests the team is growing" is not).\n` +
       `4. questionsToAsk (3-5): thoughtful questions for the interviewer; each cites at least one "r:" or "q:" id.\n` +
       `Never invent an employer, skill, number, title, certification or company fact that is not in the ` +
       `evidence. If the evidence cannot support an item, keep it modest and set requiresReview to true.`,

@@ -11,7 +11,12 @@ const EVIDENCE: PitchEvidenceItem[] = [
   { id: "p:k8s", kind: "profile", text: "Ran kubernetes clusters", sourceUrl: null },
 ];
 const GAPS = [{ term: "Kubernetes", requirementId: "q2" }];
-const likely = (evidenceIds = ["q:q1", "p:b1"]) => ({ question: "Q?", category: "technical" as const, answerOutline: ["A"], evidenceIds });
+const likely = (evidenceIds = ["q:q1", "p:b1"], category: "technical" | "behavioral" | "role" = "technical") => ({
+  question: "Q?",
+  category,
+  answerOutline: ["A"],
+  evidenceIds,
+});
 const gap = (requirementTerm: string, evidenceIds: string[]) => ({ question: "G?", requirementTerm, framing: "F.", evidenceIds });
 const base = (): InterviewPrepDraft => ({
   likelyQuestions: [likely(), likely(), likely(), likely(), likely()],
@@ -35,6 +40,28 @@ describe("applyInterviewPrepGuard", () => {
     const d = base();
     d.likelyQuestions[0] = likely(["q:q1"]);
     expect(applyInterviewPrepGuard(EVIDENCE, GAPS, d).sections.likelyQuestions[0].unsupportedReason).toBe("cites no profile evidence");
+  });
+
+  it("supports a role likely question that cites research and profile evidence (no requirement id)", () => {
+    const d = base();
+    d.likelyQuestions[0] = likely(["r:f1", "p:b1"], "role");
+    expect(applyInterviewPrepGuard(EVIDENCE, GAPS, d).sections.likelyQuestions[0].supported).toBe(true);
+  });
+
+  it("flags a role likely question that cites only profile evidence", () => {
+    const d = base();
+    d.likelyQuestions[0] = likely(["p:b1"], "role");
+    expect(applyInterviewPrepGuard(EVIDENCE, GAPS, d).sections.likelyQuestions[0].unsupportedReason).toBe(
+      "cites no company research or job requirement"
+    );
+  });
+
+  it("still requires a technical likely question to cite a job requirement even when it cites research", () => {
+    const d = base();
+    d.likelyQuestions[0] = likely(["r:f1", "p:b1"], "technical");
+    expect(applyInterviewPrepGuard(EVIDENCE, GAPS, d).sections.likelyQuestions[0].unsupportedReason).toBe(
+      "cites no job requirement"
+    );
   });
 
   it("flags a likely question that cites the gap term's own requirement id", () => {

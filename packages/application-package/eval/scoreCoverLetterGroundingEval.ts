@@ -38,6 +38,7 @@ async function main() {
         const uncited = numbers.filter((n) => !cited.includes(n));
         flaggedNumbers += uncited.length;
         console.log(`  [${p.role}] supported=${p.supported}${p.unsupportedReason ? ` (${p.unsupportedReason})` : ""}`);
+        console.log(`    cited: ${p.evidence.map((e) => e.id).join(", ") || "(none)"}`);
         console.log(`    ${p.text}`);
         if (uncited.length > 0) console.log(`    NUMBERS NOT IN CITED EVIDENCE (investigate): ${uncited.join(", ")}`);
       }

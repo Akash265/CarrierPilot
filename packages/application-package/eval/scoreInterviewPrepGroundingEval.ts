@@ -15,7 +15,7 @@ import type { EvidenceCatalogEntry } from "@ai-career/resume-optimization";
 import { loadEnv } from "@ai-career/config";
 import { createAnthropicClient } from "@ai-career/ai";
 import { buildEvidenceIndex, type RequirementForEvidence } from "../src/pitch/buildEvidenceIndex";
-import { computeGapTerms } from "../src/interviewPrep/computeGapTerms";
+import { computeGapTerms, containsTerm } from "../src/interviewPrep/computeGapTerms";
 import { generateInterviewPrep } from "../src/interviewPrep/generateInterviewPrep";
 import { applyInterviewPrepGuard } from "../src/interviewPrep/applyInterviewPrepGuard";
 
@@ -30,15 +30,26 @@ interface Fixture {
   catalog: EvidenceCatalogEntry[];
 }
 
-function escapeRegExp(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const CLAIM_PATTERN =
+  /\b(I have|I've|my experience (with|in)|I am experienced|extensive|you have|you've|your (experience|background) (with|in)|you already|this is actually a strength)\b/i;
+
+/**
+ * Reported, not asserted (task-14 brief + fix round 1): does some sentence of the framing read as a claim
+ * -- first person ("I have...") or second person, addressed to the candidate ("you already have...") --
+ * that the candidate has the missing term? `containsTerm` (boundary-aware, same rule computeGapTerms uses)
+ * finds the term itself so a short term like "Go" is not falsely matched inside "Google".
+ */
+function claimsMissingSkill(framing: string, term: string): { flagged: boolean; sentence: string | null } {
+  const termLower = term.toLowerCase();
+  for (const sentence of framing.split(/(?<=[.!?])\s+/)) {
+    if (CLAIM_PATTERN.test(sentence) && containsTerm(sentence.toLowerCase(), termLower)) {
+      return { flagged: true, sentence };
+    }
+  }
+  return { flagged: false, sentence: null };
 }
 
-/** Reported, not asserted (task-14 brief): does the framing read as if the candidate already had this skill? */
-function claimsMissingSkill(framing: string, term: string): boolean {
-  const pattern = new RegExp(`\\b(I have|I've|my experience (with|in)|I am experienced|extensive)\\b[^.]*${escapeRegExp(term)}`, "i");
-  return pattern.test(framing);
-}
+const citedIds = (evidence: { id: string }[]) => evidence.map((e) => e.id).join(", ") || "(none)";
 
 async function main() {
   const env = loadEnv();
@@ -46,6 +57,7 @@ async function main() {
   let supported = 0;
   let total = 0;
   let gapAnswered = 0;
+  let gapAnsweredSupported = 0;
   let gapTotal = 0;
   let flaggedFramings = 0;
   let likelyQuestionGapFlags = 0;
@@ -75,23 +87,31 @@ async function main() {
         if (q.supported) supported += 1;
         if (q.unsupportedReason?.includes("targets a missing required term")) likelyQuestionGapFlags += 1;
         console.log(`    [${q.category}] supported=${q.supported}${q.unsupportedReason ? ` (${q.unsupportedReason})` : ""}`);
+        console.log(`      cited: ${citedIds(q.evidence)}`);
         console.log(`      Q: ${q.question}`);
       }
 
       console.log(`  gapQuestions (${result.sections.gapQuestions.filter((q) => q.supported).length}/${result.sections.gapQuestions.length} supported):`);
       const answeredTerms = new Set<string>();
+      const answeredSupportedTerms = new Set<string>();
       for (const q of result.sections.gapQuestions) {
         total += 1;
         if (q.supported) supported += 1;
-        if (gapTermsLower.has(q.requirementTerm.toLowerCase())) answeredTerms.add(q.requirementTerm.toLowerCase());
-        const claims = claimsMissingSkill(q.framing, q.requirementTerm);
-        if (claims) flaggedFramings += 1;
+        const key = q.requirementTerm.toLowerCase();
+        if (gapTermsLower.has(key)) {
+          answeredTerms.add(key);
+          if (q.supported) answeredSupportedTerms.add(key);
+        }
+        const claim = claimsMissingSkill(q.framing, q.requirementTerm);
+        if (claim.flagged) flaggedFramings += 1;
         console.log(`    [${q.requirementTerm}] supported=${q.supported}${q.unsupportedReason ? ` (${q.unsupportedReason})` : ""}`);
+        console.log(`      cited: ${citedIds(q.evidence)}`);
         console.log(`      Q: ${q.question}`);
         console.log(`      Framing: ${q.framing}`);
-        if (claims) console.log(`      FRAMING MAY CLAIM THE MISSING SKILL (investigate)`);
+        if (claim.flagged) console.log(`      FRAMING MAY CLAIM THE MISSING SKILL (investigate): "${claim.sentence}"`);
       }
       gapAnswered += answeredTerms.size;
+      gapAnsweredSupported += answeredSupportedTerms.size;
       gapTotal += gapTerms.length;
 
       console.log(`  talkingPoints (${result.sections.talkingPoints.filter((p) => p.supported).length}/${result.sections.talkingPoints.length} supported):`);
@@ -99,6 +119,7 @@ async function main() {
         total += 1;
         if (p.supported) supported += 1;
         console.log(`    supported=${p.supported}${p.unsupportedReason ? ` (${p.unsupportedReason})` : ""}`);
+        console.log(`      cited: ${citedIds(p.evidence)}`);
         console.log(`      ${p.text}`);
       }
 
@@ -107,6 +128,7 @@ async function main() {
         total += 1;
         if (q.supported) supported += 1;
         console.log(`    supported=${q.supported}${q.unsupportedReason ? ` (${q.unsupportedReason})` : ""}`);
+        console.log(`      cited: ${citedIds(q.evidence)}`);
         console.log(`      ${q.question}`);
       }
     } catch (error) {
@@ -115,7 +137,7 @@ async function main() {
   }
 
   console.log(`\nSupported items: ${supported}/${total} (every fixture id is genuine, so anything below ${total}/${total} is a prompt regression).`);
-  console.log(`Gap terms answered: ${gapAnswered}/${gapTotal} (a gap term with no gap question is a prompt regression).`);
+  console.log(`Gap terms answered: ${gapAnswered}/${gapTotal} (supported: ${gapAnsweredSupported}/${gapTotal}) (a gap term with no gap question is a prompt regression).`);
   console.log(`Likely questions that also target a gap term (should route to gapQuestions instead): ${likelyQuestionGapFlags} (should be 0).`);
   console.log(`Framings that may claim a missing skill: ${flaggedFramings} (should be 0; read them).`);
 }

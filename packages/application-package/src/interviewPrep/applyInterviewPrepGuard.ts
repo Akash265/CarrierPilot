@@ -1,5 +1,5 @@
-import type { GapTerm, StoredGapQuestion, StoredInterviewPrepSections } from "../types";
-import { checkCitations, indexEvidence, quoteId, toGuarded } from "../guard/checkCitations";
+import type { GapTerm, LikelyQuestionCategory, StoredGapQuestion, StoredInterviewPrepSections } from "../types";
+import { checkCitations, indexEvidence, quoteId, toGuarded, type CitationRequirement } from "../guard/checkCitations";
 import { containsTerm } from "./computeGapTerms";
 import type { PitchEvidenceItem } from "../pitch/buildEvidenceIndex";
 import type { InterviewPrepDraft } from "./interviewPrepSchema";
@@ -10,6 +10,16 @@ export interface InterviewPrepGuardResult {
 }
 
 const norm = (s: string) => s.trim().toLowerCase();
+
+// Controller ruling (Task 14 fix round 1): a "role" likely question (motivational "why this company / why
+// this role") naturally has no single requirement it targets, so it may ground itself in company research
+// instead of a job requirement; technical and behavioral questions still require a requirement citation.
+// Every category still requires profile evidence (the candidate's own experience).
+const LIKELY_QUESTION_CITATION_RULES: Record<LikelyQuestionCategory, CitationRequirement> = {
+  technical: [["requirement"], ["profile"]],
+  behavioral: [["requirement"], ["profile"]],
+  role: [["research", "requirement"], ["profile"]],
+};
 
 /**
  * Phase 7c design §4.3: the shared citation rules per section plus the gap rules. Unsupported items
@@ -55,7 +65,7 @@ export function applyInterviewPrepGuard(evidence: PitchEvidenceItem[], gapTerms:
 
   const sections: StoredInterviewPrepSections = {
     likelyQuestions: draft.likelyQuestions.map((q) => {
-      const result = checkCitations(lookup, q.evidenceIds, [["requirement"], ["profile"]]);
+      const result = checkCitations(lookup, q.evidenceIds, LIKELY_QUESTION_CITATION_RULES[q.category]);
       const targeted = gapTermKey(q.question, q.answerOutline, q.evidenceIds);
       if (targeted) result.reasons.push(`targets a missing required term ${quoteId(targeted.term)}; use a gap question`);
       return { question: q.question, category: q.category, answerOutline: q.answerOutline, ...toGuarded(result) };

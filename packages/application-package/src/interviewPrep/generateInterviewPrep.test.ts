@@ -59,6 +59,23 @@ describe("generateInterviewPrep", () => {
     expect(call.system).toMatch(/likely questions must not target any term listed in the gaps block/i);
   });
 
+  it("instructs the model that a gap question's evidenceIds must include its own requirementId, and says so in the tool schema too", async () => {
+    const { client, create } = clientWith(VALID);
+    await generateInterviewPrep(client, ENV, INPUT);
+    const call = create.mock.calls[0][0];
+    expect(call.system).toMatch(/evidenceIds MUST include that term's requirementId/i);
+    const gapEvidenceIdsSchema = call.tools[0].input_schema.properties.gapQuestions.items.properties.evidenceIds;
+    expect(gapEvidenceIdsSchema.description).toMatch(/must include this term's requirementid/i);
+  });
+
+  it("instructs the model that talking points must not speculate about the company", async () => {
+    const { client, create } = clientWith(VALID);
+    await generateInterviewPrep(client, ENV, INPUT);
+    const call = create.mock.calls[0][0];
+    expect(call.system).toMatch(/never speculate about the company/i);
+    expect(call.system).toMatch(/at least 3, up to 6/i);
+  });
+
   it("throws InterviewPrepGenerationValidationError without a tool_use block or on schema failure", async () => {
     await expect(generateInterviewPrep(clientWith(VALID, false).client, ENV, INPUT)).rejects.toThrow(InterviewPrepGenerationValidationError);
     await expect(generateInterviewPrep(clientWith({ ...VALID, likelyQuestions: [] }).client, ENV, INPUT)).rejects.toThrow(InterviewPrepGenerationValidationError);
