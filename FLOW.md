@@ -852,7 +852,8 @@ schema and the Zod schema in lockstep by hand; re-run `eval:pitch`). Changing gr
         treats blank/whitespace profile fields as absent (`present`/`joinPresent` in `resumeProfile.ts`), de-dups
         repeated applied-bullet entries (first occurrence wins), and keys known source ids by `sourceType:id` so
         an id from one collection can never match another.
-     5. `storeDocument`: `assertSafeModel` → `modelContentHash` → reuse an existing row keyed by
+     5. `storeDocument`: `normalizeModel` (strips/replaces XML-illegal control characters such as `\u000B`/
+        `\u000C`, D86) → `assertSafeModel` → `modelContentHash` → reuse an existing row keyed by
         `(user_id, job_id, kind, format, content_hash)` (job_id is part of the key so job B never reuses job A's
         file — migration `0021`, D84 update), else `renderDocument` (pdfkit / docx) →
         `uploadGeneratedDocument` (MinIO `generated-documents`, outside any transaction) → INSERT … ON CONFLICT
