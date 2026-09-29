@@ -37,7 +37,15 @@ export function DownloadButtons({
         return;
       }
       window.dispatchEvent(new Event(DOCUMENTS_CHANGED_EVENT));
-      navigate(body.document.downloadUrl as string);
+      const downloadUrl = body.document.downloadUrl as string;
+      // Preflight before navigating: a 404/502 JSON error response would otherwise navigate the whole app
+      // to a raw JSON page instead of showing an inline error.
+      const head = await fetch(downloadUrl, { method: "HEAD" });
+      if (!head.ok) {
+        setError("Could not download the document. Try again.");
+        return;
+      }
+      navigate(downloadUrl);
     } catch {
       setError("Could not export the document.");
     } finally {

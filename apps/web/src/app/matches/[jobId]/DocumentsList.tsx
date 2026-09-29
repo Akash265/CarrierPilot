@@ -16,8 +16,15 @@ interface DocumentView {
 
 type State = { kind: "loading" } | { kind: "error" } | { kind: "ready"; documents: DocumentView[] };
 
-export function DocumentsList({ jobId }: { jobId: string }) {
+export function DocumentsList({
+  jobId,
+  navigate = (url: string) => window.location.assign(url),
+}: {
+  jobId: string;
+  navigate?: (url: string) => void;
+}) {
   const [state, setState] = useState<State>({ kind: "loading" });
+  const [downloadError, setDownloadError] = useState<string | null>(null);
 
   useEffect(() => {
     let ignore = false;
@@ -42,6 +49,22 @@ export function DocumentsList({ jobId }: { jobId: string }) {
     };
   }, [jobId]);
 
+  // Preflight with HEAD before navigating: a download link that 404s/502s would otherwise navigate the
+  // whole app to a raw JSON error page instead of showing an inline error (second review, fix round 2).
+  const handleDownload = async (url: string) => {
+    setDownloadError(null);
+    try {
+      const head = await fetch(url, { method: "HEAD" });
+      if (!head.ok) {
+        setDownloadError("Could not download the document. Try again.");
+        return;
+      }
+      navigate(url);
+    } catch {
+      setDownloadError("Could not download the document. Try again.");
+    }
+  };
+
   return (
     <section aria-labelledby="documents-heading" className="flex flex-col gap-2">
       <h2 id="documents-heading" className="font-medium">Documents</h2>
@@ -56,11 +79,12 @@ export function DocumentsList({ jobId }: { jobId: string }) {
             <li key={d.id}>
               {d.kind === "resume" ? "Resume" : "Pitch"} v{d.sourceVersion ?? "?"} · {d.format.toUpperCase()} ·{" "}
               {new Date(d.createdAt).toLocaleString()} ·{" "}
-              <a href={d.downloadUrl} className="underline">Download</a>
+              <button type="button" className="underline" onClick={() => handleDownload(d.downloadUrl)}>Download</button>
             </li>
           ))}
         </ul>
       )}
+      {downloadError && <p role="alert" className="text-sm text-red-600">{downloadError}</p>}
     </section>
   );
 }

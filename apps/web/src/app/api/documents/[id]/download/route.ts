@@ -43,3 +43,25 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
     await closeDbClient(db);
   }
 }
+
+/**
+ * Same RLS-scoped lookup as GET, no body: lets a download link be preflighted (DownloadButtons,
+ * DocumentsList) before navigating the whole app to it, so an unknown or another user's document shows as
+ * an inline error instead of a raw JSON 404 page. Does not touch storage, so it does not surface a
+ * storage_unavailable 502 -- only whether the row itself is visible to this user.
+ */
+export async function HEAD(_request: Request, { params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params;
+  if (!UUID_RE.test(id)) return new Response(null, { status: 404 });
+
+  const env = loadEnv();
+  const db = createDbClient(env);
+  try {
+    const [doc] = await withUserContext(db, env.DEFAULT_USER_ID, (tx) =>
+      tx.select({ id: generatedDocuments.id }).from(generatedDocuments).where(eq(generatedDocuments.id, id)).limit(1)
+    );
+    return new Response(null, { status: doc ? 200 : 404 });
+  } finally {
+    await closeDbClient(db);
+  }
+}

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, waitFor, act } from "@testing-library/react";
+import { render, screen, waitFor, act, fireEvent } from "@testing-library/react";
 import { DocumentsList } from "./DocumentsList";
 import { DOCUMENTS_CHANGED_EVENT } from "./DownloadButtons";
 
@@ -9,6 +9,16 @@ const doc = { id: "d1", kind: "resume", format: "pdf", sourceVersion: 3, downloa
 
 beforeEach(() => vi.unstubAllGlobals());
 
+/** GET /api/documents (list load) resolves with `documents`; HEAD preflights on a download resolve `headOk`. */
+function mockListAndHead(documents: unknown[], headOk: boolean) {
+  const fn = vi.fn((url: string, init?: RequestInit) => {
+    if (init?.method === "HEAD") return Promise.resolve({ ok: headOk, status: headOk ? 200 : 404 } as Response);
+    return Promise.resolve({ ok: true, json: async () => ({ documents }) } as Response);
+  });
+  vi.stubGlobal("fetch", fn);
+  return fn;
+}
+
 describe("DocumentsList", () => {
   it("shows an empty state", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: async () => ({ documents: [] }) } as Response));
@@ -16,11 +26,29 @@ describe("DocumentsList", () => {
     expect(await screen.findByText(/no documents exported yet/i)).toBeInTheDocument();
   });
 
-  it("lists documents with kind, version, format and a download link", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: async () => ({ documents: [doc] }) } as Response));
+  it("lists documents with kind, version, format and a Download button", async () => {
+    mockListAndHead([doc], true);
     render(<DocumentsList jobId="j1" />);
     expect(await screen.findByText(/Resume v3 · PDF/)).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: /download/i })).toHaveAttribute("href", "/api/documents/d1/download");
+    expect(screen.getByRole("button", { name: /download/i })).toBeInTheDocument();
+  });
+
+  it("preflights with HEAD then navigates on a successful download", async () => {
+    const fetchMock = mockListAndHead([doc], true);
+    const navigate = vi.fn();
+    render(<DocumentsList jobId="j1" navigate={navigate} />);
+    fireEvent.click(await screen.findByRole("button", { name: /download/i }));
+    await waitFor(() => expect(navigate).toHaveBeenCalledWith("/api/documents/d1/download"));
+    expect(fetchMock).toHaveBeenCalledWith("/api/documents/d1/download", { method: "HEAD" });
+  });
+
+  it("shows an inline error and does not navigate when the HEAD preflight fails", async () => {
+    mockListAndHead([doc], false);
+    const navigate = vi.fn();
+    render(<DocumentsList jobId="j1" navigate={navigate} />);
+    fireEvent.click(await screen.findByRole("button", { name: /download/i }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(/could not download/i);
+    expect(navigate).not.toHaveBeenCalled();
   });
 
   it("reloads when a documents-changed event fires", async () => {

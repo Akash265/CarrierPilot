@@ -32,8 +32,10 @@ afterAll(async () => {
 });
 
 const { POST } = await import("../../route");
-const { GET } = await import("./route");
+const { GET, HEAD } = await import("./route");
 const download = (id: string) => GET(new Request(`http://localhost/api/documents/${id}/download`), { params: Promise.resolve({ id }) });
+const headDownload = (id: string) =>
+  HEAD(new Request(`http://localhost/api/documents/${id}/download`, { method: "HEAD" }), { params: Promise.resolve({ id }) });
 
 describe("GET /api/documents/[id]/download", () => {
   it("streams the stored PDF with safe download headers", async () => {
@@ -65,5 +67,31 @@ describe("GET /api/documents/[id]/download", () => {
     const [doc] = await admin`INSERT INTO generated_documents (user_id, job_id, kind, format, object_key, byte_size, content_hash, renderer_version, download_filename)
                               VALUES (${OTHER}, ${job.id}, 'resume', 'pdf', 'x/y.pdf', 10, 'h', '1', 'f.pdf') RETURNING id`;
     expect((await download(doc.id)).status).toBe(404);
+  });
+});
+
+describe("HEAD /api/documents/[id]/download", () => {
+  // Used by DownloadButtons/DocumentsList to preflight a download link before navigating the whole app to
+  // it, so a 404/502 shows as an inline error instead of a raw JSON page (second review, fix round 2).
+  it("returns 200 with no body for an existing document, and 404 for a non-UUID id, an unknown id, and another user's document", async () => {
+    const { jobId, optimizationId } = await seedResumeExport(admin, USER);
+    const created = await POST(new Request("http://localhost/api/documents", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ kind: "resume", jobId, sourceId: optimizationId, format: "pdf" }),
+    }));
+    const { document } = await created.json();
+
+    const ok = await headDownload(document.id);
+    expect(ok.status).toBe(200);
+    expect(await ok.text()).toBe("");
+
+    expect((await headDownload("nope")).status).toBe(404);
+    expect((await headDownload("33333333-3333-3333-3333-333333333333")).status).toBe(404);
+
+    const [job] = await admin`INSERT INTO jobs (user_id, company_name, company_key, title, title_key, description_hash, first_seen_at, last_verified_at)
+                              VALUES (${OTHER}, 'Acme', 'acme', 'Dev', 'dev', 'dh3', now(), now()) RETURNING id`;
+    const [otherDoc] = await admin`INSERT INTO generated_documents (user_id, job_id, kind, format, object_key, byte_size, content_hash, renderer_version, download_filename)
+                              VALUES (${OTHER}, ${job.id}, 'resume', 'pdf', 'x/y2.pdf', 10, 'h2', '1', 'f.pdf') RETURNING id`;
+    expect((await headDownload(otherDoc.id)).status).toBe(404);
   });
 });
