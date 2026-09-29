@@ -5,6 +5,7 @@ import Link from "next/link";
 import { ResumeOptimizationPanel } from "./ResumeOptimizationPanel";
 import { PitchPanel } from "./PitchPanel";
 import { CoverLetterPanel } from "./CoverLetterPanel";
+import { InterviewPrepPanel } from "./InterviewPrepPanel";
 import { DocumentsList } from "./DocumentsList";
 
 interface JobView {
@@ -127,6 +128,7 @@ export function MatchDetailClient({ jobId }: { jobId: string }) {
       {match.eligible && <ResumeOptimizationPanel jobId={jobId} />}
       {match.eligible && <PitchPanel jobId={jobId} />}
       {match.eligible && <CoverLetterPanel jobId={jobId} />}
+      {match.eligible && <InterviewPrepPanel jobId={jobId} />}
       {match.eligible && <DocumentsList jobId={jobId} />}
 
       <section aria-labelledby="description-heading">
