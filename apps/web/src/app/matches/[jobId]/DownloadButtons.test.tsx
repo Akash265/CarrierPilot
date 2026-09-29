@@ -33,7 +33,7 @@ describe("DownloadButtons", () => {
 
     await waitFor(() => expect(navigate).toHaveBeenCalledWith("/api/documents/d1/download"));
     expect(fetchMock.mock.calls[0][0]).toBe("/api/documents");
-    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({ kind: "resume", jobId: "j1", sourceId: "o1", format: "pdf" });
+    expect(JSON.parse(fetchMock.mock.calls[0][1]!.body as string)).toEqual({ kind: "resume", jobId: "j1", sourceId: "o1", format: "pdf" });
     expect(fetchMock).toHaveBeenCalledWith("/api/documents/d1/download", { method: "HEAD" });
     expect(changed).toHaveBeenCalled();
     window.removeEventListener(DOCUMENTS_CHANGED_EVENT, changed);
@@ -44,7 +44,7 @@ describe("DownloadButtons", () => {
     render(<DownloadButtons jobId="j1" kind="pitch" sourceId="p1" navigate={vi.fn()} />);
     fireEvent.click(screen.getByRole("button", { name: "Download DOCX" }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalled());
-    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toMatchObject({ kind: "pitch", format: "docx" });
+    expect(JSON.parse(fetchMock.mock.calls[0][1]!.body as string)).toMatchObject({ kind: "pitch", format: "docx" });
   });
 
   it("shows the server's message on an error and does not navigate", async () => {
