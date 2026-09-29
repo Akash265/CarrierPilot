@@ -37,3 +37,9 @@ export { applyCoverLetterGuard, COVER_LETTER_CITATION_RULES, type CoverLetterGua
 export { insertCoverLetterVersion, type CoverLetterRow, type NewCoverLetterVersion } from "./pipeline/insertCoverLetterVersion";
 export { runCoverLetterGeneration, type RunCoverLetterGenerationResult } from "./pipeline/runCoverLetterGeneration";
 export { createEditedCoverLetter, EditCoverLetterBodySchema, CoverLetterEditError, type EditCoverLetterBody } from "./pipeline/createEditedCoverLetter";
+export { computeGapTerms, containsTerm } from "./interviewPrep/computeGapTerms";
+export { InterviewPrepDraftSchema, type InterviewPrepDraft } from "./interviewPrep/interviewPrepSchema";
+export { generateInterviewPrep, InterviewPrepGenerationValidationError, type GenerateInterviewPrepInput } from "./interviewPrep/generateInterviewPrep";
+export { applyInterviewPrepGuard, type InterviewPrepGuardResult } from "./interviewPrep/applyInterviewPrepGuard";
+export { insertInterviewPrepVersion, type InterviewPrepRow, type NewInterviewPrepVersion } from "./pipeline/insertInterviewPrepVersion";
+export { runInterviewPrepGeneration, type RunInterviewPrepGenerationResult } from "./pipeline/runInterviewPrepGeneration";
