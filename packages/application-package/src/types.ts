@@ -34,3 +34,17 @@ export interface StoredPitchBullet {
 }
 
 export const MAX_BULLET_CHARS = 600;
+
+/** Phase 7c cover letter (design §3). Paragraph order: opening, company, evidence (1-2), closing. */
+export const COVER_LETTER_ROLES = ["opening", "company", "evidence", "closing"] as const;
+export type CoverLetterRole = (typeof COVER_LETTER_ROLES)[number];
+export const MAX_PARAGRAPH_CHARS = 1200;
+
+/** One element of cover_letters.paragraphs. supported is null for a user_edited version. */
+export interface StoredCoverLetterParagraph {
+  role: CoverLetterRole;
+  text: string;
+  supported: boolean | null;
+  unsupportedReason: string | null;
+  evidence: EvidenceSnapshot[];
+}
