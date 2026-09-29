@@ -15,6 +15,7 @@
     "@ai-career/application-package": "workspace:*",
     "@ai-career/config": "workspace:*",
     "@ai-career/db": "workspace:*",
+    "@ai-career/document-export": "workspace:*",
     "@ai-career/ingestion": "workspace:*",
     "@ai-career/matching": "workspace:*",
     "@ai-career/resume-optimization": "workspace:*",
@@ -23,6 +24,7 @@
     "drizzle-orm": "^0.36.0",
     "ioredis": "^5.4.0",
     "next": "16.3.4",
+    "pdfkit": "^0.20.2",
     "react": "19.2.8",
     "react-dom": "19.2.8",
     "zod": "^3.24.0"

@@ -134,3 +134,9 @@ versioned and editable. Requires `ANTHROPIC_MODEL_RESEARCH` in `.env`
 by `loadEnv` — without it, every web API route returns a 500 (the app itself
 starts), and both workers and `db:migrate` fail to start. Add
 `ANTHROPIC_MODEL_RESEARCH=claude-sonnet-5` to `.env`.
+
+Phase 7b (Document Export) complete: on a match page, the selected optimized
+resume or pitch version downloads as PDF or DOCX (single-column, ATS-readable,
+Unicode font embedded). Files are stored in MinIO and listed under "Documents";
+export is refused if your profile changed since the optimization or a generated
+pitch still has an unsupported bullet.

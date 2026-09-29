@@ -24,3 +24,4 @@ export * from "./atsEvaluations";
 export * from "./companyResearch";
 export * from "./companyResearchFacts";
 export * from "./applicationPitches";
+export * from "./generatedDocuments";

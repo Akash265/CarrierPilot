@@ -1,0 +1,29 @@
+import { describe, it, expect } from "vitest";
+import { toDocumentView, contentDisposition } from "./serializeDocument";
+
+describe("toDocumentView", () => {
+  it("serializes and builds the download URL", () => {
+    const view = toDocumentView({
+      id: "d1", userId: "u", jobId: "j", kind: "resume", format: "pdf", resumeOptimizationId: "o", applicationPitchId: null,
+      objectKey: "u/x.pdf", byteSize: 1234, contentHash: "h", rendererVersion: "1", downloadFilename: "Jane - Acme - Resume.pdf",
+      createdAt: new Date("2026-09-24T00:00:00Z"),
+    } as never, 3);
+    expect(view).toEqual({
+      id: "d1", kind: "resume", format: "pdf", sourceVersion: 3, downloadFilename: "Jane - Acme - Resume.pdf",
+      byteSize: 1234, createdAt: "2026-09-24T00:00:00.000Z", downloadUrl: "/api/documents/d1/download",
+    });
+    expect(JSON.stringify(view)).not.toContain("u/x.pdf");
+  });
+});
+
+describe("contentDisposition", () => {
+  it("emits an ASCII filename and an encoded filename*", () => {
+    expect(contentDisposition("Jane Doe - Acme - Resume.pdf")).toBe(
+      `attachment; filename="Jane Doe - Acme - Resume.pdf"; filename*=UTF-8''Jane%20Doe%20-%20Acme%20-%20Resume.pdf`
+    );
+  });
+
+  it("neutralizes quotes and non-ASCII in the fallback", () => {
+    expect(contentDisposition('a"bé.pdf')).toMatch(/^attachment; filename="a_b_\.pdf"; filename\*=UTF-8''a%22b%C3%A9\.pdf$/);
+  });
+});

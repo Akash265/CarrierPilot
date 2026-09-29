@@ -52,7 +52,7 @@ downloadFilename       text     -- sanitized, e.g. "Jane Doe - GitLab - Resume.p
 createdAt              timestamptz
 ```
 
-Constraints: CHECK `(kind = 'resume' AND application_pitch_id IS NULL) OR (kind = 'pitch' AND resume_optimization_id IS NULL)` — the source column that does not match `kind` is always null (the matching one may later become null via `ON DELETE SET NULL`, so it is not required non-null at the DB level; the pipeline always sets it at insert). Unique index `(user_id, kind, format, content_hash)` — de-duplication and the concurrency backstop (§4.4). Plus `generated_documents_job_id_idx` on `(job_id)` for the per-job list query (Postgres does not index FK columns automatically).
+Constraints: CHECK `(kind = 'resume' AND application_pitch_id IS NULL) OR (kind = 'pitch' AND resume_optimization_id IS NULL)` — the source column that does not match `kind` is always null (the matching one may later become null via `ON DELETE SET NULL`, so it is not required non-null at the DB level; the pipeline always sets it at insert). Unique index `(user_id, job_id, kind, format, content_hash)` — de-duplication and the concurrency backstop (§4.4); `job_id` is part of the key (not just an FK) because the `DocumentModel` carries nothing job-specific, so without it an export for job B could return job A's stored row. Plus `generated_documents_job_id_idx` on `(job_id)` for the per-job list query (Postgres does not index FK columns automatically).
 
 **Known gap (recorded, not solved here):** a `jobs` delete cascades `generated_documents` rows but leaves their MinIO objects; the future Phase 9 retention job must also sweep orphaned objects.
 
@@ -79,7 +79,7 @@ interface DocumentModel {
 }
 ```
 
-Every string in a model passes `hasUnsafeText` = false or the export fails with `invalid_content` (defense in depth; profile text was validated at confirm time).
+Every string in a model passes `hasUnsafeText` = false or the export fails with `invalid_content` (defense in depth; profile text was validated at confirm time). `storeDocument` runs the model through `normalizeModel` first — stripping/replacing XML-illegal control characters (D86) — and only then checks `hasUnsafeText` and computes the content hash, so both the safety check and the stored file reflect the cleaned text, not the raw model.
 
 ### 4.2 `buildResumeModel(profile, appliedBullets)` — pure
 
@@ -102,14 +102,17 @@ Title "Why I'm a fit for {job.title} at {job.companyName}"; contact line as abov
 ```
 exportResume(db, storage, { userId, jobId, optimizationId, format })
   1. load job (404 job_not_found), optimization where id = optimizationId AND job_id = jobId (400 source_mismatch)
-  2. snapshot = buildResumeSnapshot(tx); if snapshot.contentHash !== optimization.sourceProfileContentHash
+  2. steps 2-3 run inside one withUserContext(..., { isolationLevel: "repeatable read" }) transaction:
+     snapshot = buildResumeSnapshot(tx); if snapshot.contentHash !== optimization.sourceProfileContentHash
        → 409 profile_changed ("Your profile changed since this optimization. Regenerate it first.")
-  3. load profile rows; no candidate_profiles row → 409 no_profile
+     (repeatable read: without it, a profile edit committing between buildResumeSnapshot's 7 SELECTs
+     and loadResumeProfile's 8 could hash the old rows but render the new ones)
+  3. load profile rows (same transaction); no candidate_profiles row → 409 no_profile
   4. model = buildResumeModel(...); contentHash = sha256(format + RENDERER_VERSION + stableStringify(model))
      (stableStringify = JSON with object keys sorted recursively; arrays keep order)
-  5. existing row with (kind, format, contentHash) → return it (no render, no upload)
+  5. existing row with (job_id, kind, format, contentHash) → return it (no render, no upload)
   6. buffer = render(model, format); objectKey = upload(buffer)          ── outside any transaction
-  7. INSERT … ON CONFLICT (user_id, kind, format, content_hash) DO NOTHING RETURNING *
+  7. INSERT … ON CONFLICT (user_id, job_id, kind, format, content_hash) DO NOTHING RETURNING *
        nothing returned → a concurrent identical export won: delete our just-uploaded object, re-read and return theirs
 
 exportPitch(db, storage, { userId, jobId, pitchId, format })
@@ -156,7 +159,7 @@ Status codes: 400 invalid body / bad JSON / source_mismatch; 404 non-UUID or unk
 - Object keys are generated (`{userId}/{uuid}.{ext}`); the user-visible name only appears in `Content-Disposition`, sanitized.
 - Download route looks the row up under RLS before reading storage, so one user can never fetch another's object even with a known id.
 - Profile changes after an optimization block resume export (no mixing old wording into a new profile); unsupported generated pitch bullets block pitch export.
-- `hasUnsafeText` on every model string.
+- `hasUnsafeText` on every model string, run after `normalizeModel` has already stripped/replaced XML-illegal control characters (D86) — so the check and the stored/hashed content agree.
 - Storage upload happens outside the DB transaction; an insert that loses a race deletes its own orphaned upload.
 
 ## 8. Testing
