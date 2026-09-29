@@ -1,0 +1,17 @@
+{
+  "jobTitle": "Backend Engineer",
+  "companyName": "Quillon",
+  "research": [
+    { "id": "r:q1", "text": "Quillon has 1 role in your job data: Backend Engineer.", "sourceUrl": null }
+  ],
+  "requirements": [
+    { "id": "q1", "termText": "Go", "requirementLevel": "required" },
+    { "id": "q2", "termText": "PostgreSQL", "requirementLevel": "required" },
+    { "id": "q3", "termText": "gRPC", "requirementLevel": "required" },
+    { "id": "q4", "termText": "Docker", "requirementLevel": "required" }
+  ],
+  "catalog": [
+    { "sourceFactId": "g1", "sourceType": "work_experience_bullet", "text": "Wrote backend services backed by PostgreSQL", "context": "Hooli — Software Engineer" },
+    { "sourceFactId": "g2", "sourceType": "skill", "text": "PostgreSQL", "context": null }
+  ]
+}

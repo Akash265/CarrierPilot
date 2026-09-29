@@ -14,7 +14,9 @@
     "typecheck": "tsc --noEmit",
     "lint": "eslint src eval",
     "eval:pitch": "dotenv -e ../../.env -- tsx eval/scorePitchGroundingEval.ts",
-    "eval:research": "dotenv -e ../../.env -- tsx eval/researchSmokeEval.ts"
+    "eval:research": "dotenv -e ../../.env -- tsx eval/researchSmokeEval.ts",
+    "eval:cover-letter": "dotenv -e ../../.env -- tsx eval/scoreCoverLetterGroundingEval.ts",
+    "eval:interview-prep": "dotenv -e ../../.env -- tsx eval/scoreInterviewPrepGroundingEval.ts"
   },
   "dependencies": {
     "@ai-career/ai": "workspace:*",

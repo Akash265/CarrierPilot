@@ -97,7 +97,10 @@ export async function generateInterviewPrep(
       `is the term exactly as listed; cite that term's requirementId. The framing is honest advice: never claim ` +
       `or imply the candidate has experience with the missing term. It may cite related "p:" evidence as ` +
       `adjacent experience and may suggest how to show willingness to learn.\n` +
-      `3. talkingPoints (3-6): facts about the company worth mentioning; each cites at least one "r:" id.\n` +
+      `3. talkingPoints (3-6): facts about the company worth mentioning; each cites at least one "r:" id. Exactly ` +
+      `3 are always required even when there are fewer than 3 distinct research facts -- in that case, write ` +
+      `multiple talking points from the same fact(s), each drawing a different angle or implication, rather than ` +
+      `providing fewer than 3.\n` +
       `4. questionsToAsk (3-5): thoughtful questions for the interviewer; each cites at least one "r:" or "q:" id.\n` +
       `Never invent an employer, skill, number, title, certification or company fact that is not in the ` +
       `evidence. If the evidence cannot support an item, keep it modest and set requiresReview to true.`,
