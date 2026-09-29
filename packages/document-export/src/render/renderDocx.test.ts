@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import JSZip from "jszip";
 import { extractText } from "@ai-career/ai";
 import { renderDocx } from "./renderDocx";
 import { renderDocument } from "./renderDocument";
@@ -18,6 +19,20 @@ const model: DocumentModel = {
   ],
 };
 
+/** Extracts `word/document.xml` from a rendered DOCX buffer, as a string. */
+async function documentXml(docx: Buffer): Promise<string> {
+  const zip = await JSZip.loadAsync(docx);
+  const part = zip.file("word/document.xml");
+  if (!part) throw new Error("word/document.xml missing from package");
+  return part.async("string");
+}
+
+/** Returns the `<w:p>...</w:p>` paragraph element containing the given text run, or undefined. */
+function paragraphContaining(xml: string, text: string): string | undefined {
+  const paragraphs = xml.match(/<w:p\b.*?<\/w:p>/gs) ?? [];
+  return paragraphs.find((p) => p.includes(`>${text}<`));
+}
+
 describe("renderDocx", () => {
   it("produces a DOCX (zip) whose extracted text contains every model string in order", async () => {
     const docx = await renderDocx(model);
@@ -25,12 +40,29 @@ describe("renderDocx", () => {
     expectTextInOrder(await extractText(docx, "docx"), modelStrings(model));
   });
 
-  it("uses Word heading styles and a bullet numbering definition", async () => {
-    const xml = (await renderDocx(model)).toString("latin1");
-    // document.xml is deflated inside the zip, so assert on the part names present in the package instead.
-    expect(xml).toContain("word/document.xml");
-    expect(xml).toContain("word/numbering.xml");
-    expect(xml).toContain("word/styles.xml");
+  it("uses real Word heading styles and a bullet numbering definition on the actual paragraphs", async () => {
+    const xml = await documentXml(await renderDocx(model));
+
+    expect(xml).toContain('<w:pStyle w:val="Title"/>');
+    expect(xml).toContain('<w:pStyle w:val="Heading1"/>');
+    expect(xml).toContain('<w:pStyle w:val="Heading2"/>');
+
+    const bulletParagraph = paragraphContaining(xml, "Built Spark pipelines");
+    expect(bulletParagraph, "bullet item paragraph not found").toBeDefined();
+    expect(bulletParagraph).toContain("<w:numPr>");
+  });
+
+  it("does not emit heading styles or numbering when the model has none (discriminates the styling test)", async () => {
+    const plain: DocumentModel = {
+      title: "Plain Title",
+      contactLine: null,
+      blocks: [{ type: "paragraph", text: "Just a paragraph, nothing else." }],
+    };
+    const xml = await documentXml(await renderDocx(plain));
+
+    expect(xml).not.toContain('<w:pStyle w:val="Heading1"/>');
+    expect(xml).not.toContain('<w:pStyle w:val="Heading2"/>');
+    expect(xml).not.toContain("<w:numPr>");
   });
 });
 
