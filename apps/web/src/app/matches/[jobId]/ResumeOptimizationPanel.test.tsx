@@ -88,6 +88,23 @@ describe("ResumeOptimizationPanel", () => {
     expect(screen.queryByText(/^Was:/)).not.toBeInTheDocument();
   });
 
+  it("clears a stale DownloadButtons error message when the selected version changes (fix wave item C: key={selected.id})", async () => {
+    const optV2 = { ...optimization, id: "opt2", version: 2 };
+    mockFetchSequence([
+      { body: { optimizations: [optimization, optV2] } },
+      { status: 409, body: { error: "Your profile changed since this optimization. Regenerate it first." } },
+    ]);
+    render(<ResumeOptimizationPanel jobId="j1" />);
+    await screen.findByText("92.5/100");
+
+    fireEvent.click(screen.getByRole("button", { name: "Download PDF" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Your profile changed since this optimization");
+
+    fireEvent.change(screen.getByRole("combobox"), { target: { value: "opt2" } });
+
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
   it("shows an error message when generation fails", async () => {
     mockFetchSequence([
       { body: { optimizations: [] } },

@@ -130,7 +130,7 @@ export function ResumeOptimizationPanel({ jobId }: { jobId: string }) {
 
       {selected && (
         <>
-          <DownloadButtons jobId={jobId} kind="resume" sourceId={selected.id} />
+          <DownloadButtons key={selected.id} jobId={jobId} kind="resume" sourceId={selected.id} />
           {selected.requiresReview && (
             <div role="alert" className="rounded border border-yellow-600 bg-yellow-50 p-3 text-sm">
               <p className="font-medium text-yellow-800">Review needed</p>

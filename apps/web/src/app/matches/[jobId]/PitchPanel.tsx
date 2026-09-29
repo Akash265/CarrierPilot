@@ -299,7 +299,7 @@ export function PitchPanel({ jobId }: { jobId: string }) {
               Copy
             </button>
             {copied && <span className="self-center text-sm text-gray-600">Copied</span>}
-            <DownloadButtons jobId={jobId} kind="pitch" sourceId={selected.id} disabled={busy !== null} />
+            <DownloadButtons key={selected.id} jobId={jobId} kind="pitch" sourceId={selected.id} disabled={busy !== null} />
           </div>
         </>
       )}
