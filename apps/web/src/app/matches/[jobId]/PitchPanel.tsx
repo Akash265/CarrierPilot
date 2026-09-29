@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { DownloadButtons } from "./DownloadButtons";
 
 type BulletKind = "company" | "role" | "candidate";
 type ResearchStatus = "ok" | "no_results" | "failed";
@@ -298,6 +299,7 @@ export function PitchPanel({ jobId }: { jobId: string }) {
               Copy
             </button>
             {copied && <span className="self-center text-sm text-gray-600">Copied</span>}
+            <DownloadButtons jobId={jobId} kind="pitch" sourceId={selected.id} disabled={busy !== null} />
           </div>
         </>
       )}
