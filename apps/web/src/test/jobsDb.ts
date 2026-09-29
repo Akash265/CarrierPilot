@@ -224,3 +224,25 @@ export async function insertCoverLetter(
     RETURNING id`;
   return row.id as string;
 }
+
+export const DEFAULT_INTERVIEW_PREP_SECTIONS = {
+  likelyQuestions: [1, 2, 3, 4, 5].map((i) => ({ question: `Likely question ${i}?`, category: "technical", answerOutline: [`Outline ${i}`], supported: true, unsupportedReason: null, evidence: [] })),
+  gapQuestions: [{ question: "Kubernetes?", requirementTerm: "Kubernetes", framing: "Be honest.", supported: true, unsupportedReason: null, evidence: [] }],
+  talkingPoints: [1, 2, 3].map((i) => ({ text: `Talking point ${i}.`, supported: true, unsupportedReason: null, evidence: [] })),
+  questionsToAsk: [1, 2, 3].map((i) => ({ question: `Ask ${i}?`, supported: true, unsupportedReason: null, evidence: [] })),
+};
+
+export async function insertInterviewPrep(
+  adminSql: postgres.Sql,
+  userId: string,
+  jobId: string,
+  opts: { version?: number } = {}
+): Promise<string> {
+  const [row] = await adminSql`
+    INSERT INTO interview_preparations (user_id, job_id, version, research_status_snapshot, researched_at_snapshot, sections,
+                                        gap_terms_snapshot, requires_review, source_profile_content_hash, generation_model)
+    VALUES (${userId}, ${jobId}, ${opts.version ?? 1}, 'ok', now(), ${JSON.stringify(DEFAULT_INTERVIEW_PREP_SECTIONS)}::jsonb,
+            '["Kubernetes"]'::jsonb, false, 'h', 'test-model')
+    RETURNING id`;
+  return row.id as string;
+}

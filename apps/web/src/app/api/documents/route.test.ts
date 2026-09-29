@@ -1,7 +1,7 @@
 // apps/web/src/app/api/documents/route.test.ts
 import { describe, it, expect, vi, beforeAll, beforeEach, afterAll } from "vitest";
 import type postgres from "postgres";
-import { openAdminDb } from "../../../test/jobsDb";
+import { openAdminDb, insertCoverLetter, insertInterviewPrep } from "../../../test/jobsDb";
 import { seedResumeExport, wipeDocumentsUser } from "../../../test/documentsDb";
 
 vi.mock("@ai-career/config", () => ({
@@ -106,6 +106,35 @@ describe("POST /api/documents", () => {
 
     const listed = await (await list(jobId)).json();
     expect(listed.documents.map((d: { id: string }) => d.id)).toEqual([document.id]);
+  });
+
+  it("exports a user_edited cover letter PDF and an interview prep DOCX (201), listing both with versions", async () => {
+    const { jobId } = await seedResumeExport(admin, USER);
+    const para = (role: string) => ({ role, text: `${role} text.`, supported: null, unsupportedReason: null, evidence: [] });
+    const letterId = await insertCoverLetter(admin, USER, jobId, { origin: "user_edited", paragraphs: ["opening", "company", "evidence", "closing"].map(para) });
+    const prepId = await insertInterviewPrep(admin, USER, jobId, { version: 4 });
+
+    const letterRes = await post({ kind: "cover_letter", jobId, sourceId: letterId, format: "pdf" });
+    expect(letterRes.status).toBe(201);
+    expect((await letterRes.json()).document).toMatchObject({ kind: "cover_letter", sourceVersion: 1, downloadFilename: "Jane Doe - GitLab - Cover Letter.pdf" });
+
+    const prepRes = await post({ kind: "interview_prep", jobId, sourceId: prepId, format: "docx" });
+    expect(prepRes.status).toBe(201);
+    expect((await prepRes.json()).document).toMatchObject({ kind: "interview_prep", sourceVersion: 4, downloadFilename: "Jane Doe - GitLab - Interview Prep.docx" });
+
+    const listed = await (await list(jobId)).json();
+    expect(listed.documents.map((d: { kind: string; sourceVersion: number }) => [d.kind, d.sourceVersion]).sort()).toEqual([["cover_letter", 1], ["interview_prep", 4]]);
+  });
+
+  it("returns 409 for a generated cover letter with an unsupported paragraph", async () => {
+    const { jobId } = await seedResumeExport(admin, USER);
+    const para = (role: string, supported: boolean) => ({ role, text: `${role}.`, supported, unsupportedReason: supported ? null : "x", evidence: [] });
+    const letterId = await insertCoverLetter(admin, USER, jobId, {
+      paragraphs: [para("opening", true), para("company", true), para("evidence", false), para("closing", true)],
+    });
+    const res = await post({ kind: "cover_letter", jobId, sourceId: letterId, format: "pdf" });
+    expect(res.status).toBe(409);
+    expect((await res.json()).error).toMatch(/unsupported paragraph/);
   });
 });
 

@@ -3,9 +3,11 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { eq } from "drizzle-orm";
 import { loadEnv } from "@ai-career/config";
-import { closeDbClient, createDbClient, schema, withUserContext } from "@ai-career/db";
+import { closeDbClient, createDbClient, schema, withUserContext, type DbClient } from "@ai-career/db";
 import { createStorageClient } from "@ai-career/storage";
-import { exportPitch, exportResume, DocumentExportError } from "@ai-career/document-export";
+import {
+  exportPitch, exportResume, exportCoverLetter, exportInterviewPrep, DocumentExportError, type GeneratedDocumentRow,
+} from "@ai-career/document-export";
 import { readJsonBody } from "../../../lib/readJsonBody";
 import { formatValidationError } from "../../../lib/formatValidationError";
 import { listDocuments } from "../../../lib/documents/listDocuments";
@@ -15,13 +17,52 @@ import { exportErrorResponse } from "../../../lib/documents/exportErrors";
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const ExportBodySchema = z
   .object({
-    kind: z.enum(["resume", "pitch"]),
+    kind: z.enum(["resume", "pitch", "cover_letter", "interview_prep"]),
     jobId: z.string().uuid(),
     sourceId: z.string().uuid(),
     format: z.enum(["pdf", "docx"]),
   })
   .strict();
-const { resumeOptimizations, applicationPitches } = schema;
+const { resumeOptimizations, applicationPitches, coverLetters, interviewPreparations } = schema;
+
+type ExportKind = z.infer<typeof ExportBodySchema>["kind"];
+type Storage = ReturnType<typeof createStorageClient>;
+
+function runExport(db: DbClient, storage: Storage, userId: string, kind: ExportKind, jobId: string, sourceId: string, format: "pdf" | "docx") {
+  switch (kind) {
+    case "resume":
+      return exportResume(db, storage, { userId, jobId, optimizationId: sourceId, format });
+    case "pitch":
+      return exportPitch(db, storage, { userId, jobId, pitchId: sourceId, format });
+    case "cover_letter":
+      return exportCoverLetter(db, storage, { userId, jobId, coverLetterId: sourceId, format });
+    case "interview_prep":
+      return exportInterviewPrep(db, storage, { userId, jobId, interviewPrepId: sourceId, format });
+  }
+}
+
+/** The version of the row's OWN source (content de-dup can return a row created for another version). */
+async function sourceVersion(db: DbClient, userId: string, row: GeneratedDocumentRow): Promise<number | null> {
+  return withUserContext(db, userId, async (tx) => {
+    if (row.resumeOptimizationId) {
+      const [source] = await tx.select({ version: resumeOptimizations.version }).from(resumeOptimizations).where(eq(resumeOptimizations.id, row.resumeOptimizationId)).limit(1);
+      return source?.version ?? null;
+    }
+    if (row.applicationPitchId) {
+      const [source] = await tx.select({ version: applicationPitches.version }).from(applicationPitches).where(eq(applicationPitches.id, row.applicationPitchId)).limit(1);
+      return source?.version ?? null;
+    }
+    if (row.coverLetterId) {
+      const [source] = await tx.select({ version: coverLetters.version }).from(coverLetters).where(eq(coverLetters.id, row.coverLetterId)).limit(1);
+      return source?.version ?? null;
+    }
+    if (row.interviewPreparationId) {
+      const [source] = await tx.select({ version: interviewPreparations.version }).from(interviewPreparations).where(eq(interviewPreparations.id, row.interviewPreparationId)).limit(1);
+      return source?.version ?? null;
+    }
+    return null;
+  });
+}
 
 export async function POST(request: Request) {
   const json = await readJsonBody(request);
@@ -34,23 +75,8 @@ export async function POST(request: Request) {
   const db = createDbClient(env);
   const storage = createStorageClient(env);
   try {
-    const row =
-      kind === "resume"
-        ? await exportResume(db, storage, { userId: env.DEFAULT_USER_ID, jobId, optimizationId: sourceId, format })
-        : await exportPitch(db, storage, { userId: env.DEFAULT_USER_ID, jobId, pitchId: sourceId, format });
-    // Content de-dup can return a row created for a different version of the same job (identical rendered
-    // model -> identical content hash), so the version must come from the row's OWN source id, not the
-    // sourceId the caller requested -- otherwise the response and the documents list (which already joins
-    // on the row's own ids, see listDocuments.ts) would disagree.
-    const versionSourceId = kind === "resume" ? row.resumeOptimizationId : row.applicationPitchId;
-    const [source] = versionSourceId
-      ? await withUserContext(db, env.DEFAULT_USER_ID, (tx) =>
-          kind === "resume"
-            ? tx.select({ version: resumeOptimizations.version }).from(resumeOptimizations).where(eq(resumeOptimizations.id, versionSourceId)).limit(1)
-            : tx.select({ version: applicationPitches.version }).from(applicationPitches).where(eq(applicationPitches.id, versionSourceId)).limit(1)
-        )
-      : [];
-    return NextResponse.json({ document: toDocumentView(row, source?.version ?? null) }, { status: 201 });
+    const row = await runExport(db, storage, env.DEFAULT_USER_ID, kind, jobId, sourceId, format);
+    return NextResponse.json({ document: toDocumentView(row, await sourceVersion(db, env.DEFAULT_USER_ID, row)) }, { status: 201 });
   } catch (error) {
     if (error instanceof DocumentExportError) return exportErrorResponse(error);
     throw error;
