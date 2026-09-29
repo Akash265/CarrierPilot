@@ -17,11 +17,24 @@ describe("buildPitchModel", () => {
     );
     expect(model).toEqual({
       title: "Why I'm a fit for Backend Engineer at GitLab",
-      contactLine: "jane@example.com",
+      contactLine: null,
       blocks: [
         { type: "paragraph", text: "Jane Doe" },
+        { type: "paragraph", text: "jane@example.com" },
         { type: "bullets", items: ["Company text.", "Role text.", "Candidate text."] },
       ],
     });
+  });
+
+  it("omits the contact-line paragraph entirely when there is nothing to show (fix round 2)", () => {
+    const model = buildPitchModel(
+      { fullName: "Jane Doe", email: "", phoneNumber: null, linkedinUrl: null },
+      { title: "Backend Engineer", companyName: "GitLab" },
+      bullets
+    );
+    expect(model.blocks).toEqual([
+      { type: "paragraph", text: "Jane Doe" },
+      { type: "bullets", items: ["Company text.", "Role text.", "Candidate text."] },
+    ]);
   });
 });
