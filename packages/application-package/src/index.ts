@@ -22,3 +22,12 @@ export {
   type PitchGenerationErrorClass, type RunPitchGenerationEnv, type RunPitchGenerationOptions, type RunPitchGenerationResult,
 } from "./pipeline/runPitchGeneration";
 export { createEditedPitch, EditPitchBodySchema, PitchEditError, type EditPitchBody } from "./pipeline/createEditedPitch";
+export {
+  checkCitations, indexEvidence, toGuarded, quoteId, KIND_LABEL,
+  type CitationRequirement, type CitationResult, type EvidenceLookup,
+} from "./guard/checkCitations";
+export { ApplicationGenerationError, type ApplicationGenerationErrorClass } from "./pipeline/generationError";
+export {
+  prepareApplicationContext,
+  type ApplicationContext, type ApplicationContextEnv, type PrepareApplicationContextOptions, type JobRow, type JobRequirementRow,
+} from "./pipeline/prepareApplicationContext";
