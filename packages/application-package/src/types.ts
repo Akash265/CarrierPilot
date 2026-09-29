@@ -48,3 +48,47 @@ export interface StoredCoverLetterParagraph {
   unsupportedReason: string | null;
   evidence: EvidenceSnapshot[];
 }
+
+/** Phase 7c interview preparation (design §3). */
+export const LIKELY_QUESTION_CATEGORIES = ["technical", "behavioral", "role"] as const;
+export type LikelyQuestionCategory = (typeof LIKELY_QUESTION_CATEGORIES)[number];
+export const MAX_QUESTION_CHARS = 300;
+export const MAX_OUTLINE_LINE_CHARS = 300;
+export const MAX_FRAMING_CHARS = 800;
+export const MAX_POINT_CHARS = 400;
+export const MAX_GAP_TERMS = 5;
+
+/** A required job term the profile evidence does not contain (computeGapTerms), with its job_requirements id. */
+export interface GapTerm {
+  term: string;
+  requirementId: string;
+}
+
+/** Guard output shared by every interview-prep item (packs are never user-edited, so supported is never null). */
+export interface GuardedItem {
+  supported: boolean;
+  unsupportedReason: string | null;
+  evidence: EvidenceSnapshot[];
+}
+export interface StoredLikelyQuestion extends GuardedItem {
+  question: string;
+  category: LikelyQuestionCategory;
+  answerOutline: string[];
+}
+export interface StoredGapQuestion extends GuardedItem {
+  question: string;
+  requirementTerm: string;
+  framing: string;
+}
+export interface StoredTalkingPoint extends GuardedItem {
+  text: string;
+}
+export interface StoredQuestionToAsk extends GuardedItem {
+  question: string;
+}
+export interface StoredInterviewPrepSections {
+  likelyQuestions: StoredLikelyQuestion[];
+  gapQuestions: StoredGapQuestion[];
+  talkingPoints: StoredTalkingPoint[];
+  questionsToAsk: StoredQuestionToAsk[];
+}
