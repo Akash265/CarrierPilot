@@ -89,6 +89,24 @@ describe("POST /api/documents", () => {
     expect((await post({ kind: "resume", jobId: other.id, sourceId: optimizationId, format: "pdf" })).status).toBe(400);
     expect((await post({ kind: "resume", jobId: "33333333-3333-3333-3333-333333333333", sourceId: optimizationId, format: "pdf" })).status).toBe(404);
   });
+
+  it("exports a user_edited pitch DOCX (201) and lists it with its source version", async () => {
+    const { jobId } = await seedResumeExport(admin, USER);
+    const bullet = (kind: string, text: string) => ({ kind, text, supported: null, unsupportedReason: null, evidence: [] });
+    const bullets = [bullet("company", "Company line."), bullet("role", "Role line."), bullet("candidate", "Candidate line.")];
+    const [pitch] = await admin`
+      INSERT INTO application_pitches (user_id, job_id, version, origin, research_status_snapshot, bullets, requires_review)
+      VALUES (${USER}, ${jobId}, 1, 'user_edited', 'ok', ${JSON.stringify(bullets)}::jsonb, false) RETURNING id`;
+
+    const res = await post({ kind: "pitch", jobId, sourceId: pitch.id, format: "docx" });
+    expect(res.status).toBe(201);
+    const { document } = await res.json();
+    expect(document).toMatchObject({ kind: "pitch", format: "docx", sourceVersion: 1, downloadFilename: "Jane Doe - GitLab - Pitch.docx" });
+    expect(document.downloadUrl).toBe(`/api/documents/${document.id}/download`);
+
+    const listed = await (await list(jobId)).json();
+    expect(listed.documents.map((d: { id: string }) => d.id)).toEqual([document.id]);
+  });
 });
 
 describe("GET /api/documents", () => {
