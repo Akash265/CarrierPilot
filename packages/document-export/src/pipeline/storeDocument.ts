@@ -21,6 +21,8 @@ export interface StoreDocumentInput {
   model: DocumentModel;
   resumeOptimizationId: string | null;
   applicationPitchId: string | null;
+  coverLetterId?: string | null;
+  interviewPreparationId?: string | null;
   downloadFilename: string;
 }
 
@@ -78,6 +80,8 @@ export async function storeDocument(db: DbClient, storage: Client, rawInput: Sto
           format: input.format,
           resumeOptimizationId: input.resumeOptimizationId,
           applicationPitchId: input.applicationPitchId,
+          coverLetterId: input.coverLetterId ?? null,
+          interviewPreparationId: input.interviewPreparationId ?? null,
           objectKey,
           byteSize: buffer.length,
           contentHash,

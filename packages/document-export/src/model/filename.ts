@@ -23,6 +23,13 @@ export function sanitizeFilename(base: string, extension: DocumentFormat): strin
   return `${safe.length > 0 ? safe : "document"}.${extension}`;
 }
 
+const KIND_LABELS: Record<DocumentKind, string> = {
+  resume: "Resume",
+  pitch: "Pitch",
+  cover_letter: "Cover Letter",
+  interview_prep: "Interview Prep",
+};
+
 /**
  * `sanitizeFilename`'s 120-char cap applies to the whole "name - company - kind" string, so a long company
  * name could truncate the string before it reached " - Resume"/" - Pitch" -- the resume and pitch downloads
@@ -33,5 +40,5 @@ export function sanitizeFilename(base: string, extension: DocumentFormat): strin
 export function buildDownloadFilename(fullName: string, companyName: string, kind: DocumentKind, format: DocumentFormat): string {
   const name = cleanPart(fullName, MAX_PART);
   const company = cleanPart(companyName, MAX_PART);
-  return sanitizeFilename(`${name} - ${company} - ${kind === "resume" ? "Resume" : "Pitch"}`, format);
+  return sanitizeFilename(`${name} - ${company} - ${KIND_LABELS[kind]}`, format);
 }

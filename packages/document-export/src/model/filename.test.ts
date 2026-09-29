@@ -43,4 +43,9 @@ describe("buildDownloadFilename", () => {
     expect(resume.endsWith(" - Resume.pdf")).toBe(true);
     expect(pitch.endsWith(" - Pitch.pdf")).toBe(true);
   });
+
+  it("labels the cover letter and interview prep kinds", () => {
+    expect(buildDownloadFilename("Jane Doe", "GitLab", "cover_letter", "pdf")).toBe("Jane Doe - GitLab - Cover Letter.pdf");
+    expect(buildDownloadFilename("Jane Doe", "GitLab", "interview_prep", "docx")).toBe("Jane Doe - GitLab - Interview Prep.docx");
+  });
 });

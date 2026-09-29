@@ -3,6 +3,7 @@ export type DocumentExportErrorClass =
   | "source_mismatch"
   | "profile_changed"
   | "pitch_unsupported"
+  | "cover_letter_unsupported"
   | "no_profile"
   | "invalid_content"
   | "storage_unavailable";
