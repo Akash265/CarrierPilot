@@ -163,4 +163,29 @@ describe("buildResumeModel", () => {
   it("throws when an applied bullet's id belongs to a different source type", () => {
     expect(() => buildResumeModel(profile, [applied("b1", "achievement", "x")])).toThrow(/b1/);
   });
+
+  // Fix round 2 (second review): an empty/whitespace-only optimizedText must fall back to the original
+  // text -- Phase 6's AppliedBullet schema allows z.string(), so the guard does not stop this reaching
+  // here, and the item stays first (selection order), not the text.
+
+  it("falls back to the original bullet text when optimizedText is blank, keeping selection order", () => {
+    const model = buildResumeModel(profile, [applied("b3", "work_experience_bullet", "   ")]);
+    const exp = blocksAfter(model, "Experience")!;
+    expect(exp[1]).toEqual({ type: "bullets", items: ["Built C", "Built A", "Built B"] });
+  });
+
+  it("falls back to the original achievement text when optimizedText is empty, keeping selection order", () => {
+    const model = buildResumeModel(profile, [applied("a2", "achievement", "")]);
+    const ach = blocksAfter(model, "Achievements")!;
+    expect(ach[0]).toEqual({ type: "bullets", items: ["Award Y", "Award X"] });
+  });
+
+  it("falls back to the original project description when optimizedText is blank, keeping selection order", () => {
+    const model = buildResumeModel(profile, [applied("p2", "project", "  ")]);
+    const proj = blocksAfter(model, "Projects")!;
+    expect(proj.slice(0, 2)).toEqual([
+      { type: "entry", title: "Proj Two", subtitle: "https://two.example", meta: null },
+      { type: "paragraph", text: "Second project" },
+    ]);
+  });
 });

@@ -16,7 +16,11 @@ function selectedFirst<T extends { id: string }>(
     if (a.sourceType !== sourceType) continue;
     const item = byId.get(a.sourceFactId);
     if (!item || used.has(item.id)) continue; // wrong group, or a duplicate applied entry -- first occurrence wins
-    chosen.push({ item, text: a.optimizedText });
+    // Phase 6's AppliedBullet schema allows optimizedText: z.string(), so a blank/whitespace-only value can
+    // reach here; fall back to the item's original text rather than rendering an empty bullet/paragraph.
+    // The item is still "selected" -- it keeps its place at the front of selection order -- only its text
+    // falls back.
+    chosen.push({ item, text: present(a.optimizedText) ? a.optimizedText : originalText(item) });
     used.add(item.id);
   }
   for (const item of items) if (!used.has(item.id)) chosen.push({ item, text: originalText(item) });
