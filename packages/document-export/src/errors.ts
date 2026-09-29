@@ -9,8 +9,8 @@ export type DocumentExportErrorClass =
 
 export class DocumentExportError extends Error {
   readonly errorClass: DocumentExportErrorClass;
-  constructor(errorClass: DocumentExportErrorClass) {
-    super(errorClass);
+  constructor(errorClass: DocumentExportErrorClass, options?: { cause?: unknown }) {
+    super(errorClass, options);
     this.name = "DocumentExportError";
     this.errorClass = errorClass;
   }

@@ -1,0 +1,2 @@
+DROP INDEX IF EXISTS "generated_documents_user_kind_format_hash_uniq";--> statement-breakpoint
+CREATE UNIQUE INDEX IF NOT EXISTS "generated_documents_user_job_kind_format_hash_uniq" ON "generated_documents" USING btree ("user_id","job_id","kind","format","content_hash");

@@ -36,10 +36,20 @@ export async function exportResume(db: DbClient, storage: Client, input: ExportR
   );
   if (!optimization) throw new DocumentExportError("source_mismatch");
 
-  const { snapshot, profile } = await inUserContext(async (tx) => ({
-    snapshot: await buildResumeSnapshot(tx),
-    profile: await loadResumeProfile(tx),
-  }));
+  // repeatable read: buildResumeSnapshot and loadResumeProfile issue 7 and 8 SELECTs respectively.
+  // Under the default read committed, a profile edit that commits between them could hash the old
+  // rows but render the new ones (an old optimizedText overwriting a just-edited bullet, or a
+  // deleted bullet surfacing as an unhandled 500). repeatable read gives both a single consistent
+  // snapshot (D84 update; see packages/db/src/rls.ts's WithUserContextOptions).
+  const { snapshot, profile } = await withUserContext(
+    db,
+    input.userId,
+    async (tx) => ({
+      snapshot: await buildResumeSnapshot(tx),
+      profile: await loadResumeProfile(tx),
+    }),
+    { isolationLevel: "repeatable read" }
+  );
   if (snapshot.contentHash !== optimization.sourceProfileContentHash) throw new DocumentExportError("profile_changed");
   if (!profile) throw new DocumentExportError("no_profile");
 

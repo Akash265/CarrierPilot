@@ -26,6 +26,8 @@ export interface StoreDocumentInput {
 /**
  * Hash → reuse, else render → upload (outside any transaction) → insert ON CONFLICT DO NOTHING.
  * A loser of a concurrent identical export deletes its own upload and returns the winner's row (D84).
+ * job_id is part of the de-dup key: the model carries nothing job-specific, so without it exporting
+ * for job B could return job A's stored row (D84 update).
  */
 export async function storeDocument(db: DbClient, storage: Client, input: StoreDocumentInput): Promise<GeneratedDocumentRow> {
   const inUserContext = <T>(fn: (tx: DbClient) => Promise<T>) => withUserContext(db, input.userId, fn);
@@ -36,7 +38,14 @@ export async function storeDocument(db: DbClient, storage: Client, input: StoreD
       tx
         .select()
         .from(generatedDocuments)
-        .where(and(eq(generatedDocuments.kind, input.kind), eq(generatedDocuments.format, input.format), eq(generatedDocuments.contentHash, contentHash)))
+        .where(
+          and(
+            eq(generatedDocuments.jobId, input.jobId),
+            eq(generatedDocuments.kind, input.kind),
+            eq(generatedDocuments.format, input.format),
+            eq(generatedDocuments.contentHash, contentHash)
+          )
+        )
         .limit(1)
     );
 
@@ -47,28 +56,38 @@ export async function storeDocument(db: DbClient, storage: Client, input: StoreD
   let objectKey: string;
   try {
     ({ objectKey } = await uploadGeneratedDocument(storage, { userId: input.userId, buffer, extension: input.format }));
-  } catch {
-    throw new DocumentExportError("storage_unavailable");
+  } catch (cause) {
+    throw new DocumentExportError("storage_unavailable", { cause });
   }
 
-  const [inserted] = await inUserContext((tx) =>
-    tx
-      .insert(generatedDocuments)
-      .values({
-        jobId: input.jobId,
-        kind: input.kind,
-        format: input.format,
-        resumeOptimizationId: input.resumeOptimizationId,
-        applicationPitchId: input.applicationPitchId,
-        objectKey,
-        byteSize: buffer.length,
-        contentHash,
-        rendererVersion: RENDERER_VERSION,
-        downloadFilename: input.downloadFilename,
-      })
-      .onConflictDoNothing({ target: [generatedDocuments.userId, generatedDocuments.kind, generatedDocuments.format, generatedDocuments.contentHash] })
-      .returning()
-  );
+  let inserted: GeneratedDocumentRow | undefined;
+  try {
+    [inserted] = await inUserContext((tx) =>
+      tx
+        .insert(generatedDocuments)
+        .values({
+          jobId: input.jobId,
+          kind: input.kind,
+          format: input.format,
+          resumeOptimizationId: input.resumeOptimizationId,
+          applicationPitchId: input.applicationPitchId,
+          objectKey,
+          byteSize: buffer.length,
+          contentHash,
+          rendererVersion: RENDERER_VERSION,
+          downloadFilename: input.downloadFilename,
+        })
+        .onConflictDoNothing({
+          target: [generatedDocuments.userId, generatedDocuments.jobId, generatedDocuments.kind, generatedDocuments.format, generatedDocuments.contentHash],
+        })
+        .returning()
+    );
+  } catch (err) {
+    // Not a de-dup conflict (onConflictDoNothing already swallows that) -- a genuine insert failure.
+    // The upload already happened; never leave an unreferenced object (with resume PII) behind.
+    await deleteGeneratedDocument(storage, objectKey).catch(() => {});
+    throw err;
+  }
   if (inserted) return inserted;
 
   await deleteGeneratedDocument(storage, objectKey).catch(() => {});

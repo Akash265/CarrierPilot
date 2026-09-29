@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import postgres from "postgres";
@@ -87,6 +87,11 @@ beforeAll(async () => {
     await adminSql.unsafe(
       `GRANT SELECT, INSERT, UPDATE, DELETE ON users TO ${APP_ROLE}`
     );
+    // `skills` (multiple rows per user_id, unlike the 1:1 `users` table) is used below only to prove
+    // withUserContext's isolationLevel option actually changes transaction behavior.
+    await adminSql.unsafe(
+      `GRANT SELECT, INSERT, UPDATE, DELETE ON skills TO ${APP_ROLE}`
+    );
   } finally {
     await lock`SELECT pg_advisory_unlock(${MIGRATION_LOCK})`;
     lock.release();
@@ -163,5 +168,59 @@ describe("withUserContext RLS isolation (real users table + shipped migration)",
         tx.execute(dsql`SELECT 1`)
       )
     ).rejects.toThrow(/user id/i);
+  });
+});
+
+describe("withUserContext isolation level", () => {
+  afterEach(async () => {
+    await adminSql`DELETE FROM skills WHERE user_id = ${USER_A}`;
+  });
+
+  it("SHOW transaction_isolation reflects the requested level; defaults to read committed", async () => {
+    const [defaultLevel] = await withUserContext(db, USER_A, (tx) =>
+      tx.execute(dsql`SHOW transaction_isolation`)
+    );
+    expect((defaultLevel as { transaction_isolation: string }).transaction_isolation).toBe("read committed");
+
+    const [rr] = await withUserContext(
+      db,
+      USER_A,
+      (tx) => tx.execute(dsql`SHOW transaction_isolation`),
+      { isolationLevel: "repeatable read" }
+    );
+    expect((rr as { transaction_isolation: string }).transaction_isolation).toBe("repeatable read");
+  });
+
+  // Deterministic (no real race): the concurrent insert runs on a separate connection and is fully
+  // awaited -- guaranteed committed -- before the second SELECT inside the still-open outer
+  // transaction. This is exactly the read-committed-vs-repeatable-read gap D84's exportResume fix
+  // closes: two reads several statements apart inside one transaction must not observe different
+  // committed states under repeatable read.
+  async function countSkillsAcrossAConcurrentInsert(
+    isolationLevel?: "read committed" | "repeatable read"
+  ): Promise<{ before: number; after: number }> {
+    return withUserContext(
+      db,
+      USER_A,
+      async (tx) => {
+        const [beforeRow] = await tx.execute(dsql`SELECT count(*)::int AS n FROM skills`);
+        await adminSql`INSERT INTO skills (user_id, name, display_order) VALUES (${USER_A}, 'Rust', 0)`;
+        const [afterRow] = await tx.execute(dsql`SELECT count(*)::int AS n FROM skills`);
+        return { before: (beforeRow as { n: number }).n, after: (afterRow as { n: number }).n };
+      },
+      isolationLevel ? { isolationLevel } : undefined
+    );
+  }
+
+  it("default (read committed) sees a concurrent commit made between two SELECTs in the same transaction", async () => {
+    const { before, after } = await countSkillsAcrossAConcurrentInsert();
+    expect(before).toBe(0);
+    expect(after).toBe(1);
+  });
+
+  it("repeatable read keeps a stable snapshot across two SELECTs despite a concurrent commit in between", async () => {
+    const { before, after } = await countSkillsAcrossAConcurrentInsert("repeatable read");
+    expect(before).toBe(0);
+    expect(after).toBe(0);
   });
 });

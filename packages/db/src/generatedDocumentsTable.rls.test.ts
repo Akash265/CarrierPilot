@@ -70,12 +70,17 @@ describe("generated_documents — RLS and constraints", () => {
     expect(asB).toHaveLength(0);
   });
 
-  it("de-duplicates on (user, kind, format, content_hash)", async () => {
+  it("de-duplicates on (user, job, kind, format, content_hash); the same content under a different job is a separate row", async () => {
     await wipe();
     const jobId = await seedJob();
     await insertDoc(jobId);
-    await expect(insertDoc(jobId)).rejects.toThrow(/generated_documents_user_kind_format_hash_uniq/);
+    await expect(insertDoc(jobId)).rejects.toThrow(/generated_documents_user_job_kind_format_hash_uniq/);
     await expect(insertDoc(jobId, { format: "docx" })).resolves.toHaveLength(1);
+
+    // job_id is part of the de-dup key (D84): identical content for a different job of the same
+    // user is not a duplicate -- exporting job B must never return job A's stored document.
+    const otherJobId = await seedJob();
+    await expect(insertDoc(otherJobId)).resolves.toHaveLength(1);
   });
 
   it("rejects a zero byte size", async () => {
