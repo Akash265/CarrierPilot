@@ -24,4 +24,23 @@ describe("buildDownloadFilename", () => {
     expect(buildDownloadFilename("Jane Doe", "GitLab", "resume", "pdf")).toBe("Jane Doe - GitLab - Resume.pdf");
     expect(buildDownloadFilename("Jane Doe", "GitLab", "pitch", "docx")).toBe("Jane Doe - GitLab - Pitch.docx");
   });
+
+  // Fix round 2 (second review): sanitizeFilename's 120-char cap applied to the whole "name - company -
+  // kind" string could truncate before reaching the " - Resume"/" - Pitch" suffix, so a long company name
+  // made the resume and pitch downloads for the same job collide on one filename.
+
+  it("caps the name and company parts independently (50 chars each) so a long value can never crowd out the other part or the kind suffix", () => {
+    const longCompany = "x".repeat(300);
+    const filename = buildDownloadFilename("Jane Doe", longCompany, "resume", "pdf");
+    expect(filename).toBe(`Jane Doe - ${"x".repeat(50)} - Resume.pdf`);
+  });
+
+  it("keeps Resume and Pitch filenames distinct even when the company name is very long", () => {
+    const longCompany = "x".repeat(300);
+    const resume = buildDownloadFilename("Jane Doe", longCompany, "resume", "pdf");
+    const pitch = buildDownloadFilename("Jane Doe", longCompany, "pitch", "pdf");
+    expect(resume).not.toBe(pitch);
+    expect(resume.endsWith(" - Resume.pdf")).toBe(true);
+    expect(pitch.endsWith(" - Pitch.pdf")).toBe(true);
+  });
 });
