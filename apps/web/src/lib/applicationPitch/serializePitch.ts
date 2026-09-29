@@ -1,6 +1,6 @@
 // apps/web/src/lib/applicationPitch/serializePitch.ts
 import {
-  isHttpUrl, type ApplicationPitchRow, type CompanyResearchWithFacts, type StoredPitchBullet,
+  isHttpUrl, type ApplicationPitchRow, type CompanyResearchWithFacts, type EvidenceSnapshot, type StoredPitchBullet,
 } from "@ai-career/application-package";
 
 export interface PitchEvidenceView {
@@ -51,6 +51,8 @@ export interface ResearchView {
 /** Defense in depth (spec §6): URLs were validated before insert, and are re-validated before they can become a link. */
 const safeUrl = (url: string | null): string | null => (url !== null && isHttpUrl(url) ? url : null);
 
+export const toEvidenceView = (e: EvidenceSnapshot): PitchEvidenceView => ({ id: e.id, kind: e.kind, text: e.text, sourceUrl: safeUrl(e.sourceUrl) });
+
 export function toPitchView(row: ApplicationPitchRow): PitchView {
   const bullets = row.bullets as StoredPitchBullet[];
   return {
@@ -63,7 +65,7 @@ export function toPitchView(row: ApplicationPitchRow): PitchView {
       text: b.text,
       supported: b.supported,
       unsupportedReason: b.unsupportedReason,
-      evidence: b.evidence.map((e) => ({ id: e.id, kind: e.kind, text: e.text, sourceUrl: safeUrl(e.sourceUrl) })),
+      evidence: b.evidence.map(toEvidenceView),
     })),
     requiresReview: row.requiresReview,
     researchStatus: row.researchStatusSnapshot,

@@ -204,3 +204,23 @@ export async function insertPitch(
     RETURNING id`;
   return row.id as string;
 }
+
+const DEFAULT_COVER_LETTER_PARAGRAPHS = ["opening", "company", "evidence", "closing"].map((role) => ({
+  role, text: `The ${role} paragraph.`, supported: true, unsupportedReason: null, evidence: [],
+}));
+
+export async function insertCoverLetter(
+  adminSql: postgres.Sql,
+  userId: string,
+  jobId: string,
+  opts: { version?: number; origin?: "generated" | "user_edited"; paragraphs?: object[] } = {}
+): Promise<string> {
+  const origin = opts.origin ?? "generated";
+  const [row] = await adminSql`
+    INSERT INTO cover_letters (user_id, job_id, version, origin, research_status_snapshot, researched_at_snapshot,
+                               paragraphs, requires_review, generation_model)
+    VALUES (${userId}, ${jobId}, ${opts.version ?? 1}, ${origin}, 'ok', now(),
+            ${JSON.stringify(opts.paragraphs ?? DEFAULT_COVER_LETTER_PARAGRAPHS)}::jsonb, false, ${origin === "generated" ? "test-model" : null})
+    RETURNING id`;
+  return row.id as string;
+}
