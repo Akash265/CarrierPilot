@@ -7,21 +7,33 @@ import {
 const text = (max: number) => z.string().trim().min(1).max(max);
 const evidenceIds = z.array(z.string().min(1));
 
+// D110: with sparse evidence, fewer honest items are better than a failed pack (a 502) or a model that
+// pads/fabricates items to hit a minimum. The prompt still asks for the planned ranges (likelyQuestions
+// 5-8, talkingPoints 3-6, questionsToAsk 3-5) and tells the model to return fewer rather than invent, but
+// the schema itself only floors each section at 1 item (gapQuestions stays 0..MAX_GAP_TERMS, unchanged).
+// When the model returns MORE than the planned max, that is not an error either: `capped` keeps the
+// first N items (in order) via a `.transform`, which Zod always runs after the array's own `.min()`
+// check, so a too-short array still fails validation while a too-long one is silently trimmed.
+const capped = <T extends z.ZodTypeAny>(schema: z.ZodArray<T>, max: number) => schema.transform((items) => items.slice(0, max));
+
 export const InterviewPrepDraftSchema = z.object({
-  likelyQuestions: z
-    .array(z.object({
-      question: text(MAX_QUESTION_CHARS),
-      category: z.enum(LIKELY_QUESTION_CATEGORIES),
-      answerOutline: z.array(text(MAX_OUTLINE_LINE_CHARS)).min(1).max(5),
-      evidenceIds,
-    }))
-    .min(5)
-    .max(8),
-  gapQuestions: z
-    .array(z.object({ question: text(MAX_QUESTION_CHARS), requirementTerm: text(MAX_REQUIREMENT_TERM_CHARS), framing: text(MAX_FRAMING_CHARS), evidenceIds }))
-    .max(MAX_GAP_TERMS),
-  talkingPoints: z.array(z.object({ text: text(MAX_POINT_CHARS), evidenceIds })).min(3).max(6),
-  questionsToAsk: z.array(z.object({ question: text(MAX_POINT_CHARS), evidenceIds })).min(3).max(5),
+  likelyQuestions: capped(
+    z
+      .array(z.object({
+        question: text(MAX_QUESTION_CHARS),
+        category: z.enum(LIKELY_QUESTION_CATEGORIES),
+        answerOutline: capped(z.array(text(MAX_OUTLINE_LINE_CHARS)).min(1), 5),
+        evidenceIds,
+      }))
+      .min(1),
+    8
+  ),
+  gapQuestions: capped(
+    z.array(z.object({ question: text(MAX_QUESTION_CHARS), requirementTerm: text(MAX_REQUIREMENT_TERM_CHARS), framing: text(MAX_FRAMING_CHARS), evidenceIds })),
+    MAX_GAP_TERMS
+  ),
+  talkingPoints: capped(z.array(z.object({ text: text(MAX_POINT_CHARS), evidenceIds })).min(1), 6),
+  questionsToAsk: capped(z.array(z.object({ question: text(MAX_POINT_CHARS), evidenceIds })).min(1), 5),
   requiresReview: z.boolean(),
 });
 

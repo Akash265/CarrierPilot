@@ -976,7 +976,11 @@ loading text says it can take up to a minute)
         limits, `gapQuestions`' item cap -- are restated in each property's `description`; D109), job /
         evidence / `modelGapTerms` (`{ term, requirementId: "q:…" }`) each in their own delimiter;
         `stop_reason === "max_tokens"` → `InterviewPrepGenerationValidationError` before any parsing (D109) →
-        Zod `InterviewPrepDraftSchema` (still the sole enforcer of lengths/counts).
+        Zod `InterviewPrepDraftSchema` (still the sole enforcer of lengths/counts): `likelyQuestions`,
+        `talkingPoints` and `questionsToAsk` floor at 1 item (`gapQuestions` 0..`MAX_GAP_TERMS`, unchanged);
+        an over-long array (likely >8, talking points >6, questions-to-ask >5, gap questions
+        >`MAX_GAP_TERMS`, an answer-outline >5 lines) is not rejected -- a `.transform` (the `capped` helper)
+        keeps the first N items, in order, after the array's own `.min()` check runs (D110).
      4. `applyInterviewPrepGuard(evidence, { modelGapTerms, allGapTerms }, draft)` (`interviewPrep/applyInterviewPrepGuard.ts`):
         - gapQuestions: ≥1 `q:`; term must be one of `modelGapTerms` (canonical spelling stored); one per term,
           reserved only once a question cites that term's own `q:` id; must cite that `q:`; must not cite a
@@ -1036,3 +1040,8 @@ in `apps/web/src/app/matches/[jobId]/viewTypes.ts`, `EvidenceView` in `EvidenceL
 Close-out changes (D104-D108) touched: 11b steps 1 and 3, the edit path and the review banner; 11c steps 2
 and 4 (gap candidates, claim heuristic); the prompt's untrusted-data sentence and the tool/Zod `minLength`
 constraints in all three `generate*` calls (pitch §9 included). Export layout of the two kinds: `document-export/src/model/build{CoverLetter,InterviewPrep}Model.ts`.
+
+D110 touched only 11c step 3: `interviewPrep/interviewPrepSchema.ts` (the `capped` transform, new floors) and
+`interviewPrep/generateInterviewPrep.ts` (the "return fewer rather than inventing" prompt sentence). Steps
+1, 2, 4, 5 and 6, `applyInterviewPrepGuard.ts`, `buildInterviewPrepModel.ts` and `InterviewPrepPanel.tsx` are
+unchanged -- they already handled a section of any length ≥0.

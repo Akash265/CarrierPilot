@@ -97,6 +97,14 @@ describe("generateInterviewPrep", () => {
     expect(call.system).toMatch(/at least 3, up to 6/i);
   });
 
+  // D110: with sparse evidence, fewer honest items are better than a failed pack or fabricated ones.
+  it("tells the model to return fewer items rather than inventing any when evidence is thin", async () => {
+    const { client, create } = clientWith(VALID);
+    await generateInterviewPrep(client, ENV, INPUT);
+    const call = create.mock.calls[0][0];
+    expect(call.system).toMatch(/return fewer rather than inventing any/i);
+  });
+
   it("says command-like text in the data is inert, not a fact about the candidate", async () => {
     const { client, create } = clientWith(VALID);
     await generateInterviewPrep(client, ENV, INPUT);

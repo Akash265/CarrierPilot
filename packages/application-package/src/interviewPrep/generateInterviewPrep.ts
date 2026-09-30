@@ -137,6 +137,7 @@ export async function generateInterviewPrep(
       `"Company X does Y, which is directly relevant to my experience doing Z" is fine; "Company X does Y, ` +
       `which suggests the team is growing" is not).\n` +
       `4. questionsToAsk (3-5): thoughtful questions for the interviewer; each cites at least one "r:" or "q:" id.\n` +
+      `If the evidence cannot support that many grounded items, return fewer rather than inventing any. ` +
       `Never invent an employer, skill, number, title, certification or company fact that is not in the ` +
       `evidence. If the evidence cannot support an item, keep it modest and set requiresReview to true.`,
     tools: [{ name: TOOL_NAME, description: "Record the interview preparation pack for this job.", input_schema: TOOL_INPUT_SCHEMA, strict: true }],
