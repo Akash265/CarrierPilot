@@ -2,6 +2,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, waitFor, within } from "@testing-library/react";
 import { CoverLetterPanel } from "./CoverLetterPanel";
+import { DOCUMENTS_CHANGED_EVENT } from "./DownloadButtons";
 
 const NOW_ISO = new Date().toISOString();
 const paragraphs = [
@@ -24,6 +25,13 @@ function mockFetchSequence(responses: { body: unknown; status?: number }[]) {
 }
 
 beforeEach(() => vi.unstubAllGlobals());
+
+/** Counts DOCUMENTS_CHANGED_EVENT dispatches (ApplicationPanel refreshes its version options on it). */
+function listenForDocumentsChanged() {
+  const listener = vi.fn();
+  window.addEventListener(DOCUMENTS_CHANGED_EVENT, listener);
+  return listener;
+}
 
 describe("CoverLetterPanel", () => {
   it("shows the optional note, an empty state and a Generate button", async () => {
@@ -117,6 +125,7 @@ describe("CoverLetterPanel", () => {
   });
 
   it("calls the run endpoint then reloads on Regenerate, and shows server errors", async () => {
+    const changed = listenForDocumentsChanged();
     const fetchMock = mockFetchSequence([
       { body: { versions: [letter], research } },
       { body: { error: "Confirm your profile first" }, status: 409 },
@@ -125,9 +134,12 @@ describe("CoverLetterPanel", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Regenerate" }));
     expect(await screen.findByText("Confirm your profile first")).toBeInTheDocument();
     expect(fetchMock.mock.calls[1][0]).toBe("/api/cover-letters/j1/run");
+    expect(changed).not.toHaveBeenCalled();
+    window.removeEventListener(DOCUMENTS_CHANGED_EVENT, changed);
   });
 
   it("saves an edit as a new version with the base id and every paragraph", async () => {
+    const changed = listenForDocumentsChanged();
     const fetchMock = mockFetchSequence([
       { body: { versions: [letter], research } },
       { body: { coverLetter: { ...letter, id: "c2", version: 2, origin: "user_edited" } }, status: 201 },
@@ -144,6 +156,8 @@ describe("CoverLetterPanel", () => {
       baseVersionId: "c1",
       paragraphs: ["I am applying.", "Acme builds rockets.", "I built pipelines.", "Best regards."],
     });
+    await waitFor(() => expect(changed).toHaveBeenCalledTimes(1));
+    window.removeEventListener(DOCUMENTS_CHANGED_EVENT, changed);
   });
 
   it("labels an edited version's paragraphs as your wording and offers downloads", async () => {

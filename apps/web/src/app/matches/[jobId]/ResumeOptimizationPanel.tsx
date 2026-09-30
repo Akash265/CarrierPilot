@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { DownloadButtons } from "./DownloadButtons";
+import { DOCUMENTS_CHANGED_EVENT, DownloadButtons } from "./DownloadButtons";
 
 interface SelectedBulletView {
   sourceFactId: string;
@@ -83,6 +83,8 @@ export function ResumeOptimizationPanel({ jobId }: { jobId: string }) {
         setGenerateError(body?.error ?? "Could not generate an optimized resume.");
         return;
       }
+      // A new version exists: ApplicationPanel refreshes its "Mark as applied" options on this event.
+      window.dispatchEvent(new Event(DOCUMENTS_CHANGED_EVENT));
       await load();
     } catch {
       setGenerateError("Could not generate an optimized resume.");

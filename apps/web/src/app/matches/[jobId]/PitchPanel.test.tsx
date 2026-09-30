@@ -2,6 +2,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, waitFor, within, act } from "@testing-library/react";
 import { PitchPanel, researchAgeLabel } from "./PitchPanel";
+import { DOCUMENTS_CHANGED_EVENT } from "./DownloadButtons";
 
 const NOW_ISO = new Date().toISOString();
 const bullets = [
@@ -28,6 +29,13 @@ function mockFetchSequence(responses: { body: unknown; status?: number }[]) {
 }
 
 beforeEach(() => vi.unstubAllGlobals());
+
+/** Counts DOCUMENTS_CHANGED_EVENT dispatches (ApplicationPanel refreshes its version options on it). */
+function listenForDocumentsChanged() {
+  const listener = vi.fn();
+  window.addEventListener(DOCUMENTS_CHANGED_EVENT, listener);
+  return listener;
+}
 
 describe("researchAgeLabel", () => {
   it("formats today, one day and several days", () => {
@@ -156,6 +164,7 @@ describe("PitchPanel", () => {
   });
 
   it("calls the run endpoint then reloads when Regenerate is clicked", async () => {
+    const changed = listenForDocumentsChanged();
     const fetchMock = mockFetchSequence([
       { body: { versions: [pitch], research } },
       { body: { pitch: { ...pitch, id: "p2", version: 2 }, research }, status: 201 },
@@ -167,6 +176,8 @@ describe("PitchPanel", () => {
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
     expect(fetchMock.mock.calls[1][0]).toBe("/api/application-pitches/j1/run");
     expect(fetchMock.mock.calls[1][1]).toMatchObject({ method: "POST" });
+    await waitFor(() => expect(changed).toHaveBeenCalledTimes(1));
+    window.removeEventListener(DOCUMENTS_CHANGED_EVENT, changed);
   });
 
   it("shows the server's error message when generation fails", async () => {
@@ -180,6 +191,7 @@ describe("PitchPanel", () => {
   });
 
   it("saves an edit as a new version with the base id and three bullets", async () => {
+    const changed = listenForDocumentsChanged();
     const fetchMock = mockFetchSequence([
       { body: { versions: [pitch], research } },
       { body: { pitch: { ...pitch, id: "p2", version: 2, origin: "user_edited" } }, status: 201 },
@@ -196,9 +208,12 @@ describe("PitchPanel", () => {
       baseVersionId: "p1",
       bullets: ["Acme's rocket work excites me.", "My own role bullet.", "I built SQL pipelines."],
     });
+    await waitFor(() => expect(changed).toHaveBeenCalledTimes(1));
+    window.removeEventListener(DOCUMENTS_CHANGED_EVENT, changed);
   });
 
   it("refreshes research via the refresh endpoint", async () => {
+    const changed = listenForDocumentsChanged();
     const fetchMock = mockFetchSequence([
       { body: { versions: [pitch], research } },
       { body: { research } },
@@ -209,6 +224,9 @@ describe("PitchPanel", () => {
     fireEvent.click(within(line.parentElement!).getByRole("button", { name: "Refresh" }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
     expect(fetchMock.mock.calls[1][0]).toBe("/api/application-pitches/j1/research/refresh");
+    // A research refresh creates no pitch version, so the application options need no refresh.
+    expect(changed).not.toHaveBeenCalled();
+    window.removeEventListener(DOCUMENTS_CHANGED_EVENT, changed);
   });
 
   it("copies the three bullets as plain text", async () => {

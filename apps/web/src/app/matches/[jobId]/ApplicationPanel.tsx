@@ -3,6 +3,7 @@
 import { useEffect, useState, type FormEvent } from "react";
 import Link from "next/link";
 import { STATUS_LABELS } from "../../../lib/applications/statusLabels";
+import { DOCUMENTS_CHANGED_EVENT } from "./DownloadButtons";
 
 interface DocumentOption {
   id: string;
@@ -15,7 +16,20 @@ interface ForJob {
 }
 type State = { kind: "loading" } | { kind: "error" } | { kind: "ready"; data: ForJob };
 
-const todayLocal = () => new Date().toISOString().slice(0, 10);
+type DocKind = keyof ForJob["documentOptions"];
+/** An absent key means "follow the newest version"; a present key is the user's explicit pick ("" = None). */
+type Choices = Partial<Record<DocKind, string>>;
+
+const todayUtc = () => new Date().toISOString().slice(0, 10);
+/** Options arrive newest-first (server ordering). A pick that no longer exists falls back to the newest. */
+const resolveChoice = (options: DocumentOption[], choice: string | undefined): string =>
+  choice !== undefined && (choice === "" || options.some((o) => o.id === choice)) ? choice : (options[0]?.id ?? "");
+
+async function fetchForJob(jobId: string): Promise<ForJob> {
+  const res = await fetch(`/api/applications/for-job/${encodeURIComponent(jobId)}`);
+  if (!res.ok) throw new Error("load failed");
+  return (await res.json()) as ForJob;
+}
 const optionLabel = (o: DocumentOption) => `v${o.version}${o.origin === "user_edited" ? " (edited)" : ""}`;
 
 function VersionSelect({ label, id, options, value, onChange }: {
@@ -32,38 +46,40 @@ function VersionSelect({ label, id, options, value, onChange }: {
   );
 }
 
-/** Records which versions were actually sent (Phase 9). Newest versions are preselected; "None" is allowed. */
+/** Records which versions were actually sent (Phase 9). Newest versions are preselected (and kept current); "None" is allowed. */
 export function ApplicationPanel({ jobId }: { jobId: string }) {
   const [state, setState] = useState<State>({ kind: "loading" });
-  const [resumeId, setResumeId] = useState("");
-  const [pitchId, setPitchId] = useState("");
-  const [coverLetterId, setCoverLetterId] = useState("");
-  const [appliedAt, setAppliedAt] = useState(todayLocal());
+  const [choices, setChoices] = useState<Choices>({});
+  const [appliedAt, setAppliedAt] = useState(todayUtc());
   const [followUpAt, setFollowUpAt] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Options are re-fetched on mount, when a document is generated/edited/exported on this page
+  // (DOCUMENTS_CHANGED_EVENT) and when the window regains focus, so the defaults track the newest versions.
   useEffect(() => {
     let ignore = false;
-    fetch(`/api/applications/for-job/${encodeURIComponent(jobId)}`)
-      .then((res) => {
-        if (!res.ok) throw new Error("load failed");
-        return res.json() as Promise<ForJob>;
-      })
-      .then((data) => {
-        if (ignore) return;
-        setState({ kind: "ready", data });
-        setResumeId(data.documentOptions.resumes[0]?.id ?? "");
-        setPitchId(data.documentOptions.pitches[0]?.id ?? "");
-        setCoverLetterId(data.documentOptions.coverLetters[0]?.id ?? "");
-      })
-      .catch(() => {
-        if (!ignore) setState({ kind: "error" });
-      });
+    const load = () =>
+      fetchForJob(jobId)
+        .then((data) => {
+          if (!ignore) setState({ kind: "ready", data });
+        })
+        .catch(() => {
+          // A failed background refresh keeps the last good data; only the first load shows the error.
+          if (!ignore) setState((prev) => (prev.kind === "ready" ? prev : { kind: "error" }));
+        });
+    load();
+    window.addEventListener(DOCUMENTS_CHANGED_EVENT, load);
+    window.addEventListener("focus", load);
     return () => {
       ignore = true;
+      window.removeEventListener(DOCUMENTS_CHANGED_EVENT, load);
+      window.removeEventListener("focus", load);
     };
   }, [jobId]);
+
+  const choose = (kind: DocKind) => (value: string) => setChoices((prev) => ({ ...prev, [kind]: value }));
+  const selected = (kind: DocKind) => (state.kind === "ready" ? resolveChoice(state.data.documentOptions[kind], choices[kind]) : "");
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
@@ -71,14 +87,19 @@ export function ApplicationPanel({ jobId }: { jobId: string }) {
     setSubmitting(true);
     setError(null);
     try {
+      // Re-fetch right before submitting: feature_snapshot is write-once, so stale options must not be sent.
+      const fresh = await fetchForJob(jobId);
+      setState({ kind: "ready", data: fresh });
+      if (fresh.application) return;
+      const opts = fresh.documentOptions;
       const res = await fetch("/api/applications", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           jobId,
-          resumeOptimizationId: resumeId || null,
-          applicationPitchId: pitchId || null,
-          coverLetterId: coverLetterId || null,
+          resumeOptimizationId: resolveChoice(opts.resumes, choices.resumes) || null,
+          applicationPitchId: resolveChoice(opts.pitches, choices.pitches) || null,
+          coverLetterId: resolveChoice(opts.coverLetters, choices.coverLetters) || null,
           appliedAt,
           followUpAt: followUpAt || null,
         }),
@@ -89,7 +110,7 @@ export function ApplicationPanel({ jobId }: { jobId: string }) {
         return;
       }
       const a = body.application;
-      setState({ kind: "ready", data: { ...state.data, application: { id: a.id, status: a.status, appliedAt: a.appliedAt } } });
+      setState({ kind: "ready", data: { ...fresh, application: { id: a.id, status: a.status, appliedAt: a.appliedAt } } });
     } catch {
       setError("Could not record the application.");
     } finally {
@@ -112,9 +133,9 @@ export function ApplicationPanel({ jobId }: { jobId: string }) {
         <form onSubmit={submit} className="flex flex-col gap-3">
           <p className="text-sm text-gray-600">Record which versions you sent. They are kept with the application.</p>
           <div className="grid grid-cols-3 gap-3">
-            <VersionSelect label="Resume version" id="app-resume" options={state.data.documentOptions.resumes} value={resumeId} onChange={setResumeId} />
-            <VersionSelect label="Pitch version" id="app-pitch" options={state.data.documentOptions.pitches} value={pitchId} onChange={setPitchId} />
-            <VersionSelect label="Cover letter version" id="app-cover-letter" options={state.data.documentOptions.coverLetters} value={coverLetterId} onChange={setCoverLetterId} />
+            <VersionSelect label="Resume version" id="app-resume" options={state.data.documentOptions.resumes} value={selected("resumes")} onChange={choose("resumes")} />
+            <VersionSelect label="Pitch version" id="app-pitch" options={state.data.documentOptions.pitches} value={selected("pitches")} onChange={choose("pitches")} />
+            <VersionSelect label="Cover letter version" id="app-cover-letter" options={state.data.documentOptions.coverLetters} value={selected("coverLetters")} onChange={choose("coverLetters")} />
           </div>
           <div className="flex gap-3">
             <label className="flex flex-col gap-1 text-sm">

@@ -2,6 +2,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { ApplicationPanel } from "./ApplicationPanel";
+import { DOCUMENTS_CHANGED_EVENT } from "./DownloadButtons";
 
 beforeEach(() => vi.unstubAllGlobals());
 
@@ -47,5 +48,52 @@ describe("ApplicationPanel", () => {
     render(<ApplicationPanel jobId="j1" />);
     fireEvent.click(await screen.findByRole("button", { name: /mark as applied/i }));
     await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent(/already have an application/i));
+  });
+
+  it("submits the newest versions from a fresh fetch, not the stale mount-time options", async () => {
+    const fresh = { ...options, pitches: [{ id: "p2", version: 1, origin: null }] };
+    let gets = 0;
+    const fetchMock = vi.fn((_u: string, init?: RequestInit) => {
+      if (init?.method === "POST") return json({ application: { id: "a1", status: "applied", appliedAt: "2026-09-30" } }, true, 201);
+      gets += 1;
+      return json({ application: null, documentOptions: gets === 1 ? { ...options, pitches: [] } : fresh });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<ApplicationPanel jobId="j1" />);
+    expect(await screen.findByLabelText(/pitch version/i)).toHaveValue("");
+
+    fireEvent.click(screen.getByRole("button", { name: /mark as applied/i }));
+    expect(await screen.findByText(/applied on 2026-09-30/i)).toBeInTheDocument();
+    const [, init] = fetchMock.mock.calls.find(([, i]) => i?.method === "POST")!;
+    expect(JSON.parse(init!.body as string)).toMatchObject({ resumeOptimizationId: "r2", applicationPitchId: "p2" });
+  });
+
+  it("refreshes the options when documents change on the page", async () => {
+    let gets = 0;
+    vi.stubGlobal("fetch", vi.fn(() => {
+      gets += 1;
+      return json({ application: null, documentOptions: gets === 1 ? { ...options, pitches: [] } : { ...options, pitches: [{ id: "p2", version: 1, origin: null }] } });
+    }));
+    render(<ApplicationPanel jobId="j1" />);
+    expect(await screen.findByLabelText(/pitch version/i)).toHaveValue("");
+    window.dispatchEvent(new Event(DOCUMENTS_CHANGED_EVENT));
+    await waitFor(() => expect(screen.getByLabelText(/pitch version/i)).toHaveValue("p2"));
+  });
+
+  it("keeps an explicit None choice even when fresh options contain a resume", async () => {
+    let gets = 0;
+    const fetchMock = vi.fn((_u: string, init?: RequestInit) => {
+      if (init?.method === "POST") return json({ application: { id: "a1", status: "applied", appliedAt: "2026-09-30" } }, true, 201);
+      gets += 1;
+      const resumes = gets === 1 ? options.resumes : [{ id: "r3", version: 3, origin: null }, ...options.resumes];
+      return json({ application: null, documentOptions: { ...options, resumes } });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<ApplicationPanel jobId="j1" />);
+    fireEvent.change(await screen.findByLabelText(/resume version/i), { target: { value: "" } });
+    fireEvent.click(screen.getByRole("button", { name: /mark as applied/i }));
+    expect(await screen.findByText(/applied on 2026-09-30/i)).toBeInTheDocument();
+    const [, init] = fetchMock.mock.calls.find(([, i]) => i?.method === "POST")!;
+    expect(JSON.parse(init!.body as string)).toMatchObject({ resumeOptimizationId: null, applicationPitchId: "p1" });
   });
 });
