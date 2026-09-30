@@ -914,13 +914,18 @@ unmet → reason. Evidence snapshots are re-read from the index. `toGuarded` tur
   -> `POST /api/cover-letters/[jobId]/run` (`apps/web/src/app/api/cover-letters/[jobId]/run/route.ts`;
      non-UUID jobId → 404)
   -> `runCoverLetterGeneration` (`packages/application-package/src/pipeline/runCoverLetterGeneration.ts`)
-     1. `prepareApplicationContext` (11a).
+     1. `prepareApplicationContext` (11a), then `computeGapTerms(requirements, snapshot.catalog)` (every missing
+        required term, uncapped -- see 11c step 2).
      2. `generateCoverLetter` (`coverLetter/generateCoverLetter.ts`) -- `ANTHROPIC_MODEL_FAST`, forced tool
         `record_cover_letter`, job context and evidence in their own random delimiters (D20) → Zod
         `CoverLetterDraftSchema` (4-5 paragraphs, order opening / company / evidence ×1-2 / closing, ≤1200 chars).
+        The gap terms are NOT sent to the model.
      3. `applyCoverLetterGuard` (`coverLetter/applyCoverLetterGuard.ts`) -- `COVER_LETTER_CITATION_RULES`:
         opening ≥1 `q:`, company ≥1 `r:`, evidence ≥1 `p:`, closing none; requiresReview = any unsupported OR
-        the model's flag. `Anthropic.APIError` / `CoverLetterGenerationValidationError` → `unknown` → 502.
+        the model's flag. Then `findGapTermMentions(paragraphs, gapTerms)` (`coverLetter/findGapTermMentions.ts`,
+        pure): any NON-opening paragraph whose text `containsTerm`s a gap term → requiresReview = true, the
+        paragraph stays supported (D101). `Anthropic.APIError` / `CoverLetterGenerationValidationError` →
+        `unknown` → 502.
      4. `hasUnsafeText(paragraphs)` → `unknown` (D44).
      5. `insertCoverLetterVersion` (`pipeline/insertCoverLetterVersion.ts`) under
         `pg_advisory_xact_lock(hashtext('cover_letters'), hashtext(userId || ':' || jobId))`, origin `generated`,
@@ -947,21 +952,25 @@ loading text says it can take up to a minute)
      1. `prepareApplicationContext` (11a).
      2. `computeGapTerms(requirements, snapshot.catalog)` (`interviewPrep/computeGapTerms.ts`, pure):
         `required` terms not found by `containsTerm` (boundary-aware, D95) in the catalog text formatted as
-        `"context: text"`; sorted by term then id, de-duplicated case-insensitively, capped at 5 (D92).
+        `"context: text"`; sorted by term then id, de-duplicated case-insensitively, NOT capped (D100) →
+        `allGapTerms`; `modelGapTerms = allGapTerms.slice(0, MAX_GAP_TERMS)` (5).
      3. `generateInterviewPrep` (`interviewPrep/generateInterviewPrep.ts`) -- `ANTHROPIC_MODEL_RESEARCH`, forced
-        tool `record_interview_prep`, job / evidence / gap terms (`{ term, requirementId: "q:…" }`) each in their
-        own delimiter → Zod `InterviewPrepDraftSchema`.
-     4. `applyInterviewPrepGuard` (`interviewPrep/applyInterviewPrepGuard.ts`):
-        - gapQuestions: ≥1 `q:`; term must be a supplied gap term (canonical spelling stored); one per term,
+        tool `record_interview_prep`, job / evidence / `modelGapTerms` (`{ term, requirementId: "q:…" }`) each in
+        their own delimiter → Zod `InterviewPrepDraftSchema`.
+     4. `applyInterviewPrepGuard(evidence, { modelGapTerms, allGapTerms }, draft)` (`interviewPrep/applyInterviewPrepGuard.ts`):
+        - gapQuestions: ≥1 `q:`; term must be one of `modelGapTerms` (canonical spelling stored); one per term,
           reserved only once a question cites that term's own `q:` id; must cite that `q:`; must not cite a
-          `p:` containing the term (D92).
+          `p:` containing the term (D92); framing must not claim the skill -- `findSkillClaim(framing, term)`
+          (`interviewPrep/findSkillClaim.ts`, sentence-level claim pattern, negation-aware, term after the
+          pattern) → "framing may claim the missing skill "X"" (D102).
         - likelyQuestions: `LIKELY_QUESTION_CITATION_RULES` (technical/behavioral `q:` AND `p:`; role `p:` AND
-          `r:`-or-`q:`, D97); flagged if it cites a gap term's `q:` or its text contains a gap term (D96).
+          `r:`-or-`q:`, D97); flagged if it cites the `q:` of, or its text contains, ANY term in `allGapTerms`
+          (D96, D100).
         - talkingPoints ≥1 `r:`; questionsToAsk ≥1 `r:` or `q:`.
         `Anthropic.APIError` / `InterviewPrepGenerationValidationError` → `unknown` → 502.
-     5. `hasUnsafeText(sections)` (every string, answer-outline arrays included) → `unknown`.
+     5. `hasUnsafeText(sections)` (every string, answer-outline arrays included) and `hasUnsafeText(gap terms)` → `unknown`.
      6. `insertInterviewPrepVersion` under the advisory lock keyed on `'interview_preparations'`,
-        `gapTermsSnapshot` = the gap terms' text.
+        `gapTermsSnapshot` = every term in `allGapTerms` (so the panel/export list is complete).
   -> `apps/web/src/lib/interviewPrep/serializeInterviewPrep.ts` → 201 `{ interviewPrep, research }`; panel
      re-fetches `GET /api/interview-preps/[jobId]` (`listInterviewPreps` + `loadResearchForJob`).
 
@@ -975,7 +984,12 @@ loading text says it can take up to a minute)
      `buildCoverLetterModel` (name, contact line, "Dear Hiring Manager,", paragraphs, "Sincerely,", name).
   -> `exportInterviewPrep` (`pipeline/exportInterviewPrep.ts`): job, pack belongs to the job, full name for the
      filename → `buildInterviewPrepModel` (four headed sections; unsupported items suffixed " (unverified)";
-     never refused).
+     a gap question's "Missing: X" subtitle only when supported; never refused).
+
+Panel copy/display (`InterviewPrepPanel.tsx`): `formatInterviewPrepText` (Copy) marks unsupported items
+" (unverified)" the same way; each gap question shows "Missing: X" (supported) or "Term: X" (unsupported); the
+gap-term chips are a list labelled "Missing required terms" (D103). `CoverLetterPanel` edit mode labels two
+evidence textareas "Evidence of fit 1" / "Evidence of fit 2".
   -> `storeDocument` (§10 step 5) with `coverLetterId` / `interviewPreparationId`; the DB CHECK
      `generated_documents_source_matches_kind` (compares `kind::text`, D93) allows only the matching source column.
   -> The route's `sourceVersion` reads the version of whichever source id the returned row carries;
@@ -988,6 +1002,9 @@ Cover letter prompt/schema: `coverLetter/generateCoverLetter.ts` + `coverLetter/
 tool JSON schema and the Zod schema in lockstep; re-run `eval:cover-letter`). Interview prep prompt/schema:
 `interviewPrep/generateInterviewPrep.ts` + `interviewPrep/interviewPrepSchema.ts` (re-run `eval:interview-prep`).
 Per-item grounding rules: `coverLetter/applyCoverLetterGuard.ts` / `interviewPrep/applyInterviewPrepGuard.ts`;
-id rules shared with the pitch: `guard/checkCitations.ts`. Gap detection (what counts as "missing", the cap,
-the matcher): `interviewPrep/computeGapTerms.ts` only -- `containsTerm` is also used by the guard and the eval
-heuristic. Export layout of the two kinds: `document-export/src/model/build{CoverLetter,InterviewPrep}Model.ts`.
+id rules shared with the pitch: `guard/checkCitations.ts`. Gap detection (what counts as "missing", the
+matcher): `interviewPrep/computeGapTerms.ts` only -- `containsTerm` is also used by the guard,
+`findSkillClaim` and `findGapTermMentions`. The model's gap-term cap (`MAX_GAP_TERMS`) is applied in
+`runInterviewPrepGeneration` (and mirrored in the eval). The framing claim check: `interviewPrep/findSkillClaim.ts`
+only -- the guard and `eval:interview-prep` share it. The cover letter's gap-mention review rule:
+`coverLetter/findGapTermMentions.ts`, applied in `runCoverLetterGeneration`. Export layout of the two kinds: `document-export/src/model/build{CoverLetter,InterviewPrep}Model.ts`.
