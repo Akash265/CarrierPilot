@@ -101,4 +101,21 @@ describe("generated_documents — RLS and constraints", () => {
       INSERT INTO generated_documents (user_id, job_id, kind, format, application_pitch_id, object_key, byte_size, content_hash, renderer_version, download_filename)
       VALUES (${USER_A}, ${jobId}, 'resume', 'pdf', ${pitch.id}, 'k', 10, 'h3', '1', 'f.pdf')`).rejects.toThrow(/generated_documents_source_matches_kind/);
   });
+
+  it("accepts cover_letter / interview_prep rows only with their own source column", async () => {
+    await wipe();
+    const [job] = await adminSql`
+      INSERT INTO jobs (user_id, company_name, company_key, title, title_key, description_hash, first_seen_at, last_verified_at)
+      VALUES (${USER_A}, 'Acme', 'acme', 'Engineer', 'engineer', 'dh', now(), now()) RETURNING id`;
+    const paragraphs = JSON.stringify(["opening", "company", "evidence", "closing"].map((role) => ({ role, text: role, supported: null, unsupportedReason: null, evidence: [] })));
+    const [letter] = await adminSql`
+      INSERT INTO cover_letters (user_id, job_id, version, origin, research_status_snapshot, paragraphs, requires_review)
+      VALUES (${USER_A}, ${job.id}, 1, 'user_edited', 'ok', ${paragraphs}::jsonb, false) RETURNING id`;
+    await adminSql`
+      INSERT INTO generated_documents (user_id, job_id, kind, format, cover_letter_id, object_key, byte_size, content_hash, renderer_version, download_filename)
+      VALUES (${USER_A}, ${job.id}, 'cover_letter', 'pdf', ${letter.id}, 'k', 10, 'hc1', '1', 'f.pdf')`;
+    await expect(adminSql`
+      INSERT INTO generated_documents (user_id, job_id, kind, format, cover_letter_id, object_key, byte_size, content_hash, renderer_version, download_filename)
+      VALUES (${USER_A}, ${job.id}, 'interview_prep', 'pdf', ${letter.id}, 'k', 10, 'hc2', '1', 'f.pdf')`).rejects.toThrow(/generated_documents_source_matches_kind/);
+  });
 });

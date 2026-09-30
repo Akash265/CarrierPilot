@@ -46,7 +46,8 @@ export function testStorageClient(): Client {
   });
 }
 
-/** User-scoped; application_pitches / generated_documents / resume_optimizations cascade from jobs. */
+/** User-scoped; application_pitches / cover_letters / interview_preparations / generated_documents /
+ *  resume_optimizations cascade from jobs. */
 export async function wipeUser(adminSql: postgres.Sql, userId: string): Promise<void> {
   await adminSql`DELETE FROM jobs WHERE user_id = ${userId}`;
   await adminSql`DELETE FROM career_goals WHERE user_id = ${userId}`;

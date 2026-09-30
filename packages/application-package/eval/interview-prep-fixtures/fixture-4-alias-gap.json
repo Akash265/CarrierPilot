@@ -1,0 +1,23 @@
+{
+  "jobTitle": "Senior Data Engineer",
+  "companyName": "Northwind Logistics",
+  "research": [
+    { "id": "r:n1", "text": "Northwind Logistics operates a freight-matching platform used by mid-sized European carriers.", "sourceUrl": "https://northwind.example/about" },
+    { "id": "r:n2", "text": "Northwind raised a Series B round in 2025 to expand its routing analytics.", "sourceUrl": "https://news.example/northwind-series-b" }
+  ],
+  "requirements": [
+    { "id": "q1", "termText": "Apache Spark", "termType": "skill", "requirementLevel": "required" },
+    { "id": "q2", "termText": "SQL", "termType": "skill", "requirementLevel": "required" },
+    { "id": "q3", "termText": "Airflow", "termType": "tool", "requirementLevel": "required" },
+    { "id": "q4", "termText": "Kubernetes", "termType": "tool", "requirementLevel": "required" },
+    { "id": "q5", "termText": "dbt", "termType": "tool", "requirementLevel": "required" },
+    { "id": "q6", "termText": "Go", "termType": "skill", "requirementLevel": "required" },
+    { "id": "q7", "termText": "Snowflake", "termType": "tool", "requirementLevel": "preferred" }
+  ],
+  "catalog": [
+    { "sourceFactId": "b1", "sourceType": "work_experience_bullet", "text": "Built Spark batch pipelines processing 2 TB of shipment events per day", "context": "Globex — Data Engineer" },
+    { "sourceFactId": "b2", "sourceType": "work_experience_bullet", "text": "Migrated 40 cron jobs to Airflow DAGs with alerting", "context": "Globex — Data Engineer" },
+    { "sourceFactId": "b3", "sourceType": "skill", "text": "SQL", "context": null },
+    { "sourceFactId": "b4", "sourceType": "achievement", "text": "Presented the team's data platform roadmap at a regional Google Cloud meetup", "context": "Globex — Data Engineer" }
+  ]
+}

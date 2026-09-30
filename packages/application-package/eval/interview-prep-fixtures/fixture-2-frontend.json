@@ -1,0 +1,17 @@
+{
+  "jobTitle": "Frontend Engineer",
+  "companyName": "Lumen Health",
+  "research": [
+    { "id": "r:l1", "text": "Lumen Health builds a patient-scheduling app used by outpatient clinics.", "sourceUrl": "https://lumen.example" },
+    { "id": "r:l2", "text": "Lumen Health states accessibility as a core product value.", "sourceUrl": "https://lumen.example/values" }
+  ],
+  "requirements": [
+    { "id": "q1", "termText": "React", "termType": "skill", "requirementLevel": "required" },
+    { "id": "q2", "termText": "TypeScript", "termType": "skill", "requirementLevel": "required" },
+    { "id": "q3", "termText": "WCAG", "termType": "skill", "requirementLevel": "preferred" }
+  ],
+  "catalog": [
+    { "sourceFactId": "e1", "sourceType": "work_experience_bullet", "text": "Rebuilt the booking flow in React and TypeScript", "context": "Initech — Frontend Developer" },
+    { "sourceFactId": "e2", "sourceType": "achievement", "text": "Fixed 60 WCAG AA issues found in an accessibility audit", "context": "Initech — Frontend Developer" }
+  ]
+}

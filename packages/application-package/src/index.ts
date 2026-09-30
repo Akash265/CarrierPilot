@@ -22,3 +22,26 @@ export {
   type PitchGenerationErrorClass, type RunPitchGenerationEnv, type RunPitchGenerationOptions, type RunPitchGenerationResult,
 } from "./pipeline/runPitchGeneration";
 export { createEditedPitch, EditPitchBodySchema, PitchEditError, type EditPitchBody } from "./pipeline/createEditedPitch";
+export {
+  checkCitations, indexEvidence, toGuarded, quoteId, KIND_LABEL,
+  type CitationRequirement, type CitationResult, type EvidenceLookup,
+} from "./guard/checkCitations";
+export { ApplicationGenerationError, type ApplicationGenerationErrorClass } from "./pipeline/generationError";
+export {
+  prepareApplicationContext,
+  type ApplicationContext, type ApplicationContextEnv, type PrepareApplicationContextOptions, type JobRow, type JobRequirementRow,
+} from "./pipeline/prepareApplicationContext";
+export { CoverLetterDraftSchema, CoverLetterDraftParagraphSchema, isValidParagraphOrder, type CoverLetterDraft } from "./coverLetter/coverLetterSchema";
+export { generateCoverLetter, CoverLetterGenerationValidationError, type GenerateCoverLetterInput } from "./coverLetter/generateCoverLetter";
+export { applyCoverLetterGuard, COVER_LETTER_CITATION_RULES, type CoverLetterGuardResult } from "./coverLetter/applyCoverLetterGuard";
+export { insertCoverLetterVersion, type CoverLetterRow, type NewCoverLetterVersion } from "./pipeline/insertCoverLetterVersion";
+export { runCoverLetterGeneration, type RunCoverLetterGenerationResult } from "./pipeline/runCoverLetterGeneration";
+export { createEditedCoverLetter, EditCoverLetterBodySchema, CoverLetterEditError, type EditCoverLetterBody } from "./pipeline/createEditedCoverLetter";
+export {
+  computeGapTerms, containsTerm, isGapCandidate, MAX_GAP_TERM_WORDS, type RequirementForGapDetection, type RequirementTermType,
+} from "./interviewPrep/computeGapTerms";
+export { InterviewPrepDraftSchema, type InterviewPrepDraft } from "./interviewPrep/interviewPrepSchema";
+export { generateInterviewPrep, InterviewPrepGenerationValidationError, type GenerateInterviewPrepInput } from "./interviewPrep/generateInterviewPrep";
+export { applyInterviewPrepGuard, type InterviewPrepGuardResult, type InterviewPrepGapTerms } from "./interviewPrep/applyInterviewPrepGuard";
+export { insertInterviewPrepVersion, type InterviewPrepRow, type NewInterviewPrepVersion } from "./pipeline/insertInterviewPrepVersion";
+export { runInterviewPrepGeneration, type RunInterviewPrepGenerationResult } from "./pipeline/runInterviewPrepGeneration";

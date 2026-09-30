@@ -7,6 +7,7 @@ const RESPONSES: Record<DocumentExportError["errorClass"], [number, string]> = {
   source_mismatch: [400, "That version does not belong to this job"],
   profile_changed: [409, "Your profile changed since this optimization. Regenerate it first."],
   pitch_unsupported: [409, "This pitch has an unsupported bullet. Edit or regenerate it first."],
+  cover_letter_unsupported: [409, "This cover letter has an unsupported paragraph. Edit or regenerate it first."],
   no_profile: [409, "Confirm your profile first"],
   storage_unavailable: [502, "Document storage is unavailable. Try again."],
   invalid_content: [500, "The document could not be generated."],

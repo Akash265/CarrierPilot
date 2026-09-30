@@ -2,22 +2,17 @@
 
 import { useEffect, useState } from "react";
 import { DownloadButtons } from "./DownloadButtons";
+import { EvidenceList, type EvidenceView } from "./EvidenceList";
+import type { ResearchStatus, ResearchView } from "./viewTypes";
 
 type BulletKind = "company" | "role" | "candidate";
-type ResearchStatus = "ok" | "no_results" | "failed";
 
-interface PitchEvidenceView {
-  id: string;
-  kind: "research" | "requirement" | "profile";
-  text: string;
-  sourceUrl: string | null;
-}
 interface PitchBulletView {
   kind: BulletKind;
   text: string;
   supported: boolean | null;
   unsupportedReason: string | null;
-  evidence: PitchEvidenceView[];
+  evidence: EvidenceView[];
 }
 interface PitchView {
   id: string;
@@ -31,13 +26,6 @@ interface PitchView {
   generationModel: string | null;
   createdAt: string;
 }
-interface ResearchView {
-  id: string;
-  companyName: string;
-  status: ResearchStatus;
-  researchedAt: string;
-  searchCount: number;
-}
 
 type ListState =
   | { kind: "loading" }
@@ -49,27 +37,12 @@ const BULLET_LABELS: Record<BulletKind, string> = {
   role: "Why this role",
   candidate: "Why me",
 };
-const EVIDENCE_LABELS: Record<PitchEvidenceView["kind"], string> = {
-  research: "Company research",
-  requirement: "Job requirement",
-  profile: "Your profile",
-};
 
 export function researchAgeLabel(researchedAt: string, now: number = Date.now()): string {
   const days = Math.floor((now - Date.parse(researchedAt)) / 86_400_000);
   if (days <= 0) return "today";
   if (days === 1) return "1 day ago";
   return `${days} days ago`;
-}
-
-/** Evidence URLs come from the web: only http(s) may ever become a link (the server also enforces this). */
-function isHttpUrl(value: string): boolean {
-  try {
-    const url = new URL(value);
-    return url.protocol === "http:" || url.protocol === "https:";
-  } catch {
-    return false;
-  }
 }
 
 export function PitchPanel({ jobId }: { jobId: string }) {
@@ -268,26 +241,7 @@ export function PitchPanel({ jobId }: { jobId: string }) {
                   {b.supported === false && <span className="ml-2 rounded bg-yellow-100 px-1.5 py-0.5 normal-case">unsupported</span>}
                 </p>
                 <p>{b.text}</p>
-                {b.evidence.length > 0 && (
-                  <details className="mt-1 text-xs text-gray-600">
-                    <summary>Evidence ({b.evidence.length})</summary>
-                    <ul className="ml-4 list-disc">
-                      {b.evidence.map((e) => (
-                        <li key={e.id}>
-                          {EVIDENCE_LABELS[e.kind]}: {e.text}
-                          {e.sourceUrl && isHttpUrl(e.sourceUrl) && (
-                            <>
-                              {" "}
-                              <a href={e.sourceUrl} target="_blank" rel="noopener noreferrer nofollow" className="underline">
-                                source
-                              </a>
-                            </>
-                          )}
-                        </li>
-                      ))}
-                    </ul>
-                  </details>
-                )}
+                <EvidenceList evidence={b.evidence} />
               </li>
             ))}
           </ul>

@@ -1,0 +1,14 @@
+{
+  "jobTitle": "Platform Engineer",
+  "companyName": "Tessera Cloud",
+  "evidence": [
+    { "id": "r:t1", "kind": "research", "text": "Tessera Cloud runs a managed hosting platform for mid-sized e-commerce shops.", "sourceUrl": "https://tessera.example/about" },
+    { "id": "r:t2", "kind": "research", "text": "Tessera Cloud has 2 roles in your job data: Platform Engineer, Site Reliability Engineer.", "sourceUrl": null },
+    { "id": "q:k1", "kind": "requirement", "text": "[required] Kubernetes", "sourceUrl": null },
+    { "id": "q:k2", "kind": "requirement", "text": "[required] Terraform", "sourceUrl": null },
+    { "id": "q:k3", "kind": "requirement", "text": "[required] Python", "sourceUrl": null },
+    { "id": "p:d1", "kind": "profile", "text": "Initech — Backend Engineer: Containerised 12 Python services with Docker and wrote their CI pipelines", "sourceUrl": null },
+    { "id": "p:d2", "kind": "profile", "text": "Initech — Backend Engineer: Cut deployment time from 40 to 8 minutes by parallelising build steps", "sourceUrl": null },
+    { "id": "p:s1", "kind": "profile", "text": "Python", "sourceUrl": null }
+  ]
+}

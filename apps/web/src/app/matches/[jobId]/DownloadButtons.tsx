@@ -14,7 +14,7 @@ export function DownloadButtons({
   navigate = (url: string) => window.location.assign(url),
 }: {
   jobId: string;
-  kind: "resume" | "pitch";
+  kind: "resume" | "pitch" | "cover_letter" | "interview_prep";
   sourceId: string;
   disabled?: boolean;
   navigate?: (url: string) => void;

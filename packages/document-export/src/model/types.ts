@@ -12,7 +12,7 @@ export interface DocumentModel {
 }
 
 export type DocumentFormat = "pdf" | "docx";
-export type DocumentKind = "resume" | "pitch";
+export type DocumentKind = "resume" | "pitch" | "cover_letter" | "interview_prep";
 
 /** Bump whenever either renderer's output for the same model changes (it is part of the content hash). */
 export const RENDERER_VERSION = "1";

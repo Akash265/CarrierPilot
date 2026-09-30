@@ -51,6 +51,13 @@ describe("DocumentsList", () => {
     expect(navigate).not.toHaveBeenCalled();
   });
 
+  it("labels cover letter and interview prep documents", async () => {
+    mockListAndHead([{ ...doc, id: "d2", kind: "cover_letter", sourceVersion: 2 }, { ...doc, id: "d3", kind: "interview_prep", sourceVersion: 1 }], true);
+    render(<DocumentsList jobId="j1" />);
+    expect(await screen.findByText(/Cover letter v2 · PDF/)).toBeInTheDocument();
+    expect(screen.getByText(/Interview prep v1 · PDF/)).toBeInTheDocument();
+  });
+
   it("reloads when a documents-changed event fires", async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce({ ok: true, json: async () => ({ documents: [] }) } as Response)

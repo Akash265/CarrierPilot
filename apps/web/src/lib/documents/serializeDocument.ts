@@ -3,7 +3,7 @@ import type { GeneratedDocumentRow } from "@ai-career/document-export";
 
 export interface DocumentView {
   id: string;
-  kind: "resume" | "pitch";
+  kind: "resume" | "pitch" | "cover_letter" | "interview_prep";
   format: "pdf" | "docx";
   sourceVersion: number | null;
   downloadFilename: string;
