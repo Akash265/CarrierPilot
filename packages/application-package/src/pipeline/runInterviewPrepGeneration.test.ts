@@ -137,6 +137,15 @@ describe("runInterviewPrepGeneration", () => {
     expect(interviewPrep.gapTermsSnapshot).toEqual(["Kubernetes"]);
   });
 
+  it("still generates when research failed, citing an internal fact in talking points, and snapshots status failed", async () => {
+    vi.mocked(runCompanyResearch).mockResolvedValue({ status: "failed", errorCode: "api_error", researchModel: null, searchCount: 0, webFacts: [] });
+    const { interviewPrep } = await run(await seed());
+    expect(interviewPrep.researchStatusSnapshot).toBe("failed");
+    const sections = interviewPrep.sections as { talkingPoints: { supported: boolean; evidence: { text: string }[] }[] };
+    expect(sections.talkingPoints[0].supported).toBe(true);
+    expect(sections.talkingPoints[0].evidence[0].text).toContain("Acme has 1 role in your job data");
+  });
+
   it("maps Anthropic.APIError and InterviewPrepGenerationValidationError to unknown; rethrows anything else", async () => {
     const jobId = await seed();
     vi.mocked(generateInterviewPrep).mockRejectedValueOnce(new Anthropic.APIError(500, {}, "boom", undefined));

@@ -75,6 +75,21 @@ describe("InterviewPrepPanel", () => {
     expect(screen.getByText(/cites no company research/)).toBeInTheDocument();
   });
 
+  it("notes when the selected version's web research was unavailable", async () => {
+    mockFetchSequence([{ body: { versions: [{ ...prep, researchStatus: "failed" }], research: null } }]);
+    render(<InterviewPrepPanel jobId="j1" />);
+    expect(await screen.findByText(/web research unavailable/i)).toBeInTheDocument();
+  });
+
+  it("offers PDF and DOCX downloads for the selected version", async () => {
+    mockFetchSequence([{ body: { versions: [prep], research: null } }]);
+    render(<InterviewPrepPanel jobId="j1" />);
+    await screen.findByText("Tell me about SQL.");
+    const section = screen.getByRole("region", { name: /interview prep/i });
+    expect(within(section).getByRole("button", { name: "Download PDF" })).toBeInTheDocument();
+    expect(within(section).getByRole("button", { name: "Download DOCX" })).toBeInTheDocument();
+  });
+
   it("calls the run endpoint on Regenerate and reloads", async () => {
     const fetchMock = mockFetchSequence([
       { body: { versions: [prep], research: null } },

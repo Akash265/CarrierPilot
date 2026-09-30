@@ -28,9 +28,14 @@ export const InterviewPrepDraftSchema = z.object({
       .min(1),
     8
   ),
+  // Trimmed at 2x MAX_GAP_TERMS, not MAX_GAP_TERMS: the guard (applyInterviewPrepGuard), not this schema,
+  // is what limits a gap question to one per valid term -- an early duplicate or off-list gap question is
+  // flagged as an extra there, not rejected here. Trimming to the model's own planned count (MAX_GAP_TERMS)
+  // could silently drop a later, valid gap question past that point; doubling the room before the schema
+  // itself trims makes that far less likely while still bounding the array.
   gapQuestions: capped(
     z.array(z.object({ question: text(MAX_QUESTION_CHARS), requirementTerm: text(MAX_REQUIREMENT_TERM_CHARS), framing: text(MAX_FRAMING_CHARS), evidenceIds })),
-    MAX_GAP_TERMS
+    MAX_GAP_TERMS * 2
   ),
   talkingPoints: capped(z.array(z.object({ text: text(MAX_POINT_CHARS), evidenceIds })).min(1), 6),
   questionsToAsk: capped(z.array(z.object({ question: text(MAX_POINT_CHARS), evidenceIds })).min(1), 5),

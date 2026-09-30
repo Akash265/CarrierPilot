@@ -58,12 +58,25 @@ describe("InterviewPrepDraftSchema", () => {
       expect(askResult.data.questionsToAsk.map((q) => q.question)).toEqual(sevenAsk.slice(0, 5).map((q) => q.question));
     }
 
-    const sevenGap = Array.from({ length: 7 }, (_, i) => gapQ(i + 1));
-    const gapResult = InterviewPrepDraftSchema.safeParse({ ...valid(), gapQuestions: sevenGap });
+    // gapQuestions trims at 2 x MAX_GAP_TERMS (10), not MAX_GAP_TERMS (5): an early duplicate/off-list
+    // gap question (which the guard flags as an extra, not the schema) must not push a later valid one
+    // out of the array entirely.
+    const twelveGap = Array.from({ length: 12 }, (_, i) => gapQ(i + 1));
+    const gapResult = InterviewPrepDraftSchema.safeParse({ ...valid(), gapQuestions: twelveGap });
     expect(gapResult.success).toBe(true);
     if (gapResult.success) {
-      expect(gapResult.data.gapQuestions).toHaveLength(5);
-      expect(gapResult.data.gapQuestions.map((q) => q.requirementTerm)).toEqual(sevenGap.slice(0, 5).map((q) => q.requirementTerm));
+      expect(gapResult.data.gapQuestions).toHaveLength(10);
+      expect(gapResult.data.gapQuestions.map((q) => q.requirementTerm)).toEqual(twelveGap.slice(0, 10).map((q) => q.requirementTerm));
+    }
+  });
+
+  it("keeps a gapQuestions array of 7 whole (under the doubled 10-item trim cap)", () => {
+    const sevenGap = Array.from({ length: 7 }, (_, i) => gapQ(i + 1));
+    const result = InterviewPrepDraftSchema.safeParse({ ...valid(), gapQuestions: sevenGap });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.gapQuestions).toHaveLength(7);
+      expect(result.data.gapQuestions.map((q) => q.requirementTerm)).toEqual(sevenGap.map((q) => q.requirementTerm));
     }
   });
 

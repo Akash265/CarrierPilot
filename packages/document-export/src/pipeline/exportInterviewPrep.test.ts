@@ -64,6 +64,16 @@ describe("exportInterviewPrep", () => {
     for (const s of ["Interview preparation: Backend Engineer at GitLab", "Likely question 1?", "Outline 1", "Kubernetes question?", "Framing text.", "Talking point one. (unverified)", "Ask 3?"]) expect(text).toContain(s);
   });
 
+  it("returns the same row id when the same version and format are exported twice", async () => {
+    const { jobId } = await seedResumeFixture(testDb, USER);
+    const interviewPrepId = await insertPrep(jobId, true);
+    const first = await exportInterviewPrep(testDb.db, storage, { userId: USER, jobId, interviewPrepId, format: "pdf" });
+    const second = await exportInterviewPrep(testDb.db, storage, { userId: USER, jobId, interviewPrepId, format: "pdf" });
+    expect(second.id).toBe(first.id);
+    const [{ n }] = await testDb.adminSql`SELECT count(*)::int AS n FROM generated_documents WHERE user_id = ${USER}`;
+    expect(n).toBe(1);
+  });
+
   it("refuses a pack from another job (source_mismatch)", async () => {
     const { jobId } = await seedResumeFixture(testDb, USER);
     const interviewPrepId = await insertPrep(jobId, true);

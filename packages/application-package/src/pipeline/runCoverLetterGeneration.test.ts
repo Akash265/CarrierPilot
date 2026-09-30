@@ -156,6 +156,16 @@ describe("runCoverLetterGeneration", () => {
     expect((coverLetter.paragraphs as { missingTermMentions: string[] | null }[])[0].missingTermMentions).toEqual([]);
   });
 
+  it("still generates when research failed, citing an internal fact, and snapshots status failed", async () => {
+    vi.mocked(runCompanyResearch).mockResolvedValue({ status: "failed", errorCode: "api_error", researchModel: null, searchCount: 0, webFacts: [] });
+    const { coverLetter } = await run(await seed());
+    expect(coverLetter.researchStatusSnapshot).toBe("failed");
+    const paragraphs = coverLetter.paragraphs as { role: string; supported: boolean; evidence: { text: string }[] }[];
+    const company = paragraphs.find((p) => p.role === "company")!;
+    expect(company.supported).toBe(true);
+    expect(company.evidence[0].text).toContain("Acme has 1 role in your job data");
+  });
+
   it("maps Anthropic.APIError and CoverLetterGenerationValidationError to unknown; rethrows anything else", async () => {
     const jobId = await seed();
     vi.mocked(generateCoverLetter).mockRejectedValueOnce(new Anthropic.APIError(429, {}, "rate limited", undefined));

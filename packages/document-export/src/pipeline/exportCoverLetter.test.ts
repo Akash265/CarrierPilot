@@ -70,6 +70,16 @@ describe("exportCoverLetter", () => {
     await expect(exportCoverLetter(testDb.db, storage, { userId: USER, jobId, coverLetterId: edited, format: "docx" })).resolves.toMatchObject({ format: "docx" });
   });
 
+  it("returns the same row id when the same version and format are exported twice", async () => {
+    const { jobId } = await seedResumeFixture(testDb, USER);
+    const coverLetterId = await insertLetter(jobId, "generated", true);
+    const first = await exportCoverLetter(testDb.db, storage, { userId: USER, jobId, coverLetterId, format: "pdf" });
+    const second = await exportCoverLetter(testDb.db, storage, { userId: USER, jobId, coverLetterId, format: "pdf" });
+    expect(second.id).toBe(first.id);
+    const [{ n }] = await testDb.adminSql`SELECT count(*)::int AS n FROM generated_documents WHERE user_id = ${USER}`;
+    expect(n).toBe(1);
+  });
+
   it("refuses a letter from another job (source_mismatch) and a user without a profile (no_profile)", async () => {
     const { jobId } = await seedResumeFixture(testDb, USER);
     const coverLetterId = await insertLetter(jobId, "generated", true);
