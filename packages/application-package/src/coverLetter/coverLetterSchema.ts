@@ -11,7 +11,7 @@ export function isValidParagraphOrder(roles: CoverLetterRole[]): boolean {
 export const CoverLetterDraftParagraphSchema = z.object({
   role: z.enum(COVER_LETTER_ROLES),
   text: z.string().trim().min(1).max(MAX_PARAGRAPH_CHARS),
-  evidenceIds: z.array(z.string()),
+  evidenceIds: z.array(z.string().min(1)),
 });
 
 export const CoverLetterDraftSchema = z.object({

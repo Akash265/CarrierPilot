@@ -4,7 +4,7 @@ import { MAX_BULLET_CHARS, PITCH_BULLET_KINDS } from "../types";
 export const PitchDraftBulletSchema = z.object({
   kind: z.enum(PITCH_BULLET_KINDS),
   text: z.string().trim().min(1).max(MAX_BULLET_CHARS),
-  evidenceIds: z.array(z.string()),
+  evidenceIds: z.array(z.string().min(1)),
 });
 
 export const PitchDraftSchema = z.object({

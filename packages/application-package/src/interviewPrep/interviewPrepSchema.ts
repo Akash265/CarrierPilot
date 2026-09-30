@@ -5,7 +5,7 @@ import {
 } from "../types";
 
 const text = (max: number) => z.string().trim().min(1).max(max);
-const evidenceIds = z.array(z.string());
+const evidenceIds = z.array(z.string().min(1));
 
 export const InterviewPrepDraftSchema = z.object({
   likelyQuestions: z
