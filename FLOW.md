@@ -822,7 +822,9 @@ User clicks "Generate Pitch" / "Regenerate" on an eligible job's match detail pa
           of the write; if that guard blocks the update, the code re-reads what is actually stored
           instead (D74, as amended).
      4. `ensureJobRequirements` (Phase 6) -> `buildEvidenceIndex` (`r:` research, `q:` requirement, `p:` profile ids).
-     5. `generatePitch` -- fast-tier forced tool call `record_pitch` -> Zod `PitchDraftSchema`.
+     5. `generatePitch` -- fast-tier forced tool call `record_pitch` with `strict: true` (structure-only schema,
+        API-validated before return; `stop_reason === "max_tokens"` -> `PitchGenerationValidationError` before
+        any parsing; D109) -> Zod `PitchDraftSchema` (still the sole enforcer of lengths/counts).
      6. `applyPitchGuard` -- each bullet's citations go through the shared `checkCitations`
         (`guard/checkCitations.ts`): every cited id must exist, no repeats, each bullet must cite its own kind;
         failures kept with supported=false; evidence text snapshotted from the index.
@@ -839,7 +841,8 @@ Refresh: "Refresh" -> `POST …/research/refresh` -> `ensureCompanyResearch(…,
 a `failed` result over good research writes nothing and returns 502 (`CompanyResearchRefreshFailedError`).
 
 Changing the pitch prompt/schema: `pitch/generatePitch.ts` + `pitch/pitchSchema.ts` (keep the tool JSON
-schema and the Zod schema in lockstep by hand; re-run `eval:pitch`). Changing grounding rules:
+schema's structure and the Zod schema's fields in lockstep by hand -- the tool schema states shape only
+under `strict: true`, Zod states lengths/counts, D109; re-run `eval:pitch`). Changing grounding rules:
 `pitch/applyPitchGuard.ts` (per-bullet kinds) or `guard/checkCitations.ts` (the id rules shared with §11 --
 a change there affects all three documents). Changing what counts as a web fact: `research/extractCitedFacts.ts` only.
 
@@ -917,9 +920,13 @@ unmet → reason. Evidence snapshots are re-read from the index. `toGuarded` tur
      1. `prepareApplicationContext` (11a), then `computeGapTerms(requirements, snapshot.catalog)` (every missing
         required skill/tool/certification term of at most four words, uncapped -- see 11c step 2).
      2. `generateCoverLetter` (`coverLetter/generateCoverLetter.ts`) -- `ANTHROPIC_MODEL_FAST`, forced tool
-        `record_cover_letter`, job context and evidence in their own random delimiters (D20) → Zod
-        `CoverLetterDraftSchema` (4-5 paragraphs, order opening / company / evidence ×1-2 / closing, ≤1200 chars).
-        The gap terms are NOT sent to the model.
+        `record_cover_letter` with `strict: true` (the tool schema states structure only -- every object node
+        `additionalProperties: false` + full `required`, no length/count keywords -- and the API itself
+        validates `tool_use.input` against it before returning; D109), job context and evidence in their own
+        random delimiters (D20); `stop_reason === "max_tokens"` → `CoverLetterGenerationValidationError`
+        before any parsing (D109) → Zod `CoverLetterDraftSchema` (4-5 paragraphs, order opening / company /
+        evidence ×1-2 / closing, ≤1200 chars, the sole enforcer of lengths/counts). The gap terms are NOT sent
+        to the model.
      3. `applyCoverLetterGuard` (`coverLetter/applyCoverLetterGuard.ts`) -- `COVER_LETTER_CITATION_RULES`:
         opening ≥1 `q:`, company ≥1 `r:`, evidence ≥1 `p:`, closing none; requiresReview = any unsupported OR
         the model's flag. Then `findGapTermMentions(paragraphs, gapTerms)` (`coverLetter/findGapTermMentions.ts`,
@@ -964,8 +971,12 @@ loading text says it can take up to a minute)
         `"context: text"`; sorted by term then id, de-duplicated case-insensitively, NOT capped (D100) →
         `allGapTerms`; `modelGapTerms = allGapTerms.slice(0, MAX_GAP_TERMS)` (5).
      3. `generateInterviewPrep` (`interviewPrep/generateInterviewPrep.ts`) -- `ANTHROPIC_MODEL_RESEARCH`, forced
-        tool `record_interview_prep`, job / evidence / `modelGapTerms` (`{ term, requirementId: "q:…" }`) each in
-        their own delimiter → Zod `InterviewPrepDraftSchema`.
+        tool `record_interview_prep` with `strict: true` (structure-only schema, same shape as the cover
+        letter's; removed character/array caps that had no other statement in the prompt -- per-field char
+        limits, `gapQuestions`' item cap -- are restated in each property's `description`; D109), job /
+        evidence / `modelGapTerms` (`{ term, requirementId: "q:…" }`) each in their own delimiter;
+        `stop_reason === "max_tokens"` → `InterviewPrepGenerationValidationError` before any parsing (D109) →
+        Zod `InterviewPrepDraftSchema` (still the sole enforcer of lengths/counts).
      4. `applyInterviewPrepGuard(evidence, { modelGapTerms, allGapTerms }, draft)` (`interviewPrep/applyInterviewPrepGuard.ts`):
         - gapQuestions: ≥1 `q:`; term must be one of `modelGapTerms` (canonical spelling stored); one per term,
           reserved only once a question cites that term's own `q:` id; must cite that `q:`; must not cite a
