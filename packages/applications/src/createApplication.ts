@@ -8,6 +8,10 @@ import type { ApplicationRow } from "./types";
 
 const { jobs, jobPostings, jobMatches, applications, applicationEvents } = schema;
 
+const HTTP_URL_RE = /^https?:\/\//i;
+/** Ingested posting URLs are untrusted (job-source content); only http(s) is safe to store/render as a link. */
+const safeHttpUrl = (url: string | null | undefined): string | null => (url && HTTP_URL_RE.test(url) ? url : null);
+
 /** Postgres unique_violation (23505), bare or wrapped as `cause` by Drizzle. */
 function isUniqueViolation(error: unknown): boolean {
   const e = error as { code?: string; cause?: { code?: string } } | null;
@@ -57,7 +61,7 @@ export async function createApplication(
           jobId,
           companyName: job.companyName,
           jobTitle: job.title,
-          jobUrl: posting?.url ?? null,
+          jobUrl: safeHttpUrl(posting?.url),
           featureSnapshot: buildFeatureSnapshot({
             kind: "ingested",
             job,

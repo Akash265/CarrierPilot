@@ -61,6 +61,13 @@ describe("ApplicationDetailClient", () => {
     expect(await screen.findByText(/documents deleted after the retention period/i)).toBeInTheDocument();
   });
 
+  it("does not render a Posting link for a non-http(s) jobUrl", async () => {
+    mockApi({ ...application, jobUrl: "javascript:alert(1)" });
+    render(<ApplicationDetailClient id="a1" retentionDays={30} />);
+    await screen.findByRole("heading", { name: /acme — data engineer/i });
+    expect(screen.queryByRole("link", { name: /posting/i })).not.toBeInTheDocument();
+  });
+
   it("deletes after confirmation and navigates back to the list", async () => {
     mockApi();
     const navigate = vi.fn();

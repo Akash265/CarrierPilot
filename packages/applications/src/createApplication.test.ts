@@ -40,6 +40,13 @@ describe("createApplication", () => {
     expect(events).toEqual([{ type: "status_change", from_status: null, to_status: "applied" }]);
   });
 
+  it("stores no jobUrl when the ingested posting's url is not http(s) (untrusted job-source content)", async () => {
+    const s = await seedJobWithDocuments(t.adminSql, USER);
+    await t.adminSql`UPDATE job_postings SET url = 'javascript:alert(1)' WHERE job_id = ${s.jobId}`;
+    const row = await createApplication(t.db, USER, { jobId: s.jobId }, NOW);
+    expect(row.jobUrl).toBeNull();
+  });
+
   it("creates an external application with no job, typed-in fields and an external snapshot", async () => {
     const row = await createApplication(t.db, USER, { external: { companyName: "Globex", jobTitle: "Analyst", jobUrl: null }, appliedAt: "2026-09-28" }, NOW);
     expect(row).toMatchObject({ jobId: null, companyName: "Globex", jobTitle: "Analyst", appliedAt: "2026-09-28" });

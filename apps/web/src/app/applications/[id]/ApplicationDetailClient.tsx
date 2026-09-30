@@ -27,6 +27,10 @@ interface ApplicationView {
 }
 type State = { kind: "loading" } | { kind: "missing" } | { kind: "error" } | { kind: "ready"; application: ApplicationView; events: EventView[] };
 
+// Defense in depth: jobUrl ultimately comes from ingested job-source content (untrusted). The server
+// already refuses to store a non-http(s) URL (createApplication.ts), but never render one as a link either.
+const HTTP_URL_RE = /^https?:\/\//i;
+
 export function ApplicationDetailClient({
   id,
   retentionDays,
@@ -122,7 +126,7 @@ export function ApplicationDetailClient({
         <p className="text-sm text-gray-600">
           {STATUS_LABELS[a.status] ?? a.status} · applied {a.appliedAt}
           {a.external && " · External"}
-          {a.jobUrl && <> · <a href={a.jobUrl} target="_blank" rel="noopener noreferrer" className="underline">Posting</a></>}
+          {a.jobUrl && HTTP_URL_RE.test(a.jobUrl) && <> · <a href={a.jobUrl} target="_blank" rel="noopener noreferrer" className="underline">Posting</a></>}
         </p>
         {(summary.matchOverall !== null || summary.atsOverall !== null) && (
           <p className="text-sm text-gray-600">
