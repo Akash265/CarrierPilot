@@ -904,4 +904,26 @@ An earlier E2E run on commit `44a40f3` (an ancestor of `6e28175`, same recipe, d
 **Alternatives considered:** Importing `APPLICATION_STATUSES` directly in client code (rejected: bundle/dependency boundary violation); generating the client file from the enum at build time (rejected: more build-pipeline machinery than a nine-entry list justifies; the lockstep test gives the same safety at far lower cost).
 **What it affects:** `apps/web/src/lib/applications/statusLabels.ts`, `apps/web/src/lib/applications/statusLabels.test.ts`, `apps/web/src/app/matches/[jobId]/ApplicationPanel.tsx`, `apps/web/src/app/applications/{ApplicationsClient,[id]/ApplicationDetailClient}.tsx`.
 
+### D122. Phase 9 real-browser E2E on the final branch
+**Decision:** Before the E2E, the CI-order checks passed on branch `phase-9-application-tracker` at `bf45fa1`: `pnpm lint` (14/14 tasks, 0 errors; 4 warnings, all in files Phase 9 did not touch), `pnpm build`, `pnpm typecheck` and `pnpm test` (14/14 tasks). The Phase 9 flow was then run in real Chrome (playwright-core with system Chrome) against the production build (`pnpm --filter web build` + `next start`). The build used the migrated dev database (26 migrations, 0000–0025) and real MinIO. A dedicated "E2E Tracker Co" / "Senior Platform Engineer" job was seeded in SQL under `DEFAULT_USER_ID`, with an upload source, a posting, an eligible match, a confirmed goal, a resume optimization v1, a pitch v1, and two rendered PDFs stored in the `generated-documents` bucket. No model calls were needed.
+Checks that passed:
+1. **Match page, before applying:** the Application panel preselected the newest versions (resume v1, pitch v1).
+2. **Mark as applied:** the panel switched to "Applied on 2026-09-30 · Applied · Open in tracker" (confirmed by screenshot). The harness's own text locator first matched the form's "Applied on" label and logged a false failure; that was a script bug, not an app bug.
+3. **`/applications`:** the new row was listed. "Add external application" created a second row tagged External.
+4. **Detail page:**
+   - The status changed to Interviewing.
+   - An interview (round 1, technical) was logged, and the timeline showed "Applied", "Status: Applied → Interviewing" and "Interview round 1 (technical)".
+   - The recruiter name was saved.
+   - Choosing Rejected raised the retention confirmation dialog, which was accepted.
+5. **Retention:** `terminal_at` was backdated 31 days in SQL, after confirming this was the only application of the user due for purge. `pnpm retention:run` then printed `purgedApplications: 1, deletedRows: 4, deletedObjects: 2, orphanObjectsDeleted: 0, failedObjectDeletes: 0`.
+   - Both MinIO objects were verified present before the run and `NotFound` after it.
+   - The job's `generated_documents`, `resume_optimizations` and `application_pitches` counts dropped to 0.
+   - The application kept status `rejected`, gained `retention_purged_at`, and its document links were set to null. Its `feature_snapshot` was intact (match overall score still present).
+   - A `documents_purged` event recorded the counts.
+   - The detail page then showed "Documents deleted after the retention period.", and the timeline ended with "Generated documents deleted after the retention period".
+No browser console errors and no HTTP responses ≥400 across the run.
+**Not exercised:** re-running "Find Matches" to see the job become "You applied to this job at …" while its document panels stay visible. That needs the matching worker and the fake Anthropic server; it is covered by `runMatching.test.ts` (ineligible when applied, eligible again after the application is deleted) and `MatchDetailClient.test.tsx` (panels kept for an applied, ineligible match). Follow-up Done/Snooze in the browser, the orphan sweep against real MinIO objects, and the daily BullMQ scheduler were also not exercised; they are covered by `ApplicationsClient.test.tsx`, `runRetentionSweep.test.ts` and `services/maintenance-worker/src/worker.test.ts` respectively.
+**Why:** Unit, integration and component tests exercise each layer separately. None of them clicks through the real pages, or proves that the retention sweep deletes real MinIO objects and that the UI reflects the purge.
+**What it affects:** No source changes — verification only. Scripts, seed SQL and screenshots are outside the repo, in the session scratchpad (`/private/tmp/.../scratchpad/e2e-9`), and were not committed. Afterwards all E2E rows were deleted: both applications (their events cascaded), the E2E job (its postings, match, resume optimization and pitch cascaded), the E2E upload source, and the E2E career goal. Every related count was verified 0. The two MinIO objects had already been removed by the sweep.
+
 *Entries are appended chronologically. Do not edit or delete past entries when a decision is later reversed — add a new entry that supersedes it and cross-reference the original.*
