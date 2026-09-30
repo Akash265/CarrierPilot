@@ -41,6 +41,12 @@ describe("buildInterviewPrepModel", () => {
     expect(model.blocks).toContainEqual({ type: "entry", title: "SQL? (unverified)", subtitle: null, meta: null });
   });
 
+  it("labels a role-category likely question \"Role\"", () => {
+    const withRole = { ...sections, likelyQuestions: [{ question: "Why us?", category: "role" as const, answerOutline: ["Mission"], ...g() }] };
+    const model = buildInterviewPrepModel({ title: "T", companyName: "C" }, withRole, []);
+    expect(model.blocks[1]).toEqual({ type: "entry", title: "Why us?", subtitle: "Role", meta: null });
+  });
+
   it("says so when there are no gap terms", () => {
     const model = buildInterviewPrepModel({ title: "T", companyName: "C" }, { ...sections, gapQuestions: [] }, []);
     const i = model.blocks.findIndex((b) => b.type === "heading" && b.text === "Required skills not found in your profile");

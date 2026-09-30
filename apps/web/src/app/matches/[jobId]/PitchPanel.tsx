@@ -3,9 +3,9 @@
 import { useEffect, useState } from "react";
 import { DownloadButtons } from "./DownloadButtons";
 import { EvidenceList, type EvidenceView } from "./EvidenceList";
+import type { ResearchStatus, ResearchView } from "./viewTypes";
 
 type BulletKind = "company" | "role" | "candidate";
-type ResearchStatus = "ok" | "no_results" | "failed";
 
 interface PitchBulletView {
   kind: BulletKind;
@@ -25,13 +25,6 @@ interface PitchView {
   researchedAt: string | null;
   generationModel: string | null;
   createdAt: string;
-}
-interface ResearchView {
-  id: string;
-  companyName: string;
-  status: ResearchStatus;
-  researchedAt: string;
-  searchCount: number;
 }
 
 type ListState =

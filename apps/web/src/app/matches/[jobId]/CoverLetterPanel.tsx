@@ -3,9 +3,9 @@
 import { useEffect, useState } from "react";
 import { DownloadButtons } from "./DownloadButtons";
 import { EvidenceList, type EvidenceView } from "./EvidenceList";
+import type { ResearchStatus } from "./viewTypes";
 
 type ParagraphRole = "opening" | "company" | "evidence" | "closing";
-type ResearchStatus = "ok" | "no_results" | "failed";
 
 interface ParagraphView {
   role: ParagraphRole;
@@ -28,18 +28,12 @@ interface CoverLetterView {
   generationModel: string | null;
   createdAt: string;
 }
-interface ResearchView {
-  id: string;
-  companyName: string;
-  status: ResearchStatus;
-  researchedAt: string;
-  searchCount: number;
-}
 
+// The route also returns the current research; this panel shows only each version's own snapshot status.
 type ListState =
   | { kind: "loading" }
   | { kind: "error" }
-  | { kind: "ready"; versions: CoverLetterView[]; research: ResearchView | null; selectedId: string | null };
+  | { kind: "ready"; versions: CoverLetterView[]; selectedId: string | null };
 
 const ROLE_LABELS: Record<ParagraphRole, string> = {
   opening: "Opening",
@@ -99,13 +93,12 @@ export function CoverLetterPanel({ jobId }: { jobId: string }) {
       .then((body) => {
         if (opts.isStale?.()) return;
         const versions = body.versions as CoverLetterView[];
-        const research = (body.research as ResearchView | null) ?? null;
         setState((prev) => {
           let selectedId = versions[0]?.id ?? null;
           if (!opts.selectNewest && prev.kind === "ready" && prev.selectedId !== null) {
             if (versions.some((v) => v.id === prev.selectedId)) selectedId = prev.selectedId;
           }
-          return { kind: "ready", versions, research, selectedId };
+          return { kind: "ready", versions, selectedId };
         });
       })
       .catch(() => {

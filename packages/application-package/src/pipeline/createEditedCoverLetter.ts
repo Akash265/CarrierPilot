@@ -36,8 +36,8 @@ export class CoverLetterEditError extends Error {
 /**
  * Saves the user's wording as a new user_edited version (Phase 7c design §3; same rules as
  * createEditedPitch, D77): roles, evidence and research snapshot are copied from the base, supported /
- * unsupportedReason become null and requiresReview = false -- the user is the authority on their own
- * wording. The body must have exactly as many paragraphs as the base.
+ * unsupportedReason and missingTermMentions (D106) become null and requiresReview = false -- the user is
+ * the authority on their own wording. The body must have exactly as many paragraphs as the base.
  */
 export async function createEditedCoverLetter(db: DbClient, userId: string, jobId: string, body: EditCoverLetterBody): Promise<CoverLetterRow> {
   return withUserContext(db, userId, async (tx) => {
@@ -48,6 +48,8 @@ export async function createEditedCoverLetter(db: DbClient, userId: string, jobI
       .limit(1);
     if (!base) throw new CoverLetterEditError("base_not_found");
 
+    // The count check needs the base row, so it runs after the lookup: a body that could never match
+    // (e.g. four paragraphs against a five-paragraph base) still costs one indexed read, which is fine.
     const baseParagraphs = base.paragraphs as StoredCoverLetterParagraph[];
     if (baseParagraphs.length !== body.paragraphs.length) throw new CoverLetterEditError("paragraph_count_mismatch");
 

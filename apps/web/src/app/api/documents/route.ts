@@ -26,6 +26,8 @@ const ExportBodySchema = z
 const { resumeOptimizations, applicationPitches, coverLetters, interviewPreparations } = schema;
 
 type ExportKind = z.infer<typeof ExportBodySchema>["kind"];
+// @ai-career/storage exports only the factory, not a client type; this names what it returns so
+// runExport can take the one client POST creates instead of each export making its own.
 type Storage = ReturnType<typeof createStorageClient>;
 
 function runExport(db: DbClient, storage: Storage, userId: string, kind: ExportKind, jobId: string, sourceId: string, format: "pdf" | "docx") {

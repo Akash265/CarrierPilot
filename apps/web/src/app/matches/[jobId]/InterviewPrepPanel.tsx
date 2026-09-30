@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { DownloadButtons } from "./DownloadButtons";
 import { EvidenceList, type EvidenceView } from "./EvidenceList";
+import type { ResearchStatus } from "./viewTypes";
 
 interface Guarded {
   supported: boolean;
@@ -20,23 +21,17 @@ export interface InterviewPrepView {
   };
   gapTerms: string[];
   requiresReview: boolean;
-  researchStatus: "ok" | "no_results" | "failed";
+  researchStatus: ResearchStatus;
   researchedAt: string | null;
   generationModel: string;
   createdAt: string;
 }
-interface ResearchView {
-  id: string;
-  companyName: string;
-  status: "ok" | "no_results" | "failed";
-  researchedAt: string;
-  searchCount: number;
-}
 
+// The route also returns the current research; this panel shows only each version's own snapshot status.
 type ListState =
   | { kind: "loading" }
   | { kind: "error" }
-  | { kind: "ready"; versions: InterviewPrepView[]; research: ResearchView | null; selectedId: string | null };
+  | { kind: "ready"; versions: InterviewPrepView[]; selectedId: string | null };
 
 /** Same marking as the export's buildInterviewPrepModel. */
 const mark = (text: string, supported: boolean) => (supported ? text : `${text} (unverified)`);
@@ -92,13 +87,12 @@ export function InterviewPrepPanel({ jobId }: { jobId: string }) {
       .then((body) => {
         if (opts.isStale?.()) return;
         const versions = body.versions as InterviewPrepView[];
-        const research = (body.research as ResearchView | null) ?? null;
         setState((prev) => {
           let selectedId = versions[0]?.id ?? null;
           if (!opts.selectNewest && prev.kind === "ready" && prev.selectedId !== null) {
             if (versions.some((v) => v.id === prev.selectedId)) selectedId = prev.selectedId;
           }
-          return { kind: "ready", versions, research, selectedId };
+          return { kind: "ready", versions, selectedId };
         });
       })
       .catch(() => {
