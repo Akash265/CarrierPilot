@@ -7,27 +7,29 @@ import type { PitchEvidenceItem } from "./buildEvidenceIndex";
 
 const PITCH_TOOL_NAME = "record_pitch";
 
-// Keep in lockstep with PitchDraftSchema (pitchSchema.ts); the Zod schema is what is enforced.
+// Keep in lockstep with PitchDraftSchema (pitchSchema.ts); the Zod schema is what enforces lengths/counts --
+// this tool schema states structure only (strict tool use; see D109). The exactly-three-bullets count and the
+// per-bullet character cap are both stated in the system prompt already.
 const PITCH_TOOL_INPUT_SCHEMA = {
   type: "object",
   properties: {
     bullets: {
       type: "array",
-      minItems: 3,
-      maxItems: 3,
       items: {
         type: "object",
         properties: {
           kind: { type: "string", enum: ["company", "role", "candidate"] },
-          text: { type: "string", minLength: 1, maxLength: MAX_BULLET_CHARS },
-          evidenceIds: { type: "array", items: { type: "string", minLength: 1 } },
+          text: { type: "string", description: "Non-empty." },
+          evidenceIds: { type: "array", items: { type: "string", description: "Non-empty; copied exactly from an evidence item's id." } },
         },
         required: ["kind", "text", "evidenceIds"],
+        additionalProperties: false,
       },
     },
     requiresReview: { type: "boolean" },
   },
   required: ["bullets", "requiresReview"] as string[],
+  additionalProperties: false,
 } as const;
 
 export class PitchGenerationValidationError extends Error {}
@@ -73,6 +75,7 @@ export async function generatePitch(
         name: PITCH_TOOL_NAME,
         description: "Record the three-bullet Hiring Manager Pitch for this job.",
         input_schema: PITCH_TOOL_INPUT_SCHEMA,
+        strict: true,
       },
     ],
     tool_choice: { type: "tool", name: PITCH_TOOL_NAME },
@@ -86,6 +89,9 @@ export async function generatePitch(
     ],
   });
 
+  if (message.stop_reason === "max_tokens") {
+    throw new PitchGenerationValidationError("Pitch output truncated (max_tokens)");
+  }
   const toolUse = message.content.find((block): block is Anthropic.ToolUseBlock => block.type === "tool_use");
   if (!toolUse) {
     throw new PitchGenerationValidationError("Anthropic response did not include the expected tool_use block");

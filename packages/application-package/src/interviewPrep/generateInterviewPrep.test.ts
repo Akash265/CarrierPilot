@@ -25,9 +25,30 @@ const VALID = {
 
 function clientWith(input: unknown, hasToolUse = true) {
   const create = vi.fn().mockResolvedValue({
+    stop_reason: "tool_use",
     content: hasToolUse ? [{ type: "tool_use", id: "t1", name: "record_interview_prep", input }] : [{ type: "text", text: "no", citations: null }],
   });
   return { client: { messages: { create } as unknown as Anthropic["messages"] }, create };
+}
+
+/** Recursively asserts every object node in a strict JSON schema is well-formed and free of unsupported keywords. */
+function assertStrictSchema(node: unknown): void {
+  if (node === null || typeof node !== "object") return;
+  if (Array.isArray(node)) {
+    for (const item of node) assertStrictSchema(item);
+    return;
+  }
+  const obj = node as Record<string, unknown>;
+  for (const key of ["minLength", "maxLength", "minItems", "maxItems", "minimum", "maximum"]) {
+    expect(obj).not.toHaveProperty(key);
+  }
+  if (obj.type === "object") {
+    expect(obj.additionalProperties).toBe(false);
+    const properties = (obj.properties ?? {}) as Record<string, unknown>;
+    const required = (obj.required ?? []) as string[];
+    expect(new Set(required)).toEqual(new Set(Object.keys(properties)));
+  }
+  for (const value of Object.values(obj)) assertStrictSchema(value);
 }
 
 describe("generateInterviewPrep", () => {
@@ -84,13 +105,7 @@ describe("generateInterviewPrep", () => {
     expect(system).not.toContain("literal fact");
   });
 
-  it("requires non-empty evidence ids in every section of the tool schema and rejects an empty id", async () => {
-    const { client, create } = clientWith(VALID);
-    await generateInterviewPrep(client, ENV, INPUT);
-    const props = create.mock.calls[0][0].tools[0].input_schema.properties;
-    for (const section of ["likelyQuestions", "gapQuestions", "talkingPoints", "questionsToAsk"]) {
-      expect(props[section].items.properties.evidenceIds.items.minLength).toBe(1);
-    }
+  it("rejects an empty evidence id via Zod even though the tool schema no longer states minLength", async () => {
     const bad = { ...VALID, talkingPoints: [{ ...VALID.talkingPoints[0], evidenceIds: [""] }, ...VALID.talkingPoints.slice(1)] };
     await expect(generateInterviewPrep(clientWith(bad).client, ENV, INPUT)).rejects.toThrow(InterviewPrepGenerationValidationError);
   });
@@ -98,5 +113,23 @@ describe("generateInterviewPrep", () => {
   it("throws InterviewPrepGenerationValidationError without a tool_use block or on schema failure", async () => {
     await expect(generateInterviewPrep(clientWith(VALID, false).client, ENV, INPUT)).rejects.toThrow(InterviewPrepGenerationValidationError);
     await expect(generateInterviewPrep(clientWith({ ...VALID, likelyQuestions: [] }).client, ENV, INPUT)).rejects.toThrow(InterviewPrepGenerationValidationError);
+  });
+
+  it("sets strict:true on the tool and the schema conforms to strict-mode requirements", async () => {
+    const { client, create } = clientWith(VALID);
+    await generateInterviewPrep(client, ENV, INPUT);
+    const tool = create.mock.calls[0][0].tools[0];
+    expect(tool.strict).toBe(true);
+    assertStrictSchema(tool.input_schema);
+  });
+
+  it("throws InterviewPrepGenerationValidationError when the response was truncated (max_tokens)", async () => {
+    const create = vi.fn().mockResolvedValue({
+      stop_reason: "max_tokens",
+      content: [{ type: "tool_use", id: "t1", name: "record_interview_prep", input: VALID }],
+    });
+    const client = { messages: { create } as unknown as Anthropic["messages"] };
+    await expect(generateInterviewPrep(client, ENV, INPUT)).rejects.toThrow(InterviewPrepGenerationValidationError);
+    await expect(generateInterviewPrep(client, ENV, INPUT)).rejects.toThrow(/truncated/i);
   });
 });

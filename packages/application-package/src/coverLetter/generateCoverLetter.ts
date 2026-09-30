@@ -7,27 +7,29 @@ import { CoverLetterDraftSchema, type CoverLetterDraft } from "./coverLetterSche
 
 const TOOL_NAME = "record_cover_letter";
 
-// Keep in lockstep with CoverLetterDraftSchema (coverLetterSchema.ts); the Zod schema is what is enforced.
+// Keep in lockstep with CoverLetterDraftSchema (coverLetterSchema.ts); the Zod schema is what enforces
+// lengths/counts -- this tool schema states structure only (strict tool use; see D109). The 4-5 paragraph
+// count and order and the per-paragraph character cap are both stated in the system prompt already.
 const TOOL_INPUT_SCHEMA = {
   type: "object",
   properties: {
     paragraphs: {
       type: "array",
-      minItems: 4,
-      maxItems: 5,
       items: {
         type: "object",
         properties: {
           role: { type: "string", enum: ["opening", "company", "evidence", "closing"] },
-          text: { type: "string", minLength: 1, maxLength: MAX_PARAGRAPH_CHARS },
-          evidenceIds: { type: "array", items: { type: "string", minLength: 1 } },
+          text: { type: "string", description: "Non-empty." },
+          evidenceIds: { type: "array", items: { type: "string", description: "Non-empty; copied exactly from an evidence item's id." } },
         },
         required: ["role", "text", "evidenceIds"],
+        additionalProperties: false,
       },
     },
     requiresReview: { type: "boolean" },
   },
   required: ["paragraphs", "requiresReview"] as string[],
+  additionalProperties: false,
 } as const;
 
 export class CoverLetterGenerationValidationError extends Error {}
@@ -69,7 +71,7 @@ export async function generateCoverLetter(
       `with "p:". The closing may cite nothing. Never invent an employer, skill, number, title, certification ` +
       `or company fact that is not in the evidence. If the evidence cannot support a paragraph, write the most ` +
       `modest claim it does support and set requiresReview to true.`,
-    tools: [{ name: TOOL_NAME, description: "Record the cover letter body for this job.", input_schema: TOOL_INPUT_SCHEMA }],
+    tools: [{ name: TOOL_NAME, description: "Record the cover letter body for this job.", input_schema: TOOL_INPUT_SCHEMA, strict: true }],
     tool_choice: { type: "tool", name: TOOL_NAME },
     messages: [
       {
@@ -81,6 +83,9 @@ export async function generateCoverLetter(
     ],
   });
 
+  if (message.stop_reason === "max_tokens") {
+    throw new CoverLetterGenerationValidationError("Cover letter output truncated (max_tokens)");
+  }
   const toolUse = message.content.find((block): block is Anthropic.ToolUseBlock => block.type === "tool_use");
   if (!toolUse) throw new CoverLetterGenerationValidationError("Anthropic response did not include the expected tool_use block");
   const result = CoverLetterDraftSchema.safeParse(toolUse.input);

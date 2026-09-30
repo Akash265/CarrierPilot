@@ -9,56 +9,77 @@ import type { PitchEvidenceItem } from "../pitch/buildEvidenceIndex";
 import { InterviewPrepDraftSchema, type InterviewPrepDraft } from "./interviewPrepSchema";
 
 const TOOL_NAME = "record_interview_prep";
-const ids = { type: "array", items: { type: "string", minLength: 1 } } as const;
+const ids = { type: "array", items: { type: "string", description: "Non-empty; copied exactly from an evidence item's id." } } as const;
 const gapEvidenceIds = {
   type: "array",
-  items: { type: "string", minLength: 1 },
+  items: { type: "string", description: "Non-empty; copied exactly from an evidence item's id." },
   description:
     'Must include this term\'s requirementId (the "q:" id shown for it in the gaps block); may also include ' +
     'related "p:" ids as adjacent experience.',
 } as const;
 
-// Keep in lockstep with InterviewPrepDraftSchema (interviewPrepSchema.ts); the Zod schema is what is enforced.
+// Keep in lockstep with InterviewPrepDraftSchema (interviewPrepSchema.ts); the Zod schema is what enforces
+// lengths/counts -- this tool schema states structure only (strict tool use; see D109). Array item counts that
+// are already stated in the system prompt (likelyQuestions 5-8, answerOutline 1-5, talkingPoints 3-6,
+// questionsToAsk 3-5) are not repeated here; gapQuestions' cap and every character cap are not stated in the
+// prompt, so they are stated in each property's description instead.
 const TOOL_INPUT_SCHEMA = {
   type: "object",
   properties: {
     likelyQuestions: {
-      type: "array", minItems: 5, maxItems: 8,
+      type: "array",
       items: {
         type: "object",
         properties: {
-          question: { type: "string", minLength: 1, maxLength: MAX_QUESTION_CHARS },
+          question: { type: "string", description: `Non-empty, at most ${MAX_QUESTION_CHARS} characters.` },
           category: { type: "string", enum: [...LIKELY_QUESTION_CATEGORIES] },
-          answerOutline: { type: "array", minItems: 1, maxItems: 5, items: { type: "string", minLength: 1, maxLength: MAX_OUTLINE_LINE_CHARS } },
+          answerOutline: {
+            type: "array",
+            items: { type: "string", description: `Non-empty, at most ${MAX_OUTLINE_LINE_CHARS} characters.` },
+          },
           evidenceIds: ids,
         },
         required: ["question", "category", "answerOutline", "evidenceIds"],
+        additionalProperties: false,
       },
     },
     gapQuestions: {
-      type: "array", maxItems: MAX_GAP_TERMS,
+      type: "array",
+      description: `At most one item per term listed in the gaps block (at most ${MAX_GAP_TERMS} terms are provided).`,
       items: {
         type: "object",
         properties: {
-          question: { type: "string", minLength: 1, maxLength: MAX_QUESTION_CHARS },
-          requirementTerm: { type: "string", minLength: 1, maxLength: MAX_REQUIREMENT_TERM_CHARS },
-          framing: { type: "string", minLength: 1, maxLength: MAX_FRAMING_CHARS },
+          question: { type: "string", description: `Non-empty, at most ${MAX_QUESTION_CHARS} characters.` },
+          requirementTerm: { type: "string", description: `Non-empty, at most ${MAX_REQUIREMENT_TERM_CHARS} characters.` },
+          framing: { type: "string", description: `Non-empty, at most ${MAX_FRAMING_CHARS} characters.` },
           evidenceIds: gapEvidenceIds,
         },
         required: ["question", "requirementTerm", "framing", "evidenceIds"],
+        additionalProperties: false,
       },
     },
     talkingPoints: {
-      type: "array", minItems: 3, maxItems: 6,
-      items: { type: "object", properties: { text: { type: "string", minLength: 1, maxLength: MAX_POINT_CHARS }, evidenceIds: ids }, required: ["text", "evidenceIds"] },
+      type: "array",
+      items: {
+        type: "object",
+        properties: { text: { type: "string", description: `Non-empty, at most ${MAX_POINT_CHARS} characters.` }, evidenceIds: ids },
+        required: ["text", "evidenceIds"],
+        additionalProperties: false,
+      },
     },
     questionsToAsk: {
-      type: "array", minItems: 3, maxItems: 5,
-      items: { type: "object", properties: { question: { type: "string", minLength: 1, maxLength: MAX_POINT_CHARS }, evidenceIds: ids }, required: ["question", "evidenceIds"] },
+      type: "array",
+      items: {
+        type: "object",
+        properties: { question: { type: "string", description: `Non-empty, at most ${MAX_POINT_CHARS} characters.` }, evidenceIds: ids },
+        required: ["question", "evidenceIds"],
+        additionalProperties: false,
+      },
     },
     requiresReview: { type: "boolean" },
   },
   required: ["likelyQuestions", "gapQuestions", "talkingPoints", "questionsToAsk", "requiresReview"] as string[],
+  additionalProperties: false,
 } as const;
 
 export class InterviewPrepGenerationValidationError extends Error {}
@@ -118,7 +139,7 @@ export async function generateInterviewPrep(
       `4. questionsToAsk (3-5): thoughtful questions for the interviewer; each cites at least one "r:" or "q:" id.\n` +
       `Never invent an employer, skill, number, title, certification or company fact that is not in the ` +
       `evidence. If the evidence cannot support an item, keep it modest and set requiresReview to true.`,
-    tools: [{ name: TOOL_NAME, description: "Record the interview preparation pack for this job.", input_schema: TOOL_INPUT_SCHEMA }],
+    tools: [{ name: TOOL_NAME, description: "Record the interview preparation pack for this job.", input_schema: TOOL_INPUT_SCHEMA, strict: true }],
     tool_choice: { type: "tool", name: TOOL_NAME },
     messages: [
       {
@@ -131,6 +152,9 @@ export async function generateInterviewPrep(
     ],
   });
 
+  if (message.stop_reason === "max_tokens") {
+    throw new InterviewPrepGenerationValidationError("Interview prep output truncated (max_tokens)");
+  }
   const toolUse = message.content.find((block): block is Anthropic.ToolUseBlock => block.type === "tool_use");
   if (!toolUse) throw new InterviewPrepGenerationValidationError("Anthropic response did not include the expected tool_use block");
   const result = InterviewPrepDraftSchema.safeParse(toolUse.input);
