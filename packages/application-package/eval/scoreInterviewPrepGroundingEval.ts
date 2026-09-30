@@ -14,8 +14,8 @@ import { fileURLToPath } from "node:url";
 import type { EvidenceCatalogEntry } from "@ai-career/resume-optimization";
 import { loadEnv } from "@ai-career/config";
 import { createAnthropicClient } from "@ai-career/ai";
-import { buildEvidenceIndex, type RequirementForEvidence } from "../src/pitch/buildEvidenceIndex";
-import { computeGapTerms } from "../src/interviewPrep/computeGapTerms";
+import { buildEvidenceIndex } from "../src/pitch/buildEvidenceIndex";
+import { computeGapTerms, type RequirementForGapDetection } from "../src/interviewPrep/computeGapTerms";
 import { findSkillClaim } from "../src/interviewPrep/findSkillClaim";
 import { generateInterviewPrep } from "../src/interviewPrep/generateInterviewPrep";
 import { applyInterviewPrepGuard } from "../src/interviewPrep/applyInterviewPrepGuard";
@@ -28,7 +28,7 @@ interface Fixture {
   jobTitle: string;
   companyName: string;
   research: { id: string; text: string; sourceUrl: string | null }[];
-  requirements: RequirementForEvidence[];
+  requirements: RequirementForGapDetection[];
   catalog: EvidenceCatalogEntry[];
 }
 
@@ -62,7 +62,9 @@ async function main() {
       const result = applyInterviewPrepGuard(evidence, { modelGapTerms: gapTerms, allGapTerms }, draft);
 
       console.log(`\n${name} (requiresReview=${result.requiresReview}):`);
-      console.log(`  gapTerms: ${gapTerms.length === 0 ? "(none)" : gapTerms.map((g) => g.term).join(", ")}`);
+      const termList = (terms: { term: string }[]) => (terms.length === 0 ? "(none)" : terms.map((g) => g.term).join(", "));
+      console.log(`  all gap terms (${allGapTerms.length}): ${termList(allGapTerms)}`);
+      console.log(`  gap terms given to the model (${gapTerms.length}): ${termList(gapTerms)}`);
 
       const gapTermsLower = new Set(gapTerms.map((g) => g.term.toLowerCase()));
 

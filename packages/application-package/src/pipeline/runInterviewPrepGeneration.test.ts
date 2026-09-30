@@ -58,8 +58,8 @@ beforeEach(async () => {
     webFacts: [{ sourceKind: "web", factText: "Acme builds rockets.", sourceUrl: "https://acme.example", sourceTitle: "Acme", citedText: "x" }],
   });
   vi.mocked(ensureJobRequirements).mockResolvedValue([
-    { id: SQL_ID, termText: "SQL", requirementLevel: "required" },
-    { id: K8S_ID, termText: "Kubernetes", requirementLevel: "required" },
+    { id: SQL_ID, termText: "SQL", requirementLevel: "required", termType: "skill" },
+    { id: K8S_ID, termText: "Kubernetes", requirementLevel: "required", termType: "skill" },
   ] as never);
   vi.mocked(generateInterviewPrep).mockImplementation(async (_c, _e, input) => groundedDraft(input));
   await wipeUser(testDb.adminSql, USER);
@@ -115,14 +115,26 @@ describe("runInterviewPrepGeneration", () => {
   it("gives the model at most MAX_GAP_TERMS gap terms but snapshots every missing required term", async () => {
     const terms = ["Airflow", "Kafka", "Kubernetes", "Rust", "Scala", "Snowflake", "Terraform"];
     vi.mocked(ensureJobRequirements).mockResolvedValue([
-      { id: SQL_ID, termText: "SQL", requirementLevel: "required" },
-      ...terms.map((termText, i) => ({ id: `22222222-2222-2222-2222-22222222222${i}`, termText, requirementLevel: "required" })),
+      { id: SQL_ID, termText: "SQL", requirementLevel: "required", termType: "skill" },
+      ...terms.map((termText, i) => ({ id: `22222222-2222-2222-2222-22222222222${i}`, termText, requirementLevel: "required", termType: "skill" })),
     ] as never);
     const { interviewPrep } = await run(await seed());
     const input = vi.mocked(generateInterviewPrep).mock.calls[0][2];
     expect(input.gapTerms.map((g) => g.term)).toEqual(terms.slice(0, 5));
     expect(interviewPrep.gapTermsSnapshot).toEqual(terms);
     expect(interviewPrep.requiresReview).toBe(false);
+  });
+
+  it("never treats an other-typed or longer-than-four-word required term as a gap (D104)", async () => {
+    vi.mocked(ensureJobRequirements).mockResolvedValue([
+      { id: SQL_ID, termText: "SQL", requirementLevel: "required", termType: "skill" },
+      { id: K8S_ID, termText: "Kubernetes", requirementLevel: "required", termType: "tool" },
+      { id: "22222222-2222-2222-2222-222222222220", termText: "Stakeholder communication", requirementLevel: "required", termType: "other" },
+      { id: "22222222-2222-2222-2222-222222222221", termText: "Production data pipeline building experience", requirementLevel: "required", termType: "skill" },
+    ] as never);
+    const { interviewPrep } = await run(await seed());
+    expect(vi.mocked(generateInterviewPrep).mock.calls[0][2].gapTerms).toEqual([{ term: "Kubernetes", requirementId: K8S_ID }]);
+    expect(interviewPrep.gapTermsSnapshot).toEqual(["Kubernetes"]);
   });
 
   it("maps Anthropic.APIError and InterviewPrepGenerationValidationError to unknown; rethrows anything else", async () => {
@@ -148,8 +160,8 @@ describe("runInterviewPrepGeneration", () => {
 
   it("refuses to store a gap term containing a lone surrogate", async () => {
     vi.mocked(ensureJobRequirements).mockResolvedValue([
-      { id: SQL_ID, termText: "SQL", requirementLevel: "required" },
-      { id: K8S_ID, termText: "Kube\uD800rnetes", requirementLevel: "required" },
+      { id: SQL_ID, termText: "SQL", requirementLevel: "required", termType: "skill" },
+      { id: K8S_ID, termText: "Kube\uD800rnetes", requirementLevel: "required", termType: "skill" },
     ] as never);
     // A draft that never echoes the term, so only the snapshot carries the unsafe text.
     vi.mocked(generateInterviewPrep).mockImplementation(async (_c, _e, input) => ({ ...groundedDraft(input), gapQuestions: [] }));

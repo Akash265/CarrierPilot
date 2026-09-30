@@ -6,13 +6,13 @@
     { "id": "r:n2", "text": "Northwind raised a Series B round in 2025 to expand its routing analytics.", "sourceUrl": "https://news.example/northwind-series-b" }
   ],
   "requirements": [
-    { "id": "q1", "termText": "Apache Spark", "requirementLevel": "required" },
-    { "id": "q2", "termText": "SQL", "requirementLevel": "required" },
-    { "id": "q3", "termText": "Airflow", "requirementLevel": "required" },
-    { "id": "q4", "termText": "Kubernetes", "requirementLevel": "required" },
-    { "id": "q5", "termText": "dbt", "requirementLevel": "required" },
-    { "id": "q6", "termText": "Go", "requirementLevel": "required" },
-    { "id": "q7", "termText": "Snowflake", "requirementLevel": "preferred" }
+    { "id": "q1", "termText": "Apache Spark", "termType": "skill", "requirementLevel": "required" },
+    { "id": "q2", "termText": "SQL", "termType": "skill", "requirementLevel": "required" },
+    { "id": "q3", "termText": "Airflow", "termType": "tool", "requirementLevel": "required" },
+    { "id": "q4", "termText": "Kubernetes", "termType": "tool", "requirementLevel": "required" },
+    { "id": "q5", "termText": "dbt", "termType": "tool", "requirementLevel": "required" },
+    { "id": "q6", "termText": "Go", "termType": "skill", "requirementLevel": "required" },
+    { "id": "q7", "termText": "Snowflake", "termType": "tool", "requirementLevel": "preferred" }
   ],
   "catalog": [
     { "sourceFactId": "b1", "sourceType": "work_experience_bullet", "text": "Built Apache Spark batch pipelines processing 2 TB of shipment events per day", "context": "Globex — Data Engineer" },

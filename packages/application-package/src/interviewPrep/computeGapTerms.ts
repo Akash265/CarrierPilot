@@ -17,6 +17,26 @@ export function containsTerm(haystackLower: string, termLower: string): boolean 
   return new RegExp(`(?<![a-z0-9])${escaped}(?![a-z0-9])`).test(haystackLower);
 }
 
+/** job_requirements.term_type (see ensureJobRequirements). */
+export type RequirementTermType = "skill" | "tool" | "certification" | "other";
+
+/** What computeGapTerms needs from a job_requirements row: the evidence fields plus the term's type (D104). */
+export interface RequirementForGapDetection extends RequirementForEvidence {
+  termType: RequirementTermType;
+}
+
+/** D104: only these term types name something profile text can be checked for. */
+const GAP_TERM_TYPES: ReadonlySet<RequirementTermType> = new Set(["skill", "tool", "certification"]);
+/** D104: a longer term is a descriptive phrase ("Production data pipeline building experience"), not a matchable name. */
+export const MAX_GAP_TERM_WORDS = 4;
+
+/** D104: a required, non-blank skill/tool/certification term of at most MAX_GAP_TERM_WORDS words. */
+export function isGapCandidate(r: RequirementForGapDetection): boolean {
+  const term = r.termText.trim();
+  if (r.requirementLevel !== "required" || term.length === 0 || !GAP_TERM_TYPES.has(r.termType)) return false;
+  return term.split(/\s+/).length <= MAX_GAP_TERM_WORDS;
+}
+
 function compareStrings(a: string, b: string): number {
   if (a < b) return -1;
   if (a > b) return 1;
@@ -32,14 +52,16 @@ function compareStrings(a: string, b: string): number {
  * (term, then id, by plain code-unit comparison for stability across environments) for a stable result.
  * Returns EVERY missing required term (no cap, D100): callers that feed the model slice the first
  * MAX_GAP_TERMS themselves, while the likely-question gap check and the stored snapshot use all of them.
- * Known limitations (design §9, D92): "Postgres" in the profile does not cover "PostgreSQL" in the job,
- * and a phrase-shaped required term ("Production data pipeline building experience") is almost never
- * contained verbatim in profile text, so it becomes a false gap.
+ * Only skill, tool and certification terms of at most MAX_GAP_TERM_WORDS words are candidates (D104):
+ * "other"-typed and longer, phrase-shaped requirements ("Production data pipeline building experience")
+ * are descriptive and almost never contained verbatim in profile text, so they would be false gaps. The
+ * cost: such a requirement is never treated as a gap, even when the profile really lacks it.
+ * Known limitation (design §9, D92): "Postgres" in the profile does not cover "PostgreSQL" in the job.
  */
-export function computeGapTerms(requirements: RequirementForEvidence[], catalog: EvidenceCatalogEntry[]): GapTerm[] {
+export function computeGapTerms(requirements: RequirementForGapDetection[], catalog: EvidenceCatalogEntry[]): GapTerm[] {
   const haystack = catalog.map((e) => (e.context ? `${e.context}: ${e.text}` : e.text)).join("\n").toLowerCase();
   const sorted = requirements
-    .filter((r) => r.requirementLevel === "required" && r.termText.trim().length > 0)
+    .filter(isGapCandidate)
     .map((r) => ({ term: r.termText.trim(), requirementId: r.id }))
     .sort((a, b) => compareStrings(a.term.toLowerCase(), b.term.toLowerCase()) || compareStrings(a.requirementId, b.requirementId));
 

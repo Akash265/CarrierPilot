@@ -6,9 +6,9 @@
     { "id": "r:l2", "text": "Lumen Health states accessibility as a core product value.", "sourceUrl": "https://lumen.example/values" }
   ],
   "requirements": [
-    { "id": "q1", "termText": "React", "requirementLevel": "required" },
-    { "id": "q2", "termText": "TypeScript", "requirementLevel": "required" },
-    { "id": "q3", "termText": "WCAG", "requirementLevel": "preferred" }
+    { "id": "q1", "termText": "React", "termType": "skill", "requirementLevel": "required" },
+    { "id": "q2", "termText": "TypeScript", "termType": "skill", "requirementLevel": "required" },
+    { "id": "q3", "termText": "WCAG", "termType": "skill", "requirementLevel": "preferred" }
   ],
   "catalog": [
     { "sourceFactId": "e1", "sourceType": "work_experience_bullet", "text": "Rebuilt the booking flow in React and TypeScript", "context": "Initech — Frontend Developer" },

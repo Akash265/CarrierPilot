@@ -15,7 +15,7 @@ import { createAnthropicClient } from "@ai-career/ai";
 import { generateCoverLetter, type GenerateCoverLetterInput } from "../src/coverLetter/generateCoverLetter";
 import { applyCoverLetterGuard } from "../src/coverLetter/applyCoverLetterGuard";
 import { findGapTermMentions } from "../src/coverLetter/findGapTermMentions";
-import { computeGapTerms } from "../src/interviewPrep/computeGapTerms";
+import { computeGapTerms, type RequirementForGapDetection } from "../src/interviewPrep/computeGapTerms";
 import type { PitchEvidenceItem } from "../src/pitch/buildEvidenceIndex";
 import type { GapTerm } from "../src/types";
 import type { EvidenceCatalogEntry } from "@ai-career/resume-optimization";
@@ -26,14 +26,16 @@ const FIXTURES_DIR = path.join(__dirname, "cover-letter-fixtures");
 /**
  * The fixtures carry only the evidence index, so rebuild computeGapTerms' inputs from it: "[required] X"
  * requirement items, and profile items whose text is already "context: text" (the same haystack text
- * computeGapTerms builds from the catalog).
+ * computeGapTerms builds from the catalog). The evidence text does not carry job_requirements.term_type,
+ * so every rebuilt requirement is typed "skill" (every fixture requirement is a short named skill or tool);
+ * the D104 four-word limit still applies.
  */
 function gapTermsFromEvidence(evidence: PitchEvidenceItem[]): GapTerm[] {
-  const requirements = evidence
+  const requirements: RequirementForGapDetection[] = evidence
     .filter((e) => e.kind === "requirement")
     .map((e) => {
       const m = /^\[(required|preferred)\] (.*)$/.exec(e.text);
-      return { id: e.id.slice(2), termText: m ? m[2] : e.text, requirementLevel: (m?.[1] ?? "preferred") as "required" | "preferred" };
+      return { id: e.id.slice(2), termText: m ? m[2] : e.text, requirementLevel: (m?.[1] ?? "preferred") as "required" | "preferred", termType: "skill" };
     });
   const catalog = evidence
     .filter((e) => e.kind === "profile")

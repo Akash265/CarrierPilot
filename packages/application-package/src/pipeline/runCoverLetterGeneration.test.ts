@@ -54,7 +54,7 @@ beforeEach(async () => {
     webFacts: [{ sourceKind: "web", factText: "Acme builds rockets.", sourceUrl: "https://acme.example", sourceTitle: "Acme", citedText: "x" }],
   });
   vi.mocked(ensureJobRequirements).mockResolvedValue([
-    { id: "11111111-1111-1111-1111-111111111111", termText: "SQL", requirementLevel: "required" },
+    { id: "11111111-1111-1111-1111-111111111111", termText: "SQL", requirementLevel: "required", termType: "skill" },
   ] as never);
   vi.mocked(generateCoverLetter).mockImplementation(async (_c, _e, input) => groundedDraft(input));
   await wipeUser(testDb.adminSql, USER);
@@ -120,8 +120,8 @@ describe("runCoverLetterGeneration", () => {
 
   it("sets requiresReview but keeps paragraphs supported when a non-opening paragraph mentions a missing required term", async () => {
     vi.mocked(ensureJobRequirements).mockResolvedValue([
-      { id: "11111111-1111-1111-1111-111111111111", termText: "SQL", requirementLevel: "required" },
-      { id: "11111111-1111-1111-1111-111111111112", termText: "Kubernetes", requirementLevel: "required" },
+      { id: "11111111-1111-1111-1111-111111111111", termText: "SQL", requirementLevel: "required", termType: "skill" },
+      { id: "11111111-1111-1111-1111-111111111112", termText: "Kubernetes", requirementLevel: "required", termType: "skill" },
     ] as never);
     vi.mocked(generateCoverLetter).mockImplementation(async (_c, _e, input) => {
       const d = groundedDraft(input);
@@ -135,8 +135,8 @@ describe("runCoverLetterGeneration", () => {
 
   it("does not set requiresReview when only the opening names a missing required term", async () => {
     vi.mocked(ensureJobRequirements).mockResolvedValue([
-      { id: "11111111-1111-1111-1111-111111111111", termText: "SQL", requirementLevel: "required" },
-      { id: "11111111-1111-1111-1111-111111111112", termText: "Kubernetes", requirementLevel: "required" },
+      { id: "11111111-1111-1111-1111-111111111111", termText: "SQL", requirementLevel: "required", termType: "skill" },
+      { id: "11111111-1111-1111-1111-111111111112", termText: "Kubernetes", requirementLevel: "required", termType: "skill" },
     ] as never);
     vi.mocked(generateCoverLetter).mockImplementation(async (_c, _e, input) => {
       const d = groundedDraft(input);

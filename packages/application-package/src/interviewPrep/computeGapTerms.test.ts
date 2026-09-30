@@ -2,7 +2,12 @@ import { describe, it, expect } from "vitest";
 import type { EvidenceCatalogEntry } from "@ai-career/resume-optimization";
 import { computeGapTerms, containsTerm } from "./computeGapTerms";
 
-const req = (id: string, termText: string, requirementLevel: "required" | "preferred" = "required") => ({ id, termText, requirementLevel });
+const req = (
+  id: string,
+  termText: string,
+  requirementLevel: "required" | "preferred" = "required",
+  termType: "skill" | "tool" | "certification" | "other" = "skill"
+) => ({ id, termText, requirementLevel, termType });
 const entry = (text: string, context: string | null = null): EvidenceCatalogEntry =>
   ({ sourceFactId: text, sourceType: "work_experience_bullet", text, context }) as EvidenceCatalogEntry;
 
@@ -42,6 +47,22 @@ describe("computeGapTerms", () => {
     expect(computeGapTerms([req("1", "Go")], [entry("Wrote Go services")])).toEqual([]);
     expect(computeGapTerms([req("1", "C++")], [entry("Modern C++ code")])).toEqual([]);
     expect(computeGapTerms([req("1", "Java")], [entry("Built a JavaScript app")])).toEqual([{ term: "Java", requirementId: "1" }]);
+  });
+
+  it("only considers skill, tool and certification terms: an other-typed requirement is never a gap", () => {
+    const gaps = computeGapTerms(
+      [req("1", "Kubernetes", "required", "tool"), req("2", "AWS Certified", "required", "certification"), req("3", "Leadership", "required", "other")],
+      [entry("Python")]
+    );
+    expect(gaps).toEqual([{ term: "AWS Certified", requirementId: "2" }, { term: "Kubernetes", requirementId: "1" }]);
+  });
+
+  it("only considers terms of at most four words: longer phrases are descriptive, not matchable", () => {
+    const gaps = computeGapTerms(
+      [req("1", "Production data pipeline building experience"), req("2", "Google Cloud Platform BigQuery")],
+      [entry("Python")]
+    );
+    expect(gaps).toEqual([{ term: "Google Cloud Platform BigQuery", requirementId: "2" }]);
   });
 });
 
