@@ -30,14 +30,17 @@ describe("POST /api/applications/[id]/events", () => {
     const res = await post(id, JSON.stringify({ type: "interview", detail: { round: 1, kind: "phone_screen", summary: "30 min" } }));
     expect(res.status).toBe(201);
     expect((await res.json()).event).toMatchObject({ type: "interview", detail: { round: 1, kind: "phone_screen" } });
-    expect((await post(id, JSON.stringify({ type: "follow_up_snoozed", detail: { newFollowUpAt: "2026-10-08" } }))).status).toBe(201);
+    // A snooze date must be after today (UTC), so derive it rather than hard-coding one.
+    const snoozeTo = new Date(Date.now() + 8 * 86_400_000).toISOString().slice(0, 10);
+    expect((await post(id, JSON.stringify({ type: "follow_up_snoozed", detail: { newFollowUpAt: snoozeTo } }))).status).toBe(201);
     const [row] = await admin`SELECT follow_up_at::text AS f FROM applications WHERE id = ${id}`;
-    expect(row.f).toBe("2026-10-08");
+    expect(row.f).toBe(snoozeTo);
   });
 
   it("400s system-only types, 404s unknown applications", async () => {
     const id = await insertApplication(admin, USER, {});
     expect((await post(id, JSON.stringify({ type: "status_change", detail: {} }))).status).toBe(400);
+    expect((await post(id, JSON.stringify({ type: "follow_up_snoozed", detail: { newFollowUpAt: "2020-01-01" } }))).status).toBe(400);
     expect((await post("11111111-1111-4111-8111-111111111111", JSON.stringify({ type: "note", detail: { text: "x" } }))).status).toBe(404);
   });
 });

@@ -73,13 +73,16 @@ export async function runRetentionSweep(opts: {
   };
   if (retentionDays <= 0) return { ...result, status: "disabled" };
 
+  // A key that fails in the purge phase is usually listed again by the orphan phase; count it once per run.
+  const failedKeys = new Set<string>();
   const removeAll = async (keys: string[], counter: "deletedObjects" | "orphanObjectsDeleted") => {
     for (const key of keys) {
       try {
         await storage.removeObject(key);
+        failedKeys.delete(key);
         result[counter]++;
       } catch {
-        result.failedObjectDeletes++;
+        failedKeys.add(key);
       }
     }
   };
@@ -105,5 +108,6 @@ export async function runRetentionSweep(opts: {
     await removeAll(planOrphanSweep({ objects, referencedKeys: new Set(referenced.map((r) => r.key)), now }), "orphanObjectsDeleted");
   }
 
+  result.failedObjectDeletes = failedKeys.size;
   return result;
 }

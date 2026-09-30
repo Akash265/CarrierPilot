@@ -5,6 +5,8 @@ import {
 
 const JOB = "11111111-1111-4111-8111-111111111111";
 const future = () => new Date(Date.now() + 3 * 86_400_000).toISOString();
+/** UTC calendar date `n` days from now. */
+const dayOffset = (n: number) => todayUtc(new Date(Date.now() + n * 86_400_000));
 
 describe("DateOnlySchema / todayUtc", () => {
   it("accepts real YYYY-MM-DD dates only", () => {
@@ -39,6 +41,20 @@ describe("CreateApplicationBodySchema", () => {
   });
 });
 
+describe("appliedAt bound (not after today, UTC)", () => {
+  it("accepts today and past dates on create and update", () => {
+    for (const appliedAt of [dayOffset(0), dayOffset(-30)]) {
+      expect(CreateApplicationBodySchema.safeParse({ jobId: JOB, appliedAt }).success, appliedAt).toBe(true);
+      expect(UpdateApplicationBodySchema.safeParse({ appliedAt }).success, appliedAt).toBe(true);
+    }
+  });
+  it("rejects a future appliedAt on create and update", () => {
+    expect(CreateApplicationBodySchema.safeParse({ jobId: JOB, appliedAt: dayOffset(2) }).success).toBe(false);
+    expect(CreateApplicationBodySchema.safeParse({ external: { companyName: "A", jobTitle: "B" }, appliedAt: dayOffset(2) }).success).toBe(false);
+    expect(UpdateApplicationBodySchema.safeParse({ appliedAt: dayOffset(2) }).success).toBe(false);
+  });
+});
+
 describe("UpdateApplicationBodySchema", () => {
   it("accepts a partial edit and rejects an empty one", () => {
     expect(UpdateApplicationBodySchema.safeParse({ recruiterName: "Sam", followUpAt: null }).success).toBe(true);
@@ -66,7 +82,7 @@ describe("UserEventBodySchema", () => {
       { type: "recruiter_contact", detail: { channel: "linkedin", summary: "Intro" } },
       { type: "interview", detail: { round: 2, kind: "technical", scheduledFor: future() } },
       { type: "follow_up_done", detail: {} },
-      { type: "follow_up_snoozed", detail: { newFollowUpAt: "2026-10-10" } },
+      { type: "follow_up_snoozed", detail: { newFollowUpAt: dayOffset(7) } },
     ]) {
       expect(UserEventBodySchema.safeParse(body).success, body.type).toBe(true);
     }
@@ -74,6 +90,11 @@ describe("UserEventBodySchema", () => {
   it("allows a future occurredAt only for interviews", () => {
     expect(UserEventBodySchema.safeParse({ type: "interview", occurredAt: future(), detail: { kind: "onsite" } }).success).toBe(true);
     expect(UserEventBodySchema.safeParse({ type: "note", occurredAt: future(), detail: { text: "x" } }).success).toBe(false);
+  });
+  it("requires a snoozed follow-up date strictly after today (UTC)", () => {
+    expect(UserEventBodySchema.safeParse({ type: "follow_up_snoozed", detail: { newFollowUpAt: dayOffset(1) } }).success).toBe(true);
+    expect(UserEventBodySchema.safeParse({ type: "follow_up_snoozed", detail: { newFollowUpAt: dayOffset(0) } }).success).toBe(false);
+    expect(UserEventBodySchema.safeParse({ type: "follow_up_snoozed", detail: { newFollowUpAt: dayOffset(-3) } }).success).toBe(false);
   });
   it("rejects system-only types and bad details", () => {
     expect(UserEventBodySchema.safeParse({ type: "status_change", detail: {} }).success).toBe(false);

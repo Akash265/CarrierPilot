@@ -42,8 +42,9 @@ async function addDocument(jobId: string, key: string, sourceColumn: "resume_opt
 async function terminalApplication(jobId: string, terminalDaysAgo: number) {
   const app = await createApplication(t.db, USER, { jobId });
   // .toISOString() + explicit ::timestamptz cast, not a raw Date: passing a JS Date object directly as an
-  // adminSql tagged-template parameter throws ("received an instance of Date") once this connection has run
-  // drizzle's migrate() -- same workaround already used in packages/db/src/applicationTables.rls.test.ts.
+  // adminSql tagged-template parameter throws ("received an instance of Date") because drizzle(adminSql)
+  // replaces the shared postgres.js client's date/timestamp serializers and parsers with pass-throughs
+  // (drizzle-orm/postgres-js/driver.js) -- same workaround as packages/db/src/applicationTables.rls.test.ts.
   await t.adminSql`UPDATE applications SET status = 'rejected', terminal_at = ${new Date(NOW.getTime() - terminalDaysAgo * DAY).toISOString()}::timestamptz WHERE id = ${app.id}`;
   return app;
 }
@@ -71,15 +72,16 @@ describe("runRetentionSweep", () => {
     const { storage, removed } = fakeStorage();
     const r = await runRetentionSweep({ db: t.db, storage, userId: USER, retentionDays: 30, now: NOW });
 
-    expect(r).toMatchObject({ status: "completed", purgedApplications: 1, deletedObjects: 2, failedObjectDeletes: 0 });
+    // 2 generated_documents + 1 each of resume_optimizations, application_pitches, cover_letters, interview_preparations.
+    expect(r).toMatchObject({ status: "completed", purgedApplications: 1, deletedRows: 6, deletedObjects: 2, failedObjectDeletes: 0 });
     expect(removed.sort()).toEqual([`${USER}/due-letter.pdf`, `${USER}/due-resume.pdf`]);
     for (const table of ["generated_documents", "resume_optimizations", "application_pitches", "cover_letters", "interview_preparations"]) {
       expect(await countFor(table, due.jobId), table).toBe(0);
       expect(await countFor(table, kept.jobId), table).toBeGreaterThan(0);
     }
     const [row] = await t.adminSql`SELECT retention_purged_at, resume_optimization_id, feature_snapshot FROM applications WHERE id = ${app.id}`;
-    // This adminSql connection has run drizzle's migrate() (see openTestDb), which leaves its timestamptz
-    // result parsing returning a raw Postgres string instead of a parsed Date -- wrap it explicitly.
+    // drizzle(adminSql) (see openTestDb) replaced this client's timestamptz parser with a pass-through
+    // (drizzle-orm/postgres-js/driver.js), so it returns the raw Postgres string -- wrap it explicitly.
     expect(new Date(row.retention_purged_at as string)).toEqual(NOW);
     expect(row.feature_snapshot.match.overallScore).toBe(78);
     const [event] = await t.adminSql`SELECT detail FROM application_events WHERE application_id = ${app.id} AND type = 'documents_purged'`;
@@ -116,6 +118,22 @@ describe("runRetentionSweep", () => {
     await terminalApplication(s.jobId, 31);
     const r = await runRetentionSweep({ db: t.db, storage: fakeStorage([], [`${USER}/stuck.pdf`]).storage, userId: USER, retentionDays: 30, now: NOW });
     expect(r).toMatchObject({ purgedApplications: 1, deletedObjects: 0, failedObjectDeletes: 1 });
+
+    // Next run: storage works again and still lists the object; with its row gone it is an old orphan.
+    const later = new Date(NOW.getTime() + DAY);
+    const { storage, removed } = fakeStorage([{ key: `${USER}/stuck.pdf`, lastModified: new Date(NOW.getTime() - 2 * DAY) }]);
+    const second = await runRetentionSweep({ db: t.db, storage, userId: USER, retentionDays: 30, now: later });
+    expect(removed).toEqual([`${USER}/stuck.pdf`]);
+    expect(second).toMatchObject({ purgedApplications: 0, orphanObjectsDeleted: 1, failedObjectDeletes: 0 });
+  });
+
+  it("counts a key that fails in both the purge and the orphan phase once", async () => {
+    const s = await seedJobWithDocuments(t.adminSql, USER);
+    await addDocument(s.jobId, `${USER}/stuck.pdf`, "resume_optimization_id", s.resumeId, "resume");
+    await terminalApplication(s.jobId, 31);
+    const { storage } = fakeStorage([{ key: `${USER}/stuck.pdf`, lastModified: new Date(NOW.getTime() - 2 * DAY) }], [`${USER}/stuck.pdf`]);
+    const r = await runRetentionSweep({ db: t.db, storage, userId: USER, retentionDays: 30, now: NOW });
+    expect(r).toMatchObject({ purgedApplications: 1, deletedObjects: 0, orphanObjectsDeleted: 0, failedObjectDeletes: 1 });
   });
 
   it("orphan sweep removes unreferenced objects older than 24h and keeps referenced or recent ones", async () => {

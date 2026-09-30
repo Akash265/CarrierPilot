@@ -16,6 +16,14 @@ export const DateOnlySchema = z
     return !Number.isNaN(d.getTime()) && todayUtc(d) === v;
   }, "Not a real calendar date");
 
+/** Not after today (UTC). The same clock-skew allowance lets a client that has just crossed UTC midnight through. */
+const AppliedAtSchema = DateOnlySchema.refine(
+  (v) => v <= todayUtc(new Date(Date.now() + FUTURE_TOLERANCE_MS)),
+  "Cannot be in the future"
+);
+/** A snooze moves the follow-up forward: strictly after today (UTC). */
+const SnoozeDateSchema = DateOnlySchema.refine((v) => v > todayUtc(new Date()), "Must be after today");
+
 const HttpUrlSchema = z
   .string()
   .trim()
@@ -40,7 +48,7 @@ export const CreateApplicationBodySchema = z
     jobId: Uuid.optional(),
     external: z.object({ companyName: CompanyName, jobTitle: JobTitle, jobUrl: HttpUrlSchema.nullable().optional() }).strict().optional(),
     ...documentLinks,
-    appliedAt: DateOnlySchema.optional(),
+    appliedAt: AppliedAtSchema.optional(),
     followUpAt: DateOnlySchema.nullable().optional(),
     notes: optionalText(5000),
   })
@@ -60,7 +68,7 @@ export const UpdateApplicationBodySchema = z
     companyName: CompanyName.optional(),
     jobTitle: JobTitle.optional(),
     jobUrl: HttpUrlSchema.nullable().optional(),
-    appliedAt: DateOnlySchema.optional(),
+    appliedAt: AppliedAtSchema.optional(),
     followUpAt: DateOnlySchema.nullable().optional(),
     recruiterName: optionalText(200),
     recruiterContact: optionalText(300),
@@ -102,7 +110,7 @@ export const UserEventBodySchema = z
       }).strict(),
     }).strict(),
     z.object({ type: z.literal("follow_up_done"), occurredAt: OccurredAtSchema.optional(), detail: z.object({}).strict().default({}) }).strict(),
-    z.object({ type: z.literal("follow_up_snoozed"), occurredAt: OccurredAtSchema.optional(), detail: z.object({ newFollowUpAt: DateOnlySchema }).strict() }).strict(),
+    z.object({ type: z.literal("follow_up_snoozed"), occurredAt: OccurredAtSchema.optional(), detail: z.object({ newFollowUpAt: SnoozeDateSchema }).strict() }).strict(),
   ])
   .superRefine((event, ctx) => {
     // An interview may be logged ahead of time; everything else records something that already happened.
