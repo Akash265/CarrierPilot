@@ -8,7 +8,8 @@
     "dev": "turbo run dev",
     "lint": "turbo run lint",
     "typecheck": "turbo run typecheck",
-    "test": "turbo run test"
+    "test": "turbo run test",
+    "retention:run": "pnpm --filter @ai-career/maintenance-worker retention:run"
   },
   "devDependencies": {
     "turbo": "^2.3.0",
