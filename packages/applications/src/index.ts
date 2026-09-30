@@ -15,3 +15,6 @@ export {
   getApplication, listApplications, getApplicationForJob, listDocumentOptions, type DocumentOption, type DocumentOptions,
 } from "./readApplications";
 export { changeStatus, addEvent, updateApplication, deleteApplication } from "./mutateApplication";
+export {
+  isDueForPurge, planRetention, planOrphanSweep, ORPHAN_MIN_AGE_MS, type RetentionCandidate, type StoredObject,
+} from "./retention/planRetention";
