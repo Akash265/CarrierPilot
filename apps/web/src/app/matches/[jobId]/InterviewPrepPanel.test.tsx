@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor, within } from "@testing-library/react";
 import { InterviewPrepPanel, formatInterviewPrepText } from "./InterviewPrepPanel";
 
 const NOW_ISO = new Date().toISOString();
@@ -40,9 +40,25 @@ describe("InterviewPrepPanel", () => {
     for (const h of ["Likely questions", "Required skills not found in your profile", "Company talking points", "Questions to ask"]) {
       expect(screen.getByText(h)).toBeInTheDocument();
     }
-    expect(screen.getByText("Kubernetes")).toBeInTheDocument();
+    expect(within(screen.getByRole("list", { name: "Missing required terms" })).getByText("Kubernetes")).toBeInTheDocument();
+    expect(screen.getByText("Missing: Kubernetes")).toBeInTheDocument();
     expect(screen.getByText("Be honest; mention Docker.")).toBeInTheDocument();
     expect(screen.getByText("Pipeline")).toBeInTheDocument();
+  });
+
+  it("labels an unsupported gap question's term without calling it missing", async () => {
+    const flagged = {
+      ...prep,
+      requiresReview: true,
+      sections: {
+        ...prep.sections,
+        gapQuestions: [{ question: "SQL?", requirementTerm: "SQL", framing: "F.", supported: false, unsupportedReason: 'requirementTerm "SQL" is not one of the missing required terms', evidence: [] }],
+      },
+    };
+    mockFetchSequence([{ body: { versions: [flagged], research: null } }]);
+    render(<InterviewPrepPanel jobId="j1" />);
+    expect(await screen.findByText("Term: SQL")).toBeInTheDocument();
+    expect(screen.queryByText("Missing: SQL")).not.toBeInTheDocument();
   });
 
   it("says every required term is covered when there are no gap terms", async () => {
@@ -80,5 +96,23 @@ describe("formatInterviewPrepText", () => {
     expect(text).toContain("- Have you used Kubernetes?\n  Be honest; mention Docker.");
     expect(text).toContain("Company talking points\n- Acme builds rockets.");
     expect(text).toContain("Questions to ask\n- How big is the team?");
+    expect(text).not.toContain("(unverified)");
+  });
+
+  it("marks unsupported items (unverified), like the export", () => {
+    const bad = { supported: false, unsupportedReason: "x", evidence: [] };
+    const text = formatInterviewPrepText({
+      ...prep,
+      sections: {
+        likelyQuestions: [{ ...prep.sections.likelyQuestions[0], ...bad }],
+        gapQuestions: [{ ...prep.sections.gapQuestions[0], ...bad }],
+        talkingPoints: [{ text: "Acme builds rockets.", ...bad }],
+        questionsToAsk: [{ question: "How big is the team?", ...bad }],
+      },
+    } as never);
+    expect(text).toContain("- Tell me about SQL. (unverified) (technical)");
+    expect(text).toContain("- Have you used Kubernetes? (unverified)\n  Be honest; mention Docker.");
+    expect(text).toContain("- Acme builds rockets. (unverified)");
+    expect(text).toContain("- How big is the team? (unverified)");
   });
 });

@@ -46,6 +46,14 @@ const ROLE_LABELS: Record<ParagraphRole, string> = {
   closing: "Closing",
 };
 
+/** Edit-mode label: two evidence paragraphs become "Evidence of fit 1" / "Evidence of fit 2" so each textarea has a unique name. */
+function editLabel(paragraphs: { role: ParagraphRole }[], index: number): string {
+  const role = paragraphs[index].role;
+  const sameRole = paragraphs.filter((p) => p.role === role);
+  if (sameRole.length < 2) return ROLE_LABELS[role];
+  return `${ROLE_LABELS[role]} ${paragraphs.slice(0, index + 1).filter((p) => p.role === role).length}`;
+}
+
 export function CoverLetterPanel({ jobId }: { jobId: string }) {
   const [state, setState] = useState<ListState>({ kind: "loading" });
   const [busy, setBusy] = useState<null | "generate" | "save">(null);
@@ -243,9 +251,9 @@ export function CoverLetterPanel({ jobId }: { jobId: string }) {
         <div className="flex flex-col gap-2">
           {selected.paragraphs.map((p, i) => (
             <label key={i} className="flex flex-col gap-1 text-sm">
-              <span className="font-medium">{ROLE_LABELS[p.role]}</span>
+              <span className="font-medium">{editLabel(selected.paragraphs, i)}</span>
               <textarea
-                aria-label={ROLE_LABELS[p.role]}
+                aria-label={editLabel(selected.paragraphs, i)}
                 value={draft[i]}
                 maxLength={1200}
                 rows={5}

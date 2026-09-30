@@ -22,7 +22,8 @@ export function buildInterviewPrepModel(
   blocks.push({ type: "heading", text: "Required skills not found in your profile" });
   blocks.push({ type: "paragraph", text: gapTerms.length > 0 ? gapTerms.join(", ") : "None: every required term appears in your profile." });
   for (const q of sections.gapQuestions) {
-    blocks.push({ type: "entry", title: mark(q.question, q.supported), subtitle: `Missing: ${q.requirementTerm}`, meta: null });
+    // An unsupported gap question's term may not be a missing term at all (the guard's first gap rule).
+    blocks.push({ type: "entry", title: mark(q.question, q.supported), subtitle: q.supported ? `Missing: ${q.requirementTerm}` : null, meta: null });
     blocks.push({ type: "paragraph", text: q.framing });
   }
 

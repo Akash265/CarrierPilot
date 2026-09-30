@@ -41,6 +41,21 @@ describe("CoverLetterPanel", () => {
     for (const label of ["Opening", "Why this company", "Evidence of fit", "Closing"]) expect(screen.getByText(label)).toBeInTheDocument();
   });
 
+  it("numbers the two evidence textareas when editing a five-paragraph letter, and keeps a single one unnumbered", async () => {
+    const five = { ...letter, paragraphs: [paragraphs[0], paragraphs[1], paragraphs[2], { ...paragraphs[2], text: "I led migrations." }, paragraphs[3]] };
+    mockFetchSequence([{ body: { versions: [five], research } }]);
+    const { unmount } = render(<CoverLetterPanel jobId="j1" />);
+    fireEvent.click(await screen.findByRole("button", { name: "Edit" }));
+    expect(screen.getByRole("textbox", { name: "Evidence of fit 1" })).toHaveValue("I built pipelines.");
+    expect(screen.getByRole("textbox", { name: "Evidence of fit 2" })).toHaveValue("I led migrations.");
+    unmount();
+
+    mockFetchSequence([{ body: { versions: [letter], research } }]);
+    render(<CoverLetterPanel jobId="j1" />);
+    fireEvent.click(await screen.findByRole("button", { name: "Edit" }));
+    expect(screen.getByRole("textbox", { name: "Evidence of fit" })).toHaveValue("I built pipelines.");
+  });
+
   it("shows a review banner naming each unsupported paragraph", async () => {
     const flagged = { ...letter, requiresReview: true, paragraphs: [paragraphs[0], paragraphs[1], { ...paragraphs[2], supported: false, unsupportedReason: "cites no profile evidence" }, paragraphs[3]] };
     mockFetchSequence([{ body: { versions: [flagged], research } }]);

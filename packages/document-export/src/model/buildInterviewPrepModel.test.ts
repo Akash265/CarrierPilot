@@ -35,6 +35,12 @@ describe("buildInterviewPrepModel", () => {
     ]);
   });
 
+  it("prints the Missing: subtitle only for a supported gap question", () => {
+    const flagged = { ...sections, gapQuestions: [{ question: "SQL?", requirementTerm: "SQL", framing: "F.", ...g(false) }] };
+    const model = buildInterviewPrepModel({ title: "T", companyName: "C" }, flagged, ["Kubernetes"]);
+    expect(model.blocks).toContainEqual({ type: "entry", title: "SQL? (unverified)", subtitle: null, meta: null });
+  });
+
   it("says so when there are no gap terms", () => {
     const model = buildInterviewPrepModel({ title: "T", companyName: "C" }, { ...sections, gapQuestions: [] }, []);
     const i = model.blocks.findIndex((b) => b.type === "heading" && b.text === "Required skills not found in your profile");

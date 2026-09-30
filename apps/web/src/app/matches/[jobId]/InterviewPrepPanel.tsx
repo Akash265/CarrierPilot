@@ -38,16 +38,22 @@ type ListState =
   | { kind: "error" }
   | { kind: "ready"; versions: InterviewPrepView[]; research: ResearchView | null; selectedId: string | null };
 
+/** Same marking as the export's buildInterviewPrepModel. */
+const mark = (text: string, supported: boolean) => (supported ? text : `${text} (unverified)`);
+
 export function formatInterviewPrepText(prep: InterviewPrepView): string {
   const s = prep.sections;
   const parts = [
-    ["Likely questions", ...s.likelyQuestions.map((q) => [`- ${q.question} (${q.category})`, ...q.answerOutline.map((a) => `  • ${a}`)].join("\n"))].join("\n"),
+    [
+      "Likely questions",
+      ...s.likelyQuestions.map((q) => [`- ${mark(q.question, q.supported)} (${q.category})`, ...q.answerOutline.map((a) => `  • ${a}`)].join("\n")),
+    ].join("\n"),
     [
       `Required skills not found in your profile: ${prep.gapTerms.length > 0 ? prep.gapTerms.join(", ") : "none"}`,
-      ...s.gapQuestions.map((q) => `- ${q.question}\n  ${q.framing}`),
+      ...s.gapQuestions.map((q) => `- ${mark(q.question, q.supported)}\n  ${q.framing}`),
     ].join("\n"),
-    ["Company talking points", ...s.talkingPoints.map((p) => `- ${p.text}`)].join("\n"),
-    ["Questions to ask", ...s.questionsToAsk.map((q) => `- ${q.question}`)].join("\n"),
+    ["Company talking points", ...s.talkingPoints.map((p) => `- ${mark(p.text, p.supported)}`)].join("\n"),
+    ["Questions to ask", ...s.questionsToAsk.map((q) => `- ${mark(q.question, q.supported)}`)].join("\n"),
   ];
   return parts.join("\n\n");
 }
@@ -235,17 +241,17 @@ export function InterviewPrepPanel({ jobId }: { jobId: string }) {
           <details open className="rounded border p-2 text-sm">
             <summary className="font-medium">Required skills not found in your profile</summary>
             <div className="mt-2 flex flex-col gap-2">
-              <p>
-                {selected.gapTerms.length > 0 ? (
-                  selected.gapTerms.map((term) => (
-                    <span key={term} className="mr-2 rounded bg-gray-100 px-1.5 py-0.5 text-xs">
+              {selected.gapTerms.length > 0 ? (
+                <ul aria-label="Missing required terms" className="flex flex-wrap gap-2">
+                  {selected.gapTerms.map((term) => (
+                    <li key={term} className="rounded bg-gray-100 px-1.5 py-0.5 text-xs">
                       {term}
-                    </span>
-                  ))
-                ) : (
-                  "None: every required term appears in your profile."
-                )}
-              </p>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p>None: every required term appears in your profile.</p>
+              )}
               <ul className="flex flex-col gap-2">
                 {selected.sections.gapQuestions.map((q, i) => (
                   <li key={i}>
@@ -253,6 +259,8 @@ export function InterviewPrepPanel({ jobId }: { jobId: string }) {
                       {q.question}
                       <Flag item={q} />
                     </p>
+                    {/* An unsupported gap question's term may not be missing at all, so it is not called "Missing". */}
+                    <p className="text-xs text-gray-600">{q.supported ? `Missing: ${q.requirementTerm}` : `Term: ${q.requirementTerm}`}</p>
                     <p className="text-gray-600">{q.framing}</p>
                     <EvidenceList evidence={q.evidence} />
                   </li>
