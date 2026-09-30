@@ -118,6 +118,35 @@ describe("runCoverLetterGeneration", () => {
     expect(coverLetter.requiresReview).toBe(true);
   });
 
+  it("sets requiresReview but keeps paragraphs supported when a non-opening paragraph mentions a missing required term", async () => {
+    vi.mocked(ensureJobRequirements).mockResolvedValue([
+      { id: "11111111-1111-1111-1111-111111111111", termText: "SQL", requirementLevel: "required" },
+      { id: "11111111-1111-1111-1111-111111111112", termText: "Kubernetes", requirementLevel: "required" },
+    ] as never);
+    vi.mocked(generateCoverLetter).mockImplementation(async (_c, _e, input) => {
+      const d = groundedDraft(input);
+      d.paragraphs[2] = { ...d.paragraphs[2], text: "I run Kubernetes clusters every day." };
+      return d;
+    });
+    const { coverLetter } = await run(await seed());
+    expect(coverLetter.requiresReview).toBe(true);
+    expect((coverLetter.paragraphs as { supported: boolean }[]).every((p) => p.supported)).toBe(true);
+  });
+
+  it("does not set requiresReview when only the opening names a missing required term", async () => {
+    vi.mocked(ensureJobRequirements).mockResolvedValue([
+      { id: "11111111-1111-1111-1111-111111111111", termText: "SQL", requirementLevel: "required" },
+      { id: "11111111-1111-1111-1111-111111111112", termText: "Kubernetes", requirementLevel: "required" },
+    ] as never);
+    vi.mocked(generateCoverLetter).mockImplementation(async (_c, _e, input) => {
+      const d = groundedDraft(input);
+      d.paragraphs[0] = { ...d.paragraphs[0], text: "The role asks for SQL and Kubernetes." };
+      return d;
+    });
+    const { coverLetter } = await run(await seed());
+    expect(coverLetter.requiresReview).toBe(false);
+  });
+
   it("maps Anthropic.APIError and CoverLetterGenerationValidationError to unknown; rethrows anything else", async () => {
     const jobId = await seed();
     vi.mocked(generateCoverLetter).mockRejectedValueOnce(new Anthropic.APIError(429, {}, "rate limited", undefined));

@@ -4,6 +4,8 @@ import { hasUnsafeText } from "@ai-career/ingestion/text";
 import type { CompanyResearchWithFacts } from "../research/ensureCompanyResearch";
 import { generateCoverLetter, CoverLetterGenerationValidationError } from "../coverLetter/generateCoverLetter";
 import { applyCoverLetterGuard, type CoverLetterGuardResult } from "../coverLetter/applyCoverLetterGuard";
+import { findGapTermMentions } from "../coverLetter/findGapTermMentions";
+import { computeGapTerms } from "../interviewPrep/computeGapTerms";
 import { ApplicationGenerationError } from "./generationError";
 import { prepareApplicationContext, type PrepareApplicationContextOptions } from "./prepareApplicationContext";
 import { insertCoverLetterVersion, type CoverLetterRow } from "./insertCoverLetterVersion";
@@ -13,15 +15,18 @@ export interface RunCoverLetterGenerationResult {
   research: CompanyResearchWithFacts;
 }
 
-/** Phase 7c design §4.2: shared context → fast-tier call → citation guard → D44 → locked insert. */
+/** Phase 7c design §4.2: shared context → gap terms → fast-tier call → citation guard → gap-mention review flag (D101) → D44 → locked insert. */
 export async function runCoverLetterGeneration(db: DbClient, opts: PrepareApplicationContextOptions): Promise<RunCoverLetterGenerationResult> {
   const { userId, jobId, anthropicClient, env } = opts;
-  const { job, snapshot, research, evidence } = await prepareApplicationContext(db, opts);
+  const { job, snapshot, research, requirements, evidence } = await prepareApplicationContext(db, opts);
+  // D101: every missing required term (not capped) -- a later paragraph naming one needs the user's review.
+  const gapTerms = computeGapTerms(requirements, snapshot.catalog);
 
   let guard: CoverLetterGuardResult;
   try {
     const draft = await generateCoverLetter(anthropicClient, env, { jobTitle: job.title, companyName: job.companyName, evidence });
     guard = applyCoverLetterGuard(evidence, draft);
+    if (findGapTermMentions(guard.paragraphs, gapTerms).length > 0) guard = { ...guard, requiresReview: true };
   } catch (error) {
     if (error instanceof Anthropic.APIError || error instanceof CoverLetterGenerationValidationError) {
       throw new ApplicationGenerationError("unknown");
