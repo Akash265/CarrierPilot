@@ -14,3 +14,4 @@ export { createApplication } from "./createApplication";
 export {
   getApplication, listApplications, getApplicationForJob, listDocumentOptions, type DocumentOption, type DocumentOptions,
 } from "./readApplications";
+export { changeStatus, addEvent, updateApplication, deleteApplication } from "./mutateApplication";
