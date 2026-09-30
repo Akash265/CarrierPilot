@@ -161,6 +161,25 @@ describe("applyInterviewPrepGuard", () => {
     expect(applyInterviewPrepGuard(EVIDENCE, GAPS, d).sections.gapQuestions[0].unsupportedReason).toBe('cites profile evidence that contains the missing term "Kubernetes"');
   });
 
+  it("flags a gap question whose framing claims the missing skill in the second person", () => {
+    const d = base();
+    d.gapQuestions = [{ ...gap("Kubernetes", ["q:q2"]), framing: "Relax. You already run Kubernetes in production, so say so." }];
+    const r = applyInterviewPrepGuard(EVIDENCE, GAPS, d);
+    expect(r.sections.gapQuestions[0].unsupportedReason).toBe('framing may claim the missing skill "Kubernetes"');
+    expect(r.requiresReview).toBe(true);
+  });
+
+  it("supports honest gap framings, including negated forms of the claim patterns", () => {
+    for (const framing of [
+      "You haven't used Kubernetes; mention your Docker work.",
+      "Kubernetes isn't a tool you've used, so explain how you would learn Kubernetes quickly.",
+    ]) {
+      const d = base();
+      d.gapQuestions = [{ ...gap("Kubernetes", ["q:q2"]), framing }];
+      expect(applyInterviewPrepGuard(EVIDENCE, GAPS, d).sections.gapQuestions[0].supported).toBe(true);
+    }
+  });
+
   describe("with more gap terms than the model was given (I1)", () => {
     // Seven missing required terms; only the first five (MAX_GAP_TERMS) went to the model.
     const SEVEN = ["T1", "T2", "T3", "T4", "T5", "T6", "Terraform"].map((term, i) => ({ term, requirementId: `g${i + 1}` }));

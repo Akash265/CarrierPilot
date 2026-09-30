@@ -3,8 +3,8 @@
  * given genuine evidence and deterministically computed gap terms, (1) cites ids the guard accepts for
  * every item of every fixture, (2) writes at most one gap question per missing required term and never
  * routes a gap term into a likelyQuestion, and (3) never frames a gap question's advice as if the
- * candidate already had the missing skill (a reported heuristic, not an assertion -- read the flagged
- * framings). Run when ANTHROPIC_MODEL_RESEARCH or generateInterviewPrep's prompt/schema changes.
+ * candidate already had the missing skill (findSkillClaim -- the heuristic the guard enforces since D102;
+ * read the flagged framings, since a flag can be a false positive). Run when ANTHROPIC_MODEL_RESEARCH or generateInterviewPrep's prompt/schema changes.
  *
  * Usage (from packages/application-package, real ANTHROPIC_API_KEY in the repo root .env): `pnpm eval:interview-prep`
  */
@@ -15,7 +15,8 @@ import type { EvidenceCatalogEntry } from "@ai-career/resume-optimization";
 import { loadEnv } from "@ai-career/config";
 import { createAnthropicClient } from "@ai-career/ai";
 import { buildEvidenceIndex, type RequirementForEvidence } from "../src/pitch/buildEvidenceIndex";
-import { computeGapTerms, containsTerm } from "../src/interviewPrep/computeGapTerms";
+import { computeGapTerms } from "../src/interviewPrep/computeGapTerms";
+import { findSkillClaim } from "../src/interviewPrep/findSkillClaim";
 import { generateInterviewPrep } from "../src/interviewPrep/generateInterviewPrep";
 import { applyInterviewPrepGuard } from "../src/interviewPrep/applyInterviewPrepGuard";
 import { MAX_GAP_TERMS } from "../src/types";
@@ -29,25 +30,6 @@ interface Fixture {
   research: { id: string; text: string; sourceUrl: string | null }[];
   requirements: RequirementForEvidence[];
   catalog: EvidenceCatalogEntry[];
-}
-
-const CLAIM_PATTERN =
-  /\b(I have|I've|my experience (with|in)|I am experienced|extensive|you have|you've|your (experience|background) (with|in)|you already|this is actually a strength)\b/i;
-
-/**
- * Reported, not asserted (task-14 brief + fix round 1): does some sentence of the framing read as a claim
- * -- first person ("I have...") or second person, addressed to the candidate ("you already have...") --
- * that the candidate has the missing term? `containsTerm` (boundary-aware, same rule computeGapTerms uses)
- * finds the term itself so a short term like "Go" is not falsely matched inside "Google".
- */
-function claimsMissingSkill(framing: string, term: string): { flagged: boolean; sentence: string | null } {
-  const termLower = term.toLowerCase();
-  for (const sentence of framing.split(/(?<=[.!?])\s+/)) {
-    if (CLAIM_PATTERN.test(sentence) && containsTerm(sentence.toLowerCase(), termLower)) {
-      return { flagged: true, sentence };
-    }
-  }
-  return { flagged: false, sentence: null };
 }
 
 const citedIds = (evidence: { id: string }[]) => evidence.map((e) => e.id).join(", ") || "(none)";
@@ -105,13 +87,14 @@ async function main() {
           answeredTerms.add(key);
           if (q.supported) answeredSupportedTerms.add(key);
         }
-        const claim = claimsMissingSkill(q.framing, q.requirementTerm);
-        if (claim.flagged) flaggedFramings += 1;
+        // The same detector the guard enforces (D102), so this count equals the guard's claim flags.
+        const claimSentence = findSkillClaim(q.framing, q.requirementTerm);
+        if (claimSentence !== null) flaggedFramings += 1;
         console.log(`    [${q.requirementTerm}] supported=${q.supported}${q.unsupportedReason ? ` (${q.unsupportedReason})` : ""}`);
         console.log(`      cited: ${citedIds(q.evidence)}`);
         console.log(`      Q: ${q.question}`);
         console.log(`      Framing: ${q.framing}`);
-        if (claim.flagged) console.log(`      FRAMING MAY CLAIM THE MISSING SKILL (investigate): "${claim.sentence}"`);
+        if (claimSentence !== null) console.log(`      FRAMING MAY CLAIM THE MISSING SKILL (flagged by the guard; read it): "${claimSentence}"`);
       }
       gapAnswered += answeredTerms.size;
       gapAnsweredSupported += answeredSupportedTerms.size;

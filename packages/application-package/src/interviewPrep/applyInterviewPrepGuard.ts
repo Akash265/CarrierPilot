@@ -1,6 +1,7 @@
 import type { GapTerm, LikelyQuestionCategory, StoredGapQuestion, StoredInterviewPrepSections } from "../types";
 import { checkCitations, indexEvidence, quoteId, toGuarded, type CitationRequirement } from "../guard/checkCitations";
 import { containsTerm } from "./computeGapTerms";
+import { findSkillClaim } from "./findSkillClaim";
 import type { PitchEvidenceItem } from "../pitch/buildEvidenceIndex";
 import type { InterviewPrepDraft } from "./interviewPrepSchema";
 
@@ -65,6 +66,10 @@ export function applyInterviewPrepGuard(
       if (result.evidence.some((e) => e.kind === "profile" && containsTerm(e.text.toLowerCase(), key))) {
         result.reasons.push(`cites profile evidence that contains the missing term ${quoteId(gap.term)}`);
       }
+    }
+    // D102: the one rule that reads the framing itself -- advice that claims the missing skill.
+    if (findSkillClaim(q.framing, requirementTerm) !== null) {
+      result.reasons.push(`framing may claim the missing skill ${quoteId(requirementTerm.trim())}`);
     }
     return { question: q.question, requirementTerm, framing: q.framing, ...toGuarded(result) };
   });
