@@ -2,7 +2,7 @@ import { describe, it, expect, afterAll } from "vitest";
 import type { Readable } from "node:stream";
 import { createStorageClient } from "./client";
 import {
-  uploadGeneratedDocument, getGeneratedDocument, deleteGeneratedDocument, statGeneratedDocument, GENERATED_DOCUMENTS_BUCKET,
+  uploadGeneratedDocument, getGeneratedDocument, deleteGeneratedDocument, statGeneratedDocument, listGeneratedDocuments, GENERATED_DOCUMENTS_BUCKET,
 } from "./generatedDocumentStorage";
 
 const client = createStorageClient({
@@ -54,5 +54,15 @@ describe("generated document storage", () => {
       await expect(statGeneratedDocument(client, objectKey)).resolves.toBeUndefined();
       await expect(statGeneratedDocument(client, `${userId}/does-not-exist.pdf`)).rejects.toThrow();
     });
+  });
+
+  it("lists objects under a prefix with their last-modified time", async () => {
+    const userId = "00000000-0000-0000-0000-0000000009a9";
+    const { objectKey } = await uploadGeneratedDocument(client, { userId, buffer: Buffer.from("x"), extension: "pdf" });
+    created.push(objectKey);
+    const listed = await listGeneratedDocuments(client, `${userId}/`);
+    const mine = listed.find((o) => o.key === objectKey);
+    expect(mine?.lastModified).toBeInstanceOf(Date);
+    expect(listed.every((o) => o.key.startsWith(`${userId}/`))).toBe(true);
   });
 });

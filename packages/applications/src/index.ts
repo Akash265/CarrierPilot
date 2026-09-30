@@ -18,3 +18,4 @@ export { changeStatus, addEvent, updateApplication, deleteApplication } from "./
 export {
   isDueForPurge, planRetention, planOrphanSweep, ORPHAN_MIN_AGE_MS, type RetentionCandidate, type StoredObject,
 } from "./retention/planRetention";
+export { runRetentionSweep, type RetentionStorage, type RetentionSweepResult } from "./retention/runRetentionSweep";
