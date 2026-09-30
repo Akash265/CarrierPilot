@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, isNotNull } from "drizzle-orm";
 import Anthropic from "@anthropic-ai/sdk";
 import { schema, withUserContext, type DbClient } from "@ai-career/db";
 import { evaluateEligibility } from "../eligibility/evaluateEligibility";
@@ -20,7 +20,7 @@ import { isExplanationStale } from "../explanation/explanationStaleness";
 import { upsertMatchRow, type ExistingMatchRow } from "./upsertMatch";
 import type { FactorScores } from "../types";
 
-const { careerGoals, careerGoalConstraints, candidateProfiles, jobMatches, matchingRuns } = schema;
+const { careerGoals, careerGoalConstraints, candidateProfiles, jobMatches, matchingRuns, applications } = schema;
 const MS_PER_DAY = 86_400_000;
 const num = (value: string | null): number | null => (value === null ? null : Number(value));
 
@@ -137,6 +137,12 @@ export async function runMatching(db: DbClient, opts: RunMatchingOptions): Promi
     const existingRows = await inUserContext((tx) => tx.select().from(jobMatches));
     const existingByJobId = new Map<string, ExistingMatchRow>(existingRows.map((r) => [r.jobId, r]));
 
+    // Phase 9: one query per run; a job with an application is excluded as "already applied".
+    const appliedRows = await inUserContext((tx) =>
+      tx.select({ jobId: applications.jobId }).from(applications).where(isNotNull(applications.jobId))
+    );
+    const appliedJobIds = new Set(appliedRows.map((r) => r.jobId as string));
+
     const scored: ScoredJob[] = [];
 
     for (const job of rows) {
@@ -154,6 +160,7 @@ export async function runMatching(db: DbClient, opts: RunMatchingOptions): Promi
         candidateYearsOfExperience: candidateYears,
         experienceGraceYears: env.MATCHING_EXPERIENCE_GRACE_YEARS,
         previouslyDismissed: existing?.userAction === "dismissed",
+        alreadyApplied: appliedJobIds.has(job.id),
       });
 
       if (!eligibility.eligible) {

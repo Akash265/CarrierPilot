@@ -13,6 +13,7 @@ const base: EligibilityInput = {
   candidateYearsOfExperience: 5,
   experienceGraceYears: 1,
   previouslyDismissed: false,
+  alreadyApplied: false,
 };
 
 describe("evaluateEligibility", () => {
@@ -94,5 +95,11 @@ describe("evaluateEligibility", () => {
 
   it("ignores a blank entry in excludedIndustries instead of excluding every company", () => {
     expect(evaluateEligibility({ ...base, excludedIndustries: ["", "\t"] }).eligible).toBe(true);
+  });
+
+  it("excludes a job the user already applied to, before any other rule", () => {
+    const result = evaluateEligibility({ ...base, alreadyApplied: true, previouslyDismissed: true });
+    expect(result.eligible).toBe(false);
+    expect(result.reason).toBe(`You applied to this job at ${base.companyName}.`);
   });
 });
