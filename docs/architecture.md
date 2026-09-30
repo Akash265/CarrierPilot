@@ -158,7 +158,7 @@ Everything else (job_requirements, resume_optimizations, ats_evaluations, applic
 
 - Uploaded files: scanned/stripped of macros and EXIF, renamed with UUID, stored encrypted (MinIO local / R2 optional).
 - Log scrubbing: exact-match substring redaction of known profile values ([D9](../DECISIONS.md)) — no NER/generic-regex PII detection.
-- Retention: resume text and generated documents auto-deleted 30 days after an application reaches a terminal status (Rejected/Hired) — implemented in Phase 9; see §17.
+- Retention: `RETENTION_DAYS` (default 30) after an application reaches a terminal status, the job-specific generated documents and tailored resume text for that job are deleted -- resume optimizations, pitches, cover letters, interview prep and their rendered files. The base resume/profile is never deleted by retention. Implemented in Phase 9; see §17.
 - Structured logging only; no resume/profile content in production logs regardless of scrubbing (defense in depth).
 
 ## 10. What's still open
@@ -335,7 +335,7 @@ hasUnsafeText → cover_letters            hasUnsafeText → interview_preparati
 ## 17. Application Tracker (Phase 9)
 
 ```
-"Mark as applied" (eligible match)  |  "Add external application"
+"Mark as applied" (any match page)  |  "Add external application"
         │                                       │
         ▼                                       ▼
 createApplication  -- loads job/match/ATS/documents, builds a one-time feature_snapshot,
@@ -391,10 +391,12 @@ runMatching's eligibility        services/maintenance-worker  (daily BullMQ sche
   `feature_snapshot` -- it keeps showing the original choice (D116). No Dockerfile for
   `services/maintenance-worker`. An applied job's documents cannot be regenerated (D118, by design, not a
   bug). Calendar dates (`applied_at`, `follow_up_at`, and the "today" used for the due list and date-picker
-  defaults) are UTC dates on both server (`todayUtc`) and client (`ApplicationPanel`'s `todayLocal` uses
+  defaults) are UTC dates on both server (`todayUtc`) and client (`ApplicationPanel`'s module-local `todayUtc` uses
   `toISOString().slice(0, 10)`, not the browser's local calendar day) -- near local midnight, a user in a
-  non-UTC timezone can see "today" roll over up to many hours off from their wall clock. `failedObjectDeletes`
-  in a retention run's counts can double-count a single object that fails to delete both during its own
-  purge and again in that same run's orphan sweep (D119). `packages/ingestion` still accepts non-http(s)
+  non-UTC timezone can see "today" roll over up to many hours off from their wall clock. The server rejects an
+  `appliedAt` after today and a snooze date that is not after today (D123). `packages/ingestion` still accepts non-http(s)
   posting URLs; only `createApplication` and the application detail page guard against rendering one (D113).
-- Rationale: `docs/superpowers/specs/2026-09-30-phase-9-application-tracker-design.md`, DECISIONS.md D112–D121.
+- **Current document options.** `ApplicationPanel` re-fetches its version options before submitting, on window
+  focus and on `DOCUMENTS_CHANGED_EVENT` (which the resume/pitch/cover-letter panels dispatch after a generate or
+  edit), so the write-once `feature_snapshot` records the versions actually current at submit time (D123).
+- Rationale: `docs/superpowers/specs/2026-09-30-phase-9-application-tracker-design.md`, DECISIONS.md D112–D123.

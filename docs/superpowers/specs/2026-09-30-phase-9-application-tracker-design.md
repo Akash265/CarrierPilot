@@ -228,7 +228,7 @@ TDD per CLAUDE.md §10.
 
 ## 10. Risks
 
-- **Retention deletes irreversibly.** It is mitigated by the terminal-status confirmation, the `RETENTION_DAYS=0` kill switch, objects-before-rows ordering, and per-job scoping tested against a second job's data.
+- **Retention deletes irreversibly.** It is mitigated by the terminal-status confirmation, the `RETENTION_DAYS=0` kill switch, rows-before-objects ordering, and per-job scoping tested against a second job's data.
 - **The snapshot only reflects data at apply time.** A match computed against an older goal is recorded as-is (with its `careerGoalId`) rather than recomputed.
 - **External applications give Phase 10 sparse features.** They are flagged `external: true`, so Phase 10 can exclude or down-weight them.
 - **Free-text fields may hold PII** (recruiter contact). They are covered by the existing redaction and never logged.
@@ -251,7 +251,15 @@ for the full rationale of each):
   — D119. One gap surfaced during implementation, not anticipated by the design: `failedObjectDeletes` can
   double-count a single object that fails to delete during its own purge step and then fails again in that
   same run's orphan sweep, since the key is already unreferenced and past the 24h guard by the time the
-  orphan sweep runs.
+  orphan sweep runs. (Fixed after the final review: failed keys are tracked in a per-run `Set`, so each
+  counts once -- D123.)
+- **`GET /api/applications/[id]` documents (§6 table).** The route returns the versions sent through the
+  `snapshotSummary` built from `feature_snapshot` (resume, pitch and cover-letter version numbers, plus the
+  match and ATS scores), not "linked documents that still exist (with
+  downloads)". The detail page lists those versions and links to `/matches/[jobId]`, where the documents and
+  their downloads live until retention deletes them.
+- **Date bounds (added after the final review, D123).** `appliedAt` (create and update) may not be after
+  today (UTC, 5-minute clock-skew allowance); a snoozed follow-up date must be strictly after today.
 - **Ingested `job_url` (not in the original design text).** `createApplication` copies the job's most
   recently seen posting URL only when it is http(s); `packages/ingestion` does not constrain a posting's
   `url` field to http(s) at all, so a non-conforming URL is silently dropped rather than stored, and the
@@ -263,5 +271,6 @@ for the full rationale of each):
   midnight local time. Not fixed in this phase.
 - **`packages/applications` test helper.** The `postgres.js` admin client used by the integration test
   helpers (`packages/applications/src/testing/db.ts`) rejects a raw JS `Date` as a tagged-template parameter
-  once that connection has run Drizzle's `migrate()`; tests that backdate a timestamp pass an ISO string
-  with an explicit `::timestamptz` cast instead.
+  once `drizzle(adminSql)` has wrapped it: Drizzle's postgres-js driver (`drizzle-orm/postgres-js/driver.js`)
+  replaces the shared client's date/timestamp parsers and serializers with pass-throughs. (`migrate()` is not
+  the cause.) Tests that backdate a timestamp pass an ISO string with an explicit `::timestamptz` cast instead.

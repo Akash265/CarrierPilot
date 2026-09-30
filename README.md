@@ -161,14 +161,15 @@ computed deterministically, not by the model), company talking points and
 questions to ask. Existing checkouts: run `pnpm --filter @ai-career/db
 db:migrate` to add the two new tables.
 
-Phase 9 (Application Tracker) complete: "Mark as applied" on an eligible
-match (or "Add external application" on `/applications`) records which
+Phase 9 (Application Tracker) complete: "Mark as applied" on any match
+page (or "Add external application" on `/applications`) records which
 resume/pitch/cover-letter versions you actually sent, a one-time snapshot of
 the match/ATS scores at that moment, and puts the job on a `/applications`
 tracker with a status timeline, follow-up dates, and a log of notes,
 recruiter contact and interview events. An applied job leaves the ranked
 `/matches` feed ("already applied") but its generated documents stay
-viewable from the application's detail page until retention deletes them.
+viewable on `/matches/[jobId]` until retention deletes them; the
+application's detail page lists the versions sent and links there.
 Browser automation (Phase 8) is deferred, so every application is recorded
 by hand rather than by an automation session. Existing checkouts: run
 `pnpm --filter @ai-career/db db:migrate` to add the two new tables, and see

@@ -1060,21 +1060,33 @@ Phase 6/7 panels.
 
 ### 12a. Mark as applied (request-driven)
 
-Loading an eligible match's page renders `ApplicationPanel` (`apps/web/src/app/matches/[jobId]/ApplicationPanel.tsx`, new)
+Loading any match page, eligible or not, renders `ApplicationPanel` (`apps/web/src/app/matches/[jobId]/ApplicationPanel.tsx`, new;
+`MatchDetailClient.tsx` renders it unconditionally, so "Mark as applied" is on every match page)
   -> `GET /api/applications/for-job/[jobId]` (`apps/web/src/app/api/applications/for-job/[jobId]/route.ts`, new;
      non-UUID `jobId` -> 404)
   -> `getApplicationForJob` + `listDocumentOptions` (`packages/applications/src/readApplications.ts`, new) --
      one existing-application lookup by `jobId`, plus each linked-document table's versions (resume
-     optimizations, pitches, cover letters) newest first, so the panel can preselect the latest of each.
+     optimizations, pitches, cover letters) ordered by `version` descending on the server, so the panel can
+     preselect the first (newest) of each.
   -> Panel shows "Applied on {date} · {status}" with a link to `/applications/[id]` if an application already
      exists, otherwise a form (resume/pitch/cover-letter version dropdowns, applied date, optional follow-up
-     date; the version dropdowns' "latest" default and the applied-date default both come from the browser's
-     local clock, not the server).
+     date). The version dropdowns' "latest" default is the first option in the server's ordering, not
+     anything computed from the browser clock. The applied-date default is today's UTC day
+     (`todayUtc()` = `toISOString().slice(0, 10)`), matching the server's "not after today" bound.
+  -> The panel keeps the options current (D123): it re-runs the same `GET for-job` on window `focus` and on
+     `DOCUMENTS_CHANGED_EVENT` (`"documents:changed"`, exported by `DownloadButtons.tsx`). That event is
+     dispatched by `DownloadButtons` after an export and, since D123, by `ResumeOptimizationPanel` after a
+     successful generate and by `PitchPanel`/`CoverLetterPanel` after a successful generate or edit (not a
+     research refresh). `DocumentsList` also listens and re-loads `/api/documents`. A dropdown the user never
+     touched always shows the newest option; an explicit pick (a version or "None") is kept while that id
+     still exists in the fresh options, else it falls back to the newest.
 
-Submitting the form -> `POST /api/applications` (`apps/web/src/app/api/applications/route.ts`, new)
+Submitting the form -> re-fetches `GET for-job` first (D123; if an application now exists, it shows that
+and stops), resolves each dropdown against the fresh options as above, then
+`POST /api/applications` (`apps/web/src/app/api/applications/route.ts`, new)
   -> `CreateApplicationBodySchema` (`packages/applications/src/bodies.ts`, new) -- exactly one of `jobId` or
-     `external{companyName,jobTitle,jobUrl?}`; an external application cannot carry document links; invalid
-     body -> 400
+     `external{companyName,jobTitle,jobUrl?}`; an external application cannot carry document links;
+     `appliedAt` may not be after today (UTC, with a 5-minute clock-skew allowance, D123); invalid body -> 400
   -> `createApplication` (`packages/applications/src/createApplication.ts`, new), one transaction
      (`withUserContext`):
      1. Ingested path: load the `jobs` row (missing -> `job_not_found` -> 404); `loadLinkedDocuments`
@@ -1088,7 +1100,7 @@ Submitting the form -> `POST /api/applications` (`apps/web/src/app/api/applicati
         (partial index, job_id not null) is caught and re-thrown as `already_applied` -> 409
         (`applicationErrorResponse`, `apps/web/src/lib/applications/errorResponse.ts`, new).
   -> Route returns 201 `{ application }` (`toApplicationView`, `apps/web/src/lib/applications/serializeApplication.ts`,
-     new); panel updates its own state directly from the response (no re-fetch).
+     new); panel updates its own state directly from the response (no re-fetch after the POST).
 
 ### 12b. Status changes, events and edits (request-driven)
 
@@ -1108,7 +1120,8 @@ drives three separate actions from the same page:
   (`apps/web/src/app/api/applications/[id]/events/route.ts`, new) -> `UserEventBodySchema` (discriminated union
   on `type`; `status_change`/`documents_purged` are not in the union, so they cannot be posted here) ->
   `addEvent` (`mutateApplication.ts`): `follow_up_done` clears `follow_up_at`, `follow_up_snoozed` sets it to
-  `detail.newFollowUpAt`, both in the same transaction as the event insert.
+  `detail.newFollowUpAt` (which must be strictly after today, UTC, D123), both in the same transaction as the
+  event insert.
 - Edit form (`EditApplicationForm.tsx`, new) -> `PATCH /api/applications/[id]`
   (`apps/web/src/app/api/applications/[id]/route.ts`, new) -> `UpdateApplicationBodySchema` -> `updateApplication`
   (`mutateApplication.ts`): edits free-text fields, `appliedAt`, `followUpAt` and document links (a changed
@@ -1150,6 +1163,8 @@ concurrency 1) and calls `scheduleRetention` (`worker.ts`), which upserts a repe
         keys one by one.
      4. An orphan sweep lists `generated-documents/{userId}/`, diffs against every `generated_documents`
         row's `object_key`, and deletes unreferenced keys older than 24h (`planOrphanSweep`).
+     5. `failedObjectDeletes` is the size of a per-run `Set` of keys whose removal failed and did not later
+        succeed, so a key failing in both steps 3 and 4 counts once (D123).
   -> Logs counts only (`main.ts`'s `log` helper), never document/note content.
 
 `pnpm retention:run` (root `package.json` -> `services/maintenance-worker/package.json`'s own
