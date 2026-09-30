@@ -140,3 +140,13 @@ resume or pitch version downloads as PDF or DOCX (single-column, ATS-readable,
 Unicode font embedded). Files are stored in MinIO and listed under "Documents";
 export is refused if your profile changed since the optimization or a generated
 pitch still has an unsupported bullet.
+
+Phase 7c (Cover Letter & Interview Preparation) complete: on an eligible match,
+"Generate Cover Letter" writes an optional 4–5 paragraph letter whose
+opening, company and evidence paragraphs must each cite real evidence
+(versioned, editable, PDF/DOCX export), and "Generate Interview Prep" builds a
+read-only, exportable pack of likely questions with answer outlines, honest
+framings for required skills missing from your profile (the gap list is
+computed deterministically, not by the model), company talking points and
+questions to ask. Existing checkouts: run `pnpm --filter @ai-career/db
+db:migrate` to add the two new tables.

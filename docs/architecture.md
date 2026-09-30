@@ -1,6 +1,6 @@
 # Architecture — AI Career Intelligence & Application Platform
 
-Status: **Phases 0–6, 7a and 7b are implemented** (foundation, candidate profile, career goal, job intelligence, hybrid matching, ATS resume optimization, company research + Hiring Manager Pitch, document export); interview prep / cover letter (7c) onward is designed but not yet built. This document describes the agreed architecture as of 2026-09-06. See `DECISIONS.md` for the rationale behind each choice. Update this file as implementation reveals deviations — it must describe what's actually built, not an aspiration.
+Status: **Phases 0–6 and 7a–7c are implemented** (foundation, candidate profile, career goal, job intelligence, hybrid matching, ATS resume optimization, company research + Hiring Manager Pitch, document export, cover letter + interview preparation); browser automation (Phase 8) onward is designed but not yet built. This document describes the agreed architecture as of 2026-09-06. See `DECISIONS.md` for the rationale behind each choice. Update this file as implementation reveals deviations — it must describe what's actually built, not an aspiration.
 
 ## 1. Product framing
 
@@ -276,7 +276,7 @@ application_pitches (versioned; generated or user_edited; evidence snapshotted p
 - **Grounding.** Web facts are grounded by API citations (D72); pitch bullets by `applyPitchGuard` (D75). Unsupported bullets are shown, flagged, never dropped.
 - **Three new tables.** `company_research`, `company_research_facts`, `application_pitches` (D71).
 - **Execution model.** Synchronous API routes, like Phase 6. Research uses the basic `web_search_20250305` tool (D79); the first pitch for a company waits for web research, typically ~16-22s, not the ~a minute originally estimated with the newer tool.
-- **Known gaps.** No research history; `company_key` collisions share research; no domain allow/block list for search; no interview prep or cover letter (7c). Cached internal facts ("Company has N roles…") reflect jobs at research time until Refresh; a company whose search hits `max_uses` with nothing cited is stored as `failed` and re-searched on every pitch request (a cost follow-up, not fixed here); the internal-facts query caps at 50 jobs.
+- **Known gaps.** No research history; `company_key` collisions share research; no domain allow/block list for search. Cached internal facts ("Company has N roles…") reflect jobs at research time until Refresh; a company whose search hits `max_uses` with nothing cited is stored as `failed` and re-searched on every pitch request (a cost follow-up, not fixed here); the internal-facts query caps at 50 jobs.
 - Full rationale: `docs/superpowers/specs/2026-09-24-phase-7a-company-research-pitch-design.md` and DECISIONS.md D69–D79.
 
 ## 15. Document Export & Storage (Phase 7b)
@@ -296,3 +296,34 @@ DocumentModel ──► storeDocument: hash → reuse | renderPdf (pdfkit + embe
 - **Consistency.** `exportResume` reads the profile snapshot hash and the profile rows in one `REPEATABLE READ` transaction so a concurrent profile edit cannot pair an old hash with new rows (D84 update). `storeDocument` deletes its MinIO upload if the row insert fails for any reason other than the expected de-dup conflict, so a failed insert never orphans an object (D84).
 - **Known gaps.** Deleting a job leaves its MinIO objects (Phase 9 retention); plain visual design; no templates. A resume row that de-duplicates by content keeps the filename from its first export -- a later company-name change in the job data does not rename it. If a stored object ever disappears without its row (e.g. a future retention sweep that deletes objects but not rows), the row keeps being reused by hash-based reuse and download returns 502; Phase 9's retention job must delete rows together with their objects, not objects alone. The PDF's bullet glyph can be orphaned at a page break when the bullet text wraps to the next page (cosmetic). The embedded Noto Sans covers Latin/Greek/Cyrillic only -- CJK, Arabic and Hebrew names render as boxes in the PDF (pdfkit does no font fallback or bidi shaping); DOCX is unaffected, since it defers to the viewer's own fonts (D83 update).
 - Rationale: `docs/superpowers/specs/2026-09-24-phase-7b-document-export-design.md`, DECISIONS.md D81–D87.
+
+## 16. Cover Letter & Interview Preparation (Phase 7c)
+
+```
+eligible job_matches row + non-empty evidence catalog
+  │
+  ▼
+prepareApplicationContext  -- shared with the pitch: gates → profile check → ensureCompanyResearch
+  │                           → ensureJobRequirements → buildEvidenceIndex (r:/q:/p: ids)
+  ├──────────────────────────────────────┐
+  ▼ cover letter                         ▼ interview prep
+generateCoverLetter (fast tier)          computeGapTerms (pure; required terms missing from the profile, ≤5)
+  │                                      generateInterviewPrep (research tier; gap terms as fixed input)
+  ▼                                      ▼
+applyCoverLetterGuard                    applyInterviewPrepGuard (citation rules per section + gap rules)
+  │        └── both call checkCitations (guard/checkCitations.ts), shared with applyPitchGuard
+  ▼                                      ▼
+hasUnsafeText → cover_letters            hasUnsafeText → interview_preparations
+(versioned; generated | user_edited)     (versioned, read-only; gap_terms_snapshot)
+```
+
+- **Package boundary.** `packages/application-package` gains `guard/` (`checkCitations`), `coverLetter/`, `interviewPrep/` and `pipeline/{prepareApplicationContext,runCoverLetterGeneration,createEditedCoverLetter,runInterviewPrepGeneration,…}`; `runPitchGeneration` / `applyPitchGuard` now sit on the shared pieces (D89). Consumed by `apps/web`'s `/api/cover-letters/[jobId]` (GET, `run`, `edit`) and `/api/interview-preps/[jobId]` (GET, `run`) routes and the `CoverLetterPanel` / `InterviewPrepPanel` on the match page; research refresh stays on the pitch route (research is per company and shared).
+- **Model tiers.** Cover letter on `ANTHROPIC_MODEL_FAST`; interview prep on `ANTHROPIC_MODEL_RESEARCH`. No new env var (D90, D91).
+- **Grounding.** Cover letter: opening cites a requirement, company paragraph a research fact, evidence paragraphs profile evidence, closing nothing; salutation and sign-off are added at export, never by the model (D90). Interview prep: likely questions cite profile evidence plus a requirement (technical/behavioral) or research-or-requirement (role, D97); gap questions must cite the missing term's own requirement and follow the gap rules (D92); likely questions that target a gap term are flagged (D96); talking points cite research; questions to ask cite research or a requirement. Unsupported items are flagged, never dropped.
+- **Gap terms.** Deterministic, not model-chosen: `required` job terms not found in the profile evidence text by a boundary-aware match (D92, D95), stored with the pack and shown in the UI.
+- **Two new tables.** `cover_letters` and `interview_preparations`, both RLS-scoped with advisory-locked versions (migrations `0022`, `0023`). `generated_documents` gains the `cover_letter` / `interview_prep` kinds and source columns; its source CHECK compares `kind::text` so a fresh DB migrates in one transaction (D93).
+- **Export.** A generated cover letter with an unsupported paragraph is refused (409); an interview prep pack always exports with unsupported items marked "(unverified)", because it is for the candidate only (D93).
+- **Execution model.** Synchronous API routes, like 7a — an interview prep call (research tier, large output) can take up to about a minute, a first-time company research adds its own ~16-22s.
+- **Evals.** `eval:cover-letter` / `eval:interview-prep` (manual, real API): cover letter 13/13 paragraphs supported; interview prep 61/63 items supported, 10/10 gap terms answered and supported (D94).
+- **Known gaps.** Gap detection has no alias/synonym handling ("Spark" does not cover "Apache Spark"; "Postgres" does not cover "PostgreSQL") and can differ slightly from the ATS keyword-coverage list (boundary-aware vs substring); the likely-question gap check can false-positive on generic gap terms. Calls are synchronous — no worker, no progress beyond a loading message. The guard checks citations, not semantic faithfulness: it cannot tell whether an answer outline or a framing says only what its cited facts say, and the eval's "claims a missing skill" heuristic has no negation/conditional awareness. No per-question notes, no mock interview, no editing of interview prep packs. The evidence block sent to the model is not length-capped (same as the pitch).
+- Rationale: `docs/superpowers/specs/2026-09-29-phase-7c-interview-prep-cover-letter-design.md`, DECISIONS.md D89–D99.

@@ -1,7 +1,7 @@
 # Phase 7c — Interview Preparation & Cover Letter: Design
 
 Date: 2026-09-29
-Status: design approved by user in brainstorming; not yet implemented.
+Status: design approved by user in brainstorming; implemented (see §10 for deviations).
 Spec reference: project specification §10 (Application Generation — "Interview preparation", "Optional legacy cover letter mode, but cover letters are secondary rather than the core value proposition"), §12 ("A traditional cover letter can remain an optional secondary feature for applications that explicitly request one"), §19 (`cover letters`, `interview preparations` tables), roadmap Phase 7 (Application Package).
 Related decisions: D2 (RLS), D6 (never invent/estimate), D7/D8 (model tier via env var; deterministic before AI), D20 (per-request random delimiter around untrusted text), D44 (`hasUnsafeText` choke point before jsonb), D57 (catch `Anthropic.APIError` distinctly), D58–D68 (Phase 6 evidence catalog, deterministic guard, advisory-locked versioning), D69–D80 (Phase 7a research + pitch), D81–D88 (Phase 7b export). New decisions are numbered from **D89**.
 
@@ -215,3 +215,18 @@ Two new panels on `/matches/[jobId]`, below `PitchPanel`:
 - **Substring gap detection is crude:** a term phrased differently in the profile ("Postgres" vs "PostgreSQL") is reported as a gap. Accepted and shown transparently (the UI lists the terms); the same rule already drives the ATS scorecard. Synonym handling is a later improvement.
 - **Interview prep cost/latency:** Sonnet-tier call with a large output, synchronous; up to ~60s. Accepted for a single-user local app, same as 7a.
 - **Guard can't judge semantic faithfulness:** it checks citations, not that an answer outline says only what the cited facts say. Mitigated by the evals' reporting and by showing evidence next to each item.
+
+## 10. Post-implementation notes
+
+Implemented on branch `worktree-phase-7c-interview-prep-cover-letter`. Deviations from this design, each recorded in DECISIONS.md:
+
+- **No generic `applyCitationGuard` (§4.1).** The shared piece is `guard/checkCitations.ts` (`checkCitations(lookup, evidenceIds, requirement)` with requirement groups as described); each document keeps a thin guard of its own (`applyPitchGuard`, `applyCoverLetterGuard`, `applyInterviewPrepGuard`). The shared error class is `ApplicationGenerationError`; `PitchGenerationError` is kept as an alias, but `.name` changed (log text only). D89.
+- **Gap matching is boundary-aware, not plain substring (§4.3, §9).** `containsTerm` requires no `[a-z0-9]` character immediately before/after the term, so "Go" is not hidden by "Google". The gap list can therefore differ slightly from `scoreKeywordCoverage`. Terms are sorted by term then id (not "requirement order": `job_requirements` has no order column). D92, D95.
+- **Gap-rule reachability (§4.3).** "Cites a `p:` whose text contains the missing term" cannot fire with consistent inputs (gap detection and the `p:` snapshots use the same text and matcher); it is defense in depth. The real "claims the skill" risk is measured by the eval heuristic, not enforced. A gap term is reserved only once a question cites that term's own `q:` id; the canonical term spelling is stored. D92.
+- **Likely questions may not target gap terms.** A likely question citing a gap term's `q:` id or mentioning a gap term is flagged ("use a gap question"). D96.
+- **`role` likely questions** need ≥1 `p:` AND ≥1 (`r:` or `q:`); technical/behavioral keep `q:` AND `p:`. D97.
+- **Prompt fixes from the evals.** Gap questions MUST include their `q:` id; talking points "at least 3", restating facts without speculation when research is sparse. D98.
+- **Export (§6).** The `generated_documents` CHECK compares `kind::text` (drizzle's migrator runs all migrations in one transaction; Postgres forbids using an enum value added in the same transaction). A generated cover letter with an unsupported paragraph is refused (409 `cover_letter_unsupported`); an interview prep pack always exports, marking unsupported items "(unverified)". D93.
+- **Alias limitation confirmed by eval fixture 4.** "Spark" in the profile vs a required "Apache Spark" is reported as a gap; the model may write a supported framing telling the user it is actually a strength. D92, D94.
+- **Dev DB not migrated on the branch;** migrations `0022`/`0023` are applied after merge. D99.
+- **Eval results:** cover letter 13/13 paragraphs supported, 0 uncited numbers; interview prep 61/63 items supported, gap terms answered 10/10 (supported 10/10). D94.

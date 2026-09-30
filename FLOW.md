@@ -799,6 +799,8 @@ User clicks "Generate Pitch" / "Regenerate" on an eligible job's match detail pa
 (`apps/web/src/app/matches/[jobId]/PitchPanel.tsx`)
   -> `POST /api/application-pitches/[jobId]/run` (`apps/web/src/app/api/application-pitches/[jobId]/run/route.ts`)
   -> `runPitchGeneration` (`packages/application-package/src/pipeline/runPitchGeneration.ts`)
+     Since Phase 7c, steps 1-4 live in `prepareApplicationContext` (`pipeline/prepareApplicationContext.ts`,
+     shared with the cover letter and interview prep, §11a); `runPitchGeneration` adds steps 5-7.
      1. job_matches row exists (else 404) and is eligible (else 400).
      2. `buildResumeSnapshot` (Phase 6) -- empty catalog -> `no_profile` -> 409, BEFORE any paid call.
      3. `ensureCompanyResearch` (`research/ensureCompanyResearch.ts`), keyed by `jobs.company_key`:
@@ -821,7 +823,8 @@ User clicks "Generate Pitch" / "Regenerate" on an eligible job's match detail pa
           instead (D74, as amended).
      4. `ensureJobRequirements` (Phase 6) -> `buildEvidenceIndex` (`r:` research, `q:` requirement, `p:` profile ids).
      5. `generatePitch` -- fast-tier forced tool call `record_pitch` -> Zod `PitchDraftSchema`.
-     6. `applyPitchGuard` -- every cited id must exist, no repeats, each bullet must cite its own kind;
+     6. `applyPitchGuard` -- each bullet's citations go through the shared `checkCitations`
+        (`guard/checkCitations.ts`): every cited id must exist, no repeats, each bullet must cite its own kind;
         failures kept with supported=false; evidence text snapshotted from the index.
      7. `hasUnsafeText` choke point, then `insertPitchVersion` under
         `pg_advisory_xact_lock(hashtext('application_pitches'), hashtext(userId || ':' || jobId))`.
@@ -837,7 +840,8 @@ a `failed` result over good research writes nothing and returns 502 (`CompanyRes
 
 Changing the pitch prompt/schema: `pitch/generatePitch.ts` + `pitch/pitchSchema.ts` (keep the tool JSON
 schema and the Zod schema in lockstep by hand; re-run `eval:pitch`). Changing grounding rules:
-`pitch/applyPitchGuard.ts` only. Changing what counts as a web fact: `research/extractCitedFacts.ts` only.
+`pitch/applyPitchGuard.ts` (per-bullet kinds) or `guard/checkCitations.ts` (the id rules shared with §11 --
+a change there affects all three documents). Changing what counts as a web fact: `research/extractCitedFacts.ts` only.
 
 ## 10. Phase 7b — Document Export & Storage
 
@@ -877,3 +881,113 @@ so a profile edit committing between the two reads cannot pair an old hash with 
 
 Changing layout: `packages/document-export/src/render/*` — bump `RENDERER_VERSION`. Changing what a resume contains:
 `model/buildResumeModel.ts` only. Changing fonts: `pnpm --filter @ai-career/document-export embed-fonts`.
+
+## 11. Phase 7c — Cover Letter & Interview Preparation
+
+Both panels sit below `PitchPanel` on an eligible job's match page (`MatchDetailClient.tsx` renders
+`CoverLetterPanel` and `InterviewPrepPanel` only when `match.eligible`). Both generations share their first
+half with the pitch (§9) through `prepareApplicationContext`.
+
+### 11a. Shared context (`packages/application-package/src/pipeline/prepareApplicationContext.ts`)
+
+`prepareApplicationContext(db, { userId, jobId, anthropicClient, env })`, used by `runPitchGeneration`,
+`runCoverLetterGeneration` and `runInterviewPrepGeneration`:
+  1. `job_matches` row for the job (else `ApplicationGenerationError("no_match")` → 404) and eligible
+     (else `not_eligible` → 400); the `jobs` row (else `no_match`).
+  2. `buildResumeSnapshot` (Phase 6) -- empty catalog → `no_profile` → 409, BEFORE any paid call.
+  3. `ensureCompanyResearch` (§9 step 3; research is per company and shared by all three documents, so a
+     pitch generated first means no second web search).
+  4. `ensureJobRequirements` (Phase 6; `Anthropic.APIError` / `JobRequirementExtractionValidationError` →
+     `unknown` → 502) → `buildEvidenceIndex` (`r:` / `q:` / `p:` ids).
+  Returns `{ job, snapshot, research, requirements, evidence }`. `ApplicationGenerationError`
+  (`pipeline/generationError.ts`) is the one expected-failure class; `PitchGenerationError` is an alias (D89).
+
+The per-item citation check every guard calls is `checkCitations(lookup, evidenceIds, requirement)`
+(`guard/checkCitations.ts`): unknown id → reason; repeated id → reason; each requirement group (e.g.
+`[["requirement"], ["profile"]]` = a `q:` AND a `p:`; `[["research", "requirement"]]` = an `r:` OR a `q:`)
+unmet → reason. Evidence snapshots are re-read from the index. `toGuarded` turns the reasons into
+`supported` / `unsupportedReason`.
+
+### 11b. Cover letter generation (request-driven)
+
+"Generate Cover Letter" / "Regenerate" (`apps/web/src/app/matches/[jobId]/CoverLetterPanel.tsx`)
+  -> `POST /api/cover-letters/[jobId]/run` (`apps/web/src/app/api/cover-letters/[jobId]/run/route.ts`;
+     non-UUID jobId → 404)
+  -> `runCoverLetterGeneration` (`packages/application-package/src/pipeline/runCoverLetterGeneration.ts`)
+     1. `prepareApplicationContext` (11a).
+     2. `generateCoverLetter` (`coverLetter/generateCoverLetter.ts`) -- `ANTHROPIC_MODEL_FAST`, forced tool
+        `record_cover_letter`, job context and evidence in their own random delimiters (D20) → Zod
+        `CoverLetterDraftSchema` (4-5 paragraphs, order opening / company / evidence ×1-2 / closing, ≤1200 chars).
+     3. `applyCoverLetterGuard` (`coverLetter/applyCoverLetterGuard.ts`) -- `COVER_LETTER_CITATION_RULES`:
+        opening ≥1 `q:`, company ≥1 `r:`, evidence ≥1 `p:`, closing none; requiresReview = any unsupported OR
+        the model's flag. `Anthropic.APIError` / `CoverLetterGenerationValidationError` → `unknown` → 502.
+     4. `hasUnsafeText(paragraphs)` → `unknown` (D44).
+     5. `insertCoverLetterVersion` (`pipeline/insertCoverLetterVersion.ts`) under
+        `pg_advisory_xact_lock(hashtext('cover_letters'), hashtext(userId || ':' || jobId))`, origin `generated`,
+        `generationModel` = the fast-tier model.
+  -> Route serializes via `apps/web/src/lib/coverLetter/serializeCoverLetter.ts` (`toEvidenceView` re-validates
+     source URLs as http(s)) + `toResearchView`, returns 201 `{ coverLetter, research }`.
+  -> Panel re-fetches `GET /api/cover-letters/[jobId]` (`listCoverLetters` newest first + `loadResearchForJob`,
+     one `withUserContext`).
+
+Edit: "Edit" → one textarea per paragraph → "Save" → `POST /api/cover-letters/[jobId]/edit`
+  -> `EditCoverLetterBodySchema` (strict `{ baseVersionId, paragraphs: string[4..5] }`, each trimmed, 1-1200 chars,
+     `hasUnsafeText`-clean; invalid → 400)
+  -> `createEditedCoverLetter` (`pipeline/createEditedCoverLetter.ts`): base must belong to this job
+     (`base_not_found` → 400) and have the same paragraph count (`paragraph_count_mismatch` → 400); new
+     `user_edited` version via the same `insertCoverLetterVersion`, roles/evidence/research snapshot copied,
+     supported=null ("your wording" in the panel), requiresReview=false. 201 `{ coverLetter }`.
+
+### 11c. Interview prep generation (request-driven)
+
+"Generate Interview Prep" / "Regenerate" (`apps/web/src/app/matches/[jobId]/InterviewPrepPanel.tsx`; the
+loading text says it can take up to a minute)
+  -> `POST /api/interview-preps/[jobId]/run` (`apps/web/src/app/api/interview-preps/[jobId]/run/route.ts`)
+  -> `runInterviewPrepGeneration` (`packages/application-package/src/pipeline/runInterviewPrepGeneration.ts`)
+     1. `prepareApplicationContext` (11a).
+     2. `computeGapTerms(requirements, snapshot.catalog)` (`interviewPrep/computeGapTerms.ts`, pure):
+        `required` terms not found by `containsTerm` (boundary-aware, D95) in the catalog text formatted as
+        `"context: text"`; sorted by term then id, de-duplicated case-insensitively, capped at 5 (D92).
+     3. `generateInterviewPrep` (`interviewPrep/generateInterviewPrep.ts`) -- `ANTHROPIC_MODEL_RESEARCH`, forced
+        tool `record_interview_prep`, job / evidence / gap terms (`{ term, requirementId: "q:…" }`) each in their
+        own delimiter → Zod `InterviewPrepDraftSchema`.
+     4. `applyInterviewPrepGuard` (`interviewPrep/applyInterviewPrepGuard.ts`):
+        - gapQuestions: ≥1 `q:`; term must be a supplied gap term (canonical spelling stored); one per term,
+          reserved only once a question cites that term's own `q:` id; must cite that `q:`; must not cite a
+          `p:` containing the term (D92).
+        - likelyQuestions: `LIKELY_QUESTION_CITATION_RULES` (technical/behavioral `q:` AND `p:`; role `p:` AND
+          `r:`-or-`q:`, D97); flagged if it cites a gap term's `q:` or its text contains a gap term (D96).
+        - talkingPoints ≥1 `r:`; questionsToAsk ≥1 `r:` or `q:`.
+        `Anthropic.APIError` / `InterviewPrepGenerationValidationError` → `unknown` → 502.
+     5. `hasUnsafeText(sections)` (every string, answer-outline arrays included) → `unknown`.
+     6. `insertInterviewPrepVersion` under the advisory lock keyed on `'interview_preparations'`,
+        `gapTermsSnapshot` = the gap terms' text.
+  -> `apps/web/src/lib/interviewPrep/serializeInterviewPrep.ts` → 201 `{ interviewPrep, research }`; panel
+     re-fetches `GET /api/interview-preps/[jobId]` (`listInterviewPreps` + `loadResearchForJob`).
+
+### 11d. Export of the two new kinds
+
+`DownloadButtons` (kind `cover_letter` / `interview_prep`) → `POST /api/documents` (`runExport` switch in
+`apps/web/src/app/api/documents/route.ts`)
+  -> `exportCoverLetter` (`packages/document-export/src/pipeline/exportCoverLetter.ts`): job (404), letter belongs
+     to the job (400 source_mismatch), a `generated` letter with any `supported === false` paragraph → 409
+     `cover_letter_unsupported` (user_edited always exports), contact fields (409 no_profile) →
+     `buildCoverLetterModel` (name, contact line, "Dear Hiring Manager,", paragraphs, "Sincerely,", name).
+  -> `exportInterviewPrep` (`pipeline/exportInterviewPrep.ts`): job, pack belongs to the job, full name for the
+     filename → `buildInterviewPrepModel` (four headed sections; unsupported items suffixed " (unverified)";
+     never refused).
+  -> `storeDocument` (§10 step 5) with `coverLetterId` / `interviewPreparationId`; the DB CHECK
+     `generated_documents_source_matches_kind` (compares `kind::text`, D93) allows only the matching source column.
+  -> The route's `sourceVersion` reads the version of whichever source id the returned row carries;
+     `listDocuments` left-joins `cover_letters` / `interview_preparations`, and `DocumentsList` labels rows
+     "Cover letter vN" / "Interview prep vN".
+
+### Changing 7c behavior
+
+Cover letter prompt/schema: `coverLetter/generateCoverLetter.ts` + `coverLetter/coverLetterSchema.ts` (keep the
+tool JSON schema and the Zod schema in lockstep; re-run `eval:cover-letter`). Interview prep prompt/schema:
+`interviewPrep/generateInterviewPrep.ts` + `interviewPrep/interviewPrepSchema.ts` (re-run `eval:interview-prep`).
+Per-item grounding rules: `coverLetter/applyCoverLetterGuard.ts` / `interviewPrep/applyInterviewPrepGuard.ts`;
+id rules shared with the pitch: `guard/checkCitations.ts`. Gap detection (what counts as "missing", the cap,
+the matcher): `interviewPrep/computeGapTerms.ts` only -- `containsTerm` is also used by the guard and the eval
+heuristic. Export layout of the two kinds: `document-export/src/model/build{CoverLetter,InterviewPrep}Model.ts`.
