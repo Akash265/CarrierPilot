@@ -1049,3 +1049,110 @@ D110 touched only 11c step 3: `interviewPrep/interviewPrepSchema.ts` (the `cappe
 `interviewPrep/generateInterviewPrep.ts` (the "return fewer rather than inventing" prompt sentence). Steps
 1, 2, 4, 5 and 6, `applyInterviewPrepGuard.ts`, `buildInterviewPrepModel.ts` and `InterviewPrepPanel.tsx` are
 unchanged -- they already handled a section of any length ≥0.
+
+## 12. Phase 9 — Application Tracker
+
+New domain package `packages/applications` (all new); new service `services/maintenance-worker` (all new);
+new routes under `apps/web/src/app/api/applications` and `apps/web/src/app/api/applications/for-job/[jobId]`
+(all new); new UI at `apps/web/src/app/applications` and `apps/web/src/app/applications/[id]` (all new);
+`apps/web/src/app/matches/[jobId]/ApplicationPanel.tsx` (new) added to the match page alongside the existing
+Phase 6/7 panels.
+
+### 12a. Mark as applied (request-driven)
+
+Loading an eligible match's page renders `ApplicationPanel` (`apps/web/src/app/matches/[jobId]/ApplicationPanel.tsx`, new)
+  -> `GET /api/applications/for-job/[jobId]` (`apps/web/src/app/api/applications/for-job/[jobId]/route.ts`, new;
+     non-UUID `jobId` -> 404)
+  -> `getApplicationForJob` + `listDocumentOptions` (`packages/applications/src/readApplications.ts`, new) --
+     one existing-application lookup by `jobId`, plus each linked-document table's versions (resume
+     optimizations, pitches, cover letters) newest first, so the panel can preselect the latest of each.
+  -> Panel shows "Applied on {date} · {status}" with a link to `/applications/[id]` if an application already
+     exists, otherwise a form (resume/pitch/cover-letter version dropdowns, applied date, optional follow-up
+     date; the version dropdowns' "latest" default and the applied-date default both come from the browser's
+     local clock, not the server).
+
+Submitting the form -> `POST /api/applications` (`apps/web/src/app/api/applications/route.ts`, new)
+  -> `CreateApplicationBodySchema` (`packages/applications/src/bodies.ts`, new) -- exactly one of `jobId` or
+     `external{companyName,jobTitle,jobUrl?}`; an external application cannot carry document links; invalid
+     body -> 400
+  -> `createApplication` (`packages/applications/src/createApplication.ts`, new), one transaction
+     (`withUserContext`):
+     1. Ingested path: load the `jobs` row (missing -> `job_not_found` -> 404); `loadLinkedDocuments`
+        (`packages/applications/src/documentLinks.ts`, new) re-validates every linked document actually
+        belongs to this `jobId` (mismatch -> `document_mismatch` -> 422); load the job's `job_matches` row and
+        its most-recently-seen `job_postings.url` (kept only if http(s) -- `safeHttpUrl`, D113).
+     2. `buildFeatureSnapshot` (`packages/applications/src/snapshot.ts`, new) assembles the D116 snapshot from
+        whatever job/match/ATS/document state exists right now.
+     3. Insert the `applications` row (status `applied`) and its initial `status_change` event
+        (`from=null, to=applied`) in the same transaction. A unique-constraint hit on `(user_id, job_id)`
+        (partial index, job_id not null) is caught and re-thrown as `already_applied` -> 409
+        (`applicationErrorResponse`, `apps/web/src/lib/applications/errorResponse.ts`, new).
+  -> Route returns 201 `{ application }` (`toApplicationView`, `apps/web/src/lib/applications/serializeApplication.ts`,
+     new); panel updates its own state directly from the response (no re-fetch).
+
+### 12b. Status changes, events and edits (request-driven)
+
+`/applications/[id]` (`apps/web/src/app/applications/[id]/page.tsx`, new) renders `ApplicationDetailClient`
+(`apps/web/src/app/applications/[id]/ApplicationDetailClient.tsx`, new), which loads
+`GET /api/applications/[id]` (`getApplication`, `packages/applications/src/readApplications.ts`) once and then
+drives three separate actions from the same page:
+
+- Status select -> `POST /api/applications/[id]/status` (`apps/web/src/app/api/applications/[id]/status/route.ts`,
+  new) -> `ChangeStatusBodySchema` (`{toStatus, occurredAt?, note?}`) -> `changeStatus`
+  (`packages/applications/src/mutateApplication.ts`, new): locks the row (`FOR UPDATE`), calls `planStatusChange`
+  (`packages/applications/src/status.ts`, new -- D115: terminal_at set to `now`, not `occurredAt`; kept on
+  terminal→terminal; cleared on reopen; same-status -> `same_status` -> 409), updates the row, inserts the
+  `status_change` event and, if a note was given, a second `note` event, all in one transaction. Choosing a
+  terminal status first shows a client-side confirmation naming `RETENTION_DAYS`.
+- "Log event" form (`LogEventForm.tsx`, new) -> `POST /api/applications/[id]/events`
+  (`apps/web/src/app/api/applications/[id]/events/route.ts`, new) -> `UserEventBodySchema` (discriminated union
+  on `type`; `status_change`/`documents_purged` are not in the union, so they cannot be posted here) ->
+  `addEvent` (`mutateApplication.ts`): `follow_up_done` clears `follow_up_at`, `follow_up_snoozed` sets it to
+  `detail.newFollowUpAt`, both in the same transaction as the event insert.
+- Edit form (`EditApplicationForm.tsx`, new) -> `PATCH /api/applications/[id]`
+  (`apps/web/src/app/api/applications/[id]/route.ts`, new) -> `UpdateApplicationBodySchema` -> `updateApplication`
+  (`mutateApplication.ts`): edits free-text fields, `appliedAt`, `followUpAt` and document links (a changed
+  link is re-validated against the current `jobId` via `loadLinkedDocuments`; an external application, `jobId`
+  null, rejects any link change with `document_mismatch` -> 422). `feature_snapshot` is never touched (D116).
+- `DELETE /api/applications/[id]` -> `deleteApplication` (`mutateApplication.ts`): events cascade; the job
+  returns to the eligible match feed on the next matching run (12c).
+
+### 12c. Matching: "already applied" eligibility (request-driven, inside an existing pipeline)
+
+`runMatching` (`packages/matching/src/pipeline/runMatching.ts`) now also loads every `applications.job_id`
+for the user in one query up front, and passes `alreadyApplied: appliedJobIds.has(job.id)` into
+`evaluateEligibility` (`packages/matching/src/eligibility/evaluateEligibility.ts`) for each job -- checked
+first, before "previously dismissed" (D118). An applied job's `job_matches` row is overwritten with
+`eligible=false` and the reason `"You applied to this job at {company}."` on the next run. `GET
+/api/matches/[jobId]` (`apps/web/src/app/api/matches/[jobId]/route.ts`) additionally looks up the
+application for that job and returns `applicationId` (or null); `MatchDetailClient.tsx` uses
+`match.eligible || applicationId !== null` to decide whether to keep rendering the resume/pitch/cover-letter/
+interview-prep/documents panels, so the record of what was actually sent stays visible after the job leaves
+the ranked feed. Deleting the application (12b) makes the job eligible again on the next run.
+
+### 12d. Retention sweep (scheduled, and `pnpm retention:run`)
+
+`services/maintenance-worker/src/main.ts` (new) on boot: creates the BullMQ worker
+(`createMaintenanceWorker`, `services/maintenance-worker/src/worker.ts`, new; queue name `"maintenance"`,
+concurrency 1) and calls `scheduleRetention` (`worker.ts`), which upserts a repeatable job scheduler
+(`retention-daily`, every 24h -- idempotent, safe to call on every boot).
+  -> Each tick, the worker's processor calls `runRetentionSweep`
+     (`packages/applications/src/retention/runRetentionSweep.ts`, new) with a `RetentionStorage` adapter
+     (`createRetentionStorage`, `services/maintenance-worker/src/storageAdapter.ts`, new, wrapping
+     `@ai-career/storage`'s `listGeneratedDocuments`/`deleteGeneratedDocument`).
+  -> `runRetentionSweep`:
+     1. Loads every application with a non-null `job_id` and `terminal_at`, filters with `planRetention`
+        (`packages/applications/src/retention/planRetention.ts`, new -- pure; D119's due condition).
+     2. For each due application, `purgeOne` (same file) runs in its own transaction: re-locks the row
+        (`FOR UPDATE SKIP LOCKED`, D119), re-checks `isDueForPurge`, deletes the job's generated rows across
+        five tables, sets `retention_purged_at`, inserts a `documents_purged` event with counts only.
+     3. After each transaction commits, `storage.removeObject` deletes that application's collected MinIO
+        keys one by one.
+     4. An orphan sweep lists `generated-documents/{userId}/`, diffs against every `generated_documents`
+        row's `object_key`, and deletes unreferenced keys older than 24h (`planOrphanSweep`).
+  -> Logs counts only (`main.ts`'s `log` helper), never document/note content.
+
+`pnpm retention:run` (root `package.json` -> `services/maintenance-worker/package.json`'s own
+`retention:run` script) -> `services/maintenance-worker/src/runOnce.ts` (new): calls `runRetentionSweep`
+once, directly, with the same `RetentionStorage` adapter and env-derived `RETENTION_DAYS` -- the same code
+path as the scheduled job, for manual/E2E use.
