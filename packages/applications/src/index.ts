@@ -9,3 +9,8 @@ export {
   buildFeatureSnapshot,
   type BuildSnapshotInput, type FeatureSnapshotV1, type SnapshotJobInput, type SnapshotMatchInput, type SnapshotAtsInput, type SnapshotDocumentRef,
 } from "./snapshot";
+export { loadLinkedDocuments, type DocumentLinkIds, type LinkedDocuments } from "./documentLinks";
+export { createApplication } from "./createApplication";
+export {
+  getApplication, listApplications, getApplicationForJob, listDocumentOptions, type DocumentOption, type DocumentOptions,
+} from "./readApplications";
