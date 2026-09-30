@@ -13,6 +13,8 @@ interface ParagraphView {
   supported: boolean | null;
   unsupportedReason: string | null;
   evidence: EvidenceView[];
+  /** D106: missing required terms this paragraph names (null/absent: edited or pre-D106 version). */
+  missingTermMentions?: string[] | null;
 }
 interface CoverLetterView {
   id: string;
@@ -46,12 +48,35 @@ const ROLE_LABELS: Record<ParagraphRole, string> = {
   closing: "Closing",
 };
 
-/** Edit-mode label: two evidence paragraphs become "Evidence of fit 1" / "Evidence of fit 2" so each textarea has a unique name. */
-function editLabel(paragraphs: { role: ParagraphRole }[], index: number): string {
+/**
+ * A label unique within the letter: two evidence paragraphs become "Evidence of fit 1" / "Evidence of
+ * fit 2" (so each edit textarea has a unique name and each review reason says which paragraph it means).
+ */
+function paragraphLabel(paragraphs: { role: ParagraphRole }[], index: number): string {
   const role = paragraphs[index].role;
   const sameRole = paragraphs.filter((p) => p.role === role);
   if (sameRole.length < 2) return ROLE_LABELS[role];
   return `${ROLE_LABELS[role]} ${paragraphs.slice(0, index + 1).filter((p) => p.role === role).length}`;
+}
+
+/** "A", "A and B", "A, B and C". */
+function joinTerms(terms: string[]): string {
+  return terms.length < 2 ? terms.join("") : `${terms.slice(0, -1).join(", ")} and ${terms[terms.length - 1]}`;
+}
+
+/**
+ * D106: why a letter needs review, per cause, keyed by the paragraph's index in the full list. Empty
+ * when no paragraph explains it (the model's own flag, or a pre-D106 row).
+ */
+function reviewReasons(paragraphs: ParagraphView[]): { key: string; text: string }[] {
+  const reasons: { key: string; text: string }[] = [];
+  paragraphs.forEach((p, i) => {
+    const label = paragraphLabel(paragraphs, i);
+    if (p.supported === false) reasons.push({ key: `${i}-unsupported`, text: `${label}: ${p.unsupportedReason}` });
+    const terms = p.missingTermMentions ?? [];
+    if (terms.length > 0) reasons.push({ key: `${i}-mentions`, text: `${label}: mentions ${joinTerms(terms)}, which your profile doesn't show` });
+  });
+  return reasons;
 }
 
 export function CoverLetterPanel({ jobId }: { jobId: string }) {
@@ -137,7 +162,7 @@ export function CoverLetterPanel({ jobId }: { jobId: string }) {
   }
 
   const selected = state.versions.find((v) => v.id === state.selectedId) ?? null;
-  const unsupported = selected?.paragraphs.filter((p) => p.supported === false) ?? [];
+  const reasons = selected ? reviewReasons(selected.paragraphs) : [];
 
   const generate = () => post("generate", `${base}/run`, {}, "Could not generate a cover letter.", { selectNewest: true });
   const save = async () => {
@@ -207,10 +232,10 @@ export function CoverLetterPanel({ jobId }: { jobId: string }) {
       {selected && selected.requiresReview && (
         <div role="alert" className="rounded border border-yellow-600 bg-yellow-50 p-3 text-sm">
           <p className="font-medium text-yellow-800">Review needed</p>
-          {unsupported.length > 0 ? (
+          {reasons.length > 0 ? (
             <ul>
-              {unsupported.map((p, i) => (
-                <li key={i}>{ROLE_LABELS[p.role]}: {p.unsupportedReason}</li>
+              {reasons.map((r) => (
+                <li key={r.key}>{r.text}</li>
               ))}
             </ul>
           ) : (
@@ -251,9 +276,9 @@ export function CoverLetterPanel({ jobId }: { jobId: string }) {
         <div className="flex flex-col gap-2">
           {selected.paragraphs.map((p, i) => (
             <label key={i} className="flex flex-col gap-1 text-sm">
-              <span className="font-medium">{editLabel(selected.paragraphs, i)}</span>
+              <span className="font-medium">{paragraphLabel(selected.paragraphs, i)}</span>
               <textarea
-                aria-label={editLabel(selected.paragraphs, i)}
+                aria-label={paragraphLabel(selected.paragraphs, i)}
                 value={draft[i]}
                 maxLength={1200}
                 rows={5}

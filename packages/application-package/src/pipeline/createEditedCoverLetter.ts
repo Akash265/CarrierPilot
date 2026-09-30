@@ -57,6 +57,7 @@ export async function createEditedCoverLetter(db: DbClient, userId: string, jobI
       supported: null,
       unsupportedReason: null,
       evidence: p.evidence,
+      missingTermMentions: null,
     }));
 
     return insertCoverLetterVersion(tx, userId, jobId, {

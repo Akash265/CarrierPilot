@@ -62,6 +62,52 @@ describe("CoverLetterPanel", () => {
     render(<CoverLetterPanel jobId="j1" />);
     const banner = await screen.findByRole("alert");
     expect(banner).toHaveTextContent("Evidence of fit: cites no profile evidence");
+    expect(banner).not.toHaveTextContent(/the model flagged/i);
+  });
+
+  it("names the paragraph and terms when the review is due to a missing required skill, not the model", async () => {
+    const flagged = {
+      ...letter,
+      requiresReview: true,
+      paragraphs: [
+        { ...paragraphs[0], missingTermMentions: [] },
+        { ...paragraphs[1], missingTermMentions: [] },
+        { ...paragraphs[2], missingTermMentions: ["Kubernetes", "Terraform"] },
+        { ...paragraphs[3], missingTermMentions: [] },
+      ],
+    };
+    mockFetchSequence([{ body: { versions: [flagged], research } }]);
+    render(<CoverLetterPanel jobId="j1" />);
+    const banner = await screen.findByRole("alert");
+    expect(banner).toHaveTextContent("Evidence of fit: mentions Kubernetes and Terraform, which your profile doesn't show");
+    expect(banner).not.toHaveTextContent(/the model flagged/i);
+  });
+
+  it("lists both causes, labelling two evidence paragraphs apart", async () => {
+    const flagged = {
+      ...letter,
+      requiresReview: true,
+      paragraphs: [
+        paragraphs[0],
+        paragraphs[1],
+        { ...paragraphs[2], supported: false, unsupportedReason: "cites no profile evidence", missingTermMentions: [] },
+        { ...paragraphs[2], text: "I ran Go services.", missingTermMentions: ["Go"] },
+        paragraphs[3],
+      ],
+    };
+    mockFetchSequence([{ body: { versions: [flagged], research } }]);
+    render(<CoverLetterPanel jobId="j1" />);
+    const items = within(await screen.findByRole("alert")).getAllByRole("listitem");
+    expect(items.map((li) => li.textContent)).toEqual([
+      "Evidence of fit 1: cites no profile evidence",
+      "Evidence of fit 2: mentions Go, which your profile doesn't show",
+    ]);
+  });
+
+  it("falls back to the model's flag only when no paragraph explains the review (including pre-D106 rows)", async () => {
+    mockFetchSequence([{ body: { versions: [{ ...letter, requiresReview: true }], research } }]);
+    render(<CoverLetterPanel jobId="j1" />);
+    expect(await screen.findByRole("alert")).toHaveTextContent("The model flagged this cover letter for review.");
   });
 
   it("notes when the selected version's web research was unavailable", async () => {

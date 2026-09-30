@@ -130,7 +130,15 @@ describe("runCoverLetterGeneration", () => {
     });
     const { coverLetter } = await run(await seed());
     expect(coverLetter.requiresReview).toBe(true);
-    expect((coverLetter.paragraphs as { supported: boolean }[]).every((p) => p.supported)).toBe(true);
+    const paragraphs = coverLetter.paragraphs as { supported: boolean; missingTermMentions: string[] | null }[];
+    expect(paragraphs.every((p) => p.supported)).toBe(true);
+    // A1: the cause is recorded per paragraph so the UI can say why the letter needs review.
+    expect(paragraphs.map((p) => p.missingTermMentions)).toEqual([[], [], ["Kubernetes"], []]);
+  });
+
+  it("records an empty missingTermMentions on every paragraph of a letter that mentions no gap term", async () => {
+    const { coverLetter } = await run(await seed());
+    expect((coverLetter.paragraphs as { missingTermMentions: string[] | null }[]).map((p) => p.missingTermMentions)).toEqual([[], [], [], []]);
   });
 
   it("does not set requiresReview when only the opening names a missing required term", async () => {
@@ -145,6 +153,7 @@ describe("runCoverLetterGeneration", () => {
     });
     const { coverLetter } = await run(await seed());
     expect(coverLetter.requiresReview).toBe(false);
+    expect((coverLetter.paragraphs as { missingTermMentions: string[] | null }[])[0].missingTermMentions).toEqual([]);
   });
 
   it("maps Anthropic.APIError and CoverLetterGenerationValidationError to unknown; rethrows anything else", async () => {

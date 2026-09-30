@@ -16,4 +16,10 @@ describe("toCoverLetterView", () => {
     expect(view).toMatchObject({ id: "c1", version: 2, origin: "generated", researchStatus: "ok", researchedAt: "2026-09-29T00:00:00.000Z", createdAt: "2026-09-29T01:00:00.000Z" });
     expect(view.paragraphs[0].evidence.map((e) => e.sourceUrl)).toEqual([null, "https://ok.example"]);
   });
+
+  it("exposes missingTermMentions and reads a pre-D106 paragraph without the field as null", () => {
+    const base = (row as unknown as { paragraphs: object[] }).paragraphs[0];
+    const withField = { ...row, paragraphs: [{ ...base, missingTermMentions: ["Kubernetes"] }, { ...base, missingTermMentions: [] }, { ...base, missingTermMentions: null }, base] } as unknown as CoverLetterRow;
+    expect(toCoverLetterView(withField).paragraphs.map((p) => p.missingTermMentions)).toEqual([["Kubernetes"], [], null, null]);
+  });
 });

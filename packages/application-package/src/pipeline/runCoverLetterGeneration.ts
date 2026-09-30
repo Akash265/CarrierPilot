@@ -15,7 +15,10 @@ export interface RunCoverLetterGenerationResult {
   research: CompanyResearchWithFacts;
 }
 
-/** Phase 7c design §4.2: shared context → gap terms → fast-tier call → citation guard → gap-mention review flag (D101) → D44 → locked insert. */
+/**
+ * Phase 7c design §4.2: shared context → gap terms → fast-tier call → citation guard → per-paragraph
+ * gap mentions (missingTermMentions, D106) and the review flag they raise (D101) → D44 → locked insert.
+ */
 export async function runCoverLetterGeneration(db: DbClient, opts: PrepareApplicationContextOptions): Promise<RunCoverLetterGenerationResult> {
   const { userId, jobId, anthropicClient, env } = opts;
   const { job, snapshot, research, requirements, evidence } = await prepareApplicationContext(db, opts);
@@ -26,7 +29,12 @@ export async function runCoverLetterGeneration(db: DbClient, opts: PrepareApplic
   try {
     const draft = await generateCoverLetter(anthropicClient, env, { jobTitle: job.title, companyName: job.companyName, evidence });
     guard = applyCoverLetterGuard(evidence, draft);
-    if (findGapTermMentions(guard.paragraphs, gapTerms).length > 0) guard = { ...guard, requiresReview: true };
+    // D106: the cause is stored per paragraph so the review banner can name it.
+    const mentions = findGapTermMentions(guard.paragraphs, gapTerms);
+    guard = {
+      paragraphs: guard.paragraphs.map((p, i) => ({ ...p, missingTermMentions: mentions[i] })),
+      requiresReview: guard.requiresReview || mentions.some((terms) => terms.length > 0),
+    };
   } catch (error) {
     if (error instanceof Anthropic.APIError || error instanceof CoverLetterGenerationValidationError) {
       throw new ApplicationGenerationError("unknown");

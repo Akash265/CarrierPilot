@@ -58,9 +58,10 @@ async function main() {
       const draft = await generateCoverLetter(client, env, fixture);
       const result = applyCoverLetterGuard(fixture.evidence, draft);
       const mentions = findGapTermMentions(result.paragraphs, gapTerms);
-      gapMentionParagraphs += mentions.length;
+      const mentioning = mentions.filter((terms) => terms.length > 0).length;
+      gapMentionParagraphs += mentioning;
       // Same rule as runCoverLetterGeneration (D101).
-      const requiresReview = result.requiresReview || mentions.length > 0;
+      const requiresReview = result.requiresReview || mentioning > 0;
       console.log(`\n${name} (requiresReview=${requiresReview}):`);
       console.log(`  gapTerms: ${gapTerms.length === 0 ? "(none)" : gapTerms.map((g) => g.term).join(", ")}`);
       for (const [i, p] of result.paragraphs.entries()) {
@@ -74,8 +75,7 @@ async function main() {
         console.log(`    cited: ${p.evidence.map((e) => e.id).join(", ") || "(none)"}`);
         console.log(`    ${p.text}`);
         if (uncited.length > 0) console.log(`    NUMBERS NOT IN CITED EVIDENCE (investigate): ${uncited.join(", ")}`);
-        const mention = mentions.find((m) => m.paragraphIndex === i);
-        if (mention) console.log(`    MENTIONS MISSING REQUIRED TERM "${mention.term}" (letter marked for review; read it)`);
+        if (mentions[i].length > 0) console.log(`    MENTIONS MISSING REQUIRED TERM(S) ${mentions[i].map((t) => `"${t}"`).join(", ")} (letter marked for review; read it)`);
       }
     } catch (error) {
       console.log(`\n${name}: GENERATION FAILED -- ${(error as Error).message}`);

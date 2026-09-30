@@ -47,6 +47,12 @@ export interface StoredCoverLetterParagraph {
   supported: boolean | null;
   unsupportedReason: string | null;
   evidence: EvidenceSnapshot[];
+  /**
+   * D106: the missing required terms this paragraph names (findGapTermMentions) -- [] when none (the
+   * opening is always []) on a generated version, null on a user_edited one. Optional because rows
+   * written before D106 lack it; every writer sets it, and readers treat an absent value as null.
+   */
+  missingTermMentions?: string[] | null;
 }
 
 /** Phase 7c interview preparation (design §3). */

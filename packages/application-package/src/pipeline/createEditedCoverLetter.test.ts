@@ -47,10 +47,10 @@ describe("createEditedCoverLetter", () => {
       requiresReview: false, sourceProfileContentHash: null, generationModel: null,
     });
     expect(row.paragraphs).toEqual([
-      { role: "opening", text: "A", supported: null, unsupportedReason: null, evidence: [ev] },
-      { role: "company", text: "B", supported: null, unsupportedReason: null, evidence: [ev] },
-      { role: "evidence", text: "C", supported: null, unsupportedReason: null, evidence: [ev] },
-      { role: "closing", text: "D", supported: null, unsupportedReason: null, evidence: [ev] },
+      { role: "opening", text: "A", supported: null, unsupportedReason: null, evidence: [ev], missingTermMentions: null },
+      { role: "company", text: "B", supported: null, unsupportedReason: null, evidence: [ev], missingTermMentions: null },
+      { role: "evidence", text: "C", supported: null, unsupportedReason: null, evidence: [ev], missingTermMentions: null },
+      { role: "closing", text: "D", supported: null, unsupportedReason: null, evidence: [ev], missingTermMentions: null },
     ]);
   });
 
