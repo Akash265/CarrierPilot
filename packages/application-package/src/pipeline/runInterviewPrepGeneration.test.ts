@@ -112,6 +112,19 @@ describe("runInterviewPrepGeneration", () => {
     expect(sections.gapQuestions).toMatchObject([{ requirementTerm: "Kubernetes", supported: true }]);
   });
 
+  it("gives the model at most MAX_GAP_TERMS gap terms but snapshots every missing required term", async () => {
+    const terms = ["Airflow", "Kafka", "Kubernetes", "Rust", "Scala", "Snowflake", "Terraform"];
+    vi.mocked(ensureJobRequirements).mockResolvedValue([
+      { id: SQL_ID, termText: "SQL", requirementLevel: "required" },
+      ...terms.map((termText, i) => ({ id: `22222222-2222-2222-2222-22222222222${i}`, termText, requirementLevel: "required" })),
+    ] as never);
+    const { interviewPrep } = await run(await seed());
+    const input = vi.mocked(generateInterviewPrep).mock.calls[0][2];
+    expect(input.gapTerms.map((g) => g.term)).toEqual(terms.slice(0, 5));
+    expect(interviewPrep.gapTermsSnapshot).toEqual(terms);
+    expect(interviewPrep.requiresReview).toBe(false);
+  });
+
   it("maps Anthropic.APIError and InterviewPrepGenerationValidationError to unknown; rethrows anything else", async () => {
     const jobId = await seed();
     vi.mocked(generateInterviewPrep).mockRejectedValueOnce(new Anthropic.APIError(500, {}, "boom", undefined));
@@ -128,6 +141,18 @@ describe("runInterviewPrepGeneration", () => {
       d.likelyQuestions[0] = { ...d.likelyQuestions[0], answerOutline: ["Bad \uD800"] };
       return d;
     });
+    await expect(run(await seed())).rejects.toMatchObject({ errorClass: "unknown" });
+    const [{ n }] = await testDb.adminSql`SELECT count(*)::int AS n FROM interview_preparations WHERE user_id = ${USER}`;
+    expect(n).toBe(0);
+  });
+
+  it("refuses to store a gap term containing a lone surrogate", async () => {
+    vi.mocked(ensureJobRequirements).mockResolvedValue([
+      { id: SQL_ID, termText: "SQL", requirementLevel: "required" },
+      { id: K8S_ID, termText: "Kube\uD800rnetes", requirementLevel: "required" },
+    ] as never);
+    // A draft that never echoes the term, so only the snapshot carries the unsafe text.
+    vi.mocked(generateInterviewPrep).mockImplementation(async (_c, _e, input) => ({ ...groundedDraft(input), gapQuestions: [] }));
     await expect(run(await seed())).rejects.toMatchObject({ errorClass: "unknown" });
     const [{ n }] = await testDb.adminSql`SELECT count(*)::int AS n FROM interview_preparations WHERE user_id = ${USER}`;
     expect(n).toBe(0);

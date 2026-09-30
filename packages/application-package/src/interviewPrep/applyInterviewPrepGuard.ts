@@ -22,12 +22,26 @@ const LIKELY_QUESTION_CITATION_RULES: Record<LikelyQuestionCategory, CitationReq
 };
 
 /**
+ * The two gap lists the guard needs (D100). modelGapTerms: the (at most MAX_GAP_TERMS) terms the model
+ * was given -- the only terms a gap question may probe. allGapTerms: every missing required term -- no
+ * likely question may target any of them, whether or not the model was told about it.
+ */
+export interface InterviewPrepGapTerms {
+  modelGapTerms: GapTerm[];
+  allGapTerms: GapTerm[];
+}
+
+/**
  * Phase 7c design §4.3: the shared citation rules per section plus the gap rules. Unsupported items
  * are kept and flagged, never dropped. The model's requiresReview can add caution, never remove it.
  */
-export function applyInterviewPrepGuard(evidence: PitchEvidenceItem[], gapTerms: GapTerm[], draft: InterviewPrepDraft): InterviewPrepGuardResult {
+export function applyInterviewPrepGuard(
+  evidence: PitchEvidenceItem[],
+  { modelGapTerms, allGapTerms }: InterviewPrepGapTerms,
+  draft: InterviewPrepDraft
+): InterviewPrepGuardResult {
   const lookup = indexEvidence(evidence);
-  const gapsByKey = new Map(gapTerms.map((g) => [norm(g.term), g]));
+  const gapsByKey = new Map(modelGapTerms.map((g) => [norm(g.term), g]));
   const usedGapKeys = new Set<string>();
 
   const gapQuestions: StoredGapQuestion[] = draft.gapQuestions.map((q) => {
@@ -56,7 +70,7 @@ export function applyInterviewPrepGuard(evidence: PitchEvidenceItem[], gapTerms:
   });
 
   const gapTermKey = (question: string, answerOutline: string[], evidenceIds: string[]): GapTerm | undefined =>
-    gapTerms.find((g) => {
+    allGapTerms.find((g) => {
       const key = g.term.toLowerCase();
       if (evidenceIds.includes(`q:${g.requirementId}`)) return true;
       if (containsTerm(question.toLowerCase(), key)) return true;

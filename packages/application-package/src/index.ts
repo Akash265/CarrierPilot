@@ -40,6 +40,6 @@ export { createEditedCoverLetter, EditCoverLetterBodySchema, CoverLetterEditErro
 export { computeGapTerms, containsTerm } from "./interviewPrep/computeGapTerms";
 export { InterviewPrepDraftSchema, type InterviewPrepDraft } from "./interviewPrep/interviewPrepSchema";
 export { generateInterviewPrep, InterviewPrepGenerationValidationError, type GenerateInterviewPrepInput } from "./interviewPrep/generateInterviewPrep";
-export { applyInterviewPrepGuard, type InterviewPrepGuardResult } from "./interviewPrep/applyInterviewPrepGuard";
+export { applyInterviewPrepGuard, type InterviewPrepGuardResult, type InterviewPrepGapTerms } from "./interviewPrep/applyInterviewPrepGuard";
 export { insertInterviewPrepVersion, type InterviewPrepRow, type NewInterviewPrepVersion } from "./pipeline/insertInterviewPrepVersion";
 export { runInterviewPrepGeneration, type RunInterviewPrepGenerationResult } from "./pipeline/runInterviewPrepGeneration";

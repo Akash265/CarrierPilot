@@ -18,6 +18,7 @@ import { buildEvidenceIndex, type RequirementForEvidence } from "../src/pitch/bu
 import { computeGapTerms, containsTerm } from "../src/interviewPrep/computeGapTerms";
 import { generateInterviewPrep } from "../src/interviewPrep/generateInterviewPrep";
 import { applyInterviewPrepGuard } from "../src/interviewPrep/applyInterviewPrepGuard";
+import { MAX_GAP_TERMS } from "../src/types";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const FIXTURES_DIR = path.join(__dirname, "interview-prep-fixtures");
@@ -67,14 +68,16 @@ async function main() {
     try {
       const researchFacts = fixture.research.map((r) => ({ id: r.id.slice(2), factText: r.text, sourceUrl: r.sourceUrl }));
       const evidence = buildEvidenceIndex(researchFacts, fixture.requirements, fixture.catalog);
-      const gapTerms = computeGapTerms(fixture.requirements, fixture.catalog);
+      // Same split as runInterviewPrepGeneration (D100).
+      const allGapTerms = computeGapTerms(fixture.requirements, fixture.catalog);
+      const gapTerms = allGapTerms.slice(0, MAX_GAP_TERMS);
       const draft = await generateInterviewPrep(client, env, {
         jobTitle: fixture.jobTitle,
         companyName: fixture.companyName,
         evidence,
         gapTerms,
       });
-      const result = applyInterviewPrepGuard(evidence, gapTerms, draft);
+      const result = applyInterviewPrepGuard(evidence, { modelGapTerms: gapTerms, allGapTerms }, draft);
 
       console.log(`\n${name} (requiresReview=${result.requiresReview}):`);
       console.log(`  gapTerms: ${gapTerms.length === 0 ? "(none)" : gapTerms.map((g) => g.term).join(", ")}`);

@@ -20,14 +20,16 @@ describe("computeGapTerms", () => {
     expect(gaps).toEqual([{ term: "Go", requirementId: "d" }, { term: "Rust", requirementId: "a" }]);
   });
 
-  it("caps at 5 terms, keeping the first five in sorted order", () => {
-    const reqs = ["A1", "B1", "C1", "D1", "E1", "F1"].map((t, i) => req(String(i), t));
+  it("returns every missing required term (no cap) in sorted order", () => {
+    const reqs = ["G1", "A1", "F1", "B1", "C1", "E1", "D1"].map((t, i) => req(String(i), t));
     expect(computeGapTerms(reqs, [entry("nothing")])).toEqual([
-      { term: "A1", requirementId: "0" },
-      { term: "B1", requirementId: "1" },
-      { term: "C1", requirementId: "2" },
-      { term: "D1", requirementId: "3" },
-      { term: "E1", requirementId: "4" },
+      { term: "A1", requirementId: "1" },
+      { term: "B1", requirementId: "3" },
+      { term: "C1", requirementId: "4" },
+      { term: "D1", requirementId: "6" },
+      { term: "E1", requirementId: "5" },
+      { term: "F1", requirementId: "2" },
+      { term: "G1", requirementId: "0" },
     ]);
   });
 

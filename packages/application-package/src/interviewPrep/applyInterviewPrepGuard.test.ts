@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { applyInterviewPrepGuard } from "./applyInterviewPrepGuard";
 import type { PitchEvidenceItem } from "../pitch/buildEvidenceIndex";
 import type { InterviewPrepDraft } from "./interviewPrepSchema";
+import type { GapTerm } from "../types";
 
 const EVIDENCE: PitchEvidenceItem[] = [
   { id: "r:f1", kind: "research", text: "Acme builds rockets.", sourceUrl: "https://acme.example" },
@@ -10,7 +11,9 @@ const EVIDENCE: PitchEvidenceItem[] = [
   { id: "p:b1", kind: "profile", text: "Built a SQL pipeline", sourceUrl: null },
   { id: "p:k8s", kind: "profile", text: "Ran kubernetes clusters", sourceUrl: null },
 ];
-const GAPS = [{ term: "Kubernetes", requirementId: "q2" }];
+const K8S_GAP: GapTerm = { term: "Kubernetes", requirementId: "q2" };
+const both = (list: GapTerm[]) => ({ modelGapTerms: list, allGapTerms: list });
+const GAPS = both([K8S_GAP]);
 const likely = (evidenceIds = ["q:q1", "p:b1"], category: "technical" | "behavioral" | "role" = "technical") => ({
   question: "Q?",
   category,
@@ -129,12 +132,12 @@ describe("applyInterviewPrepGuard", () => {
   it("flags every gap question when there are no computed gap terms", () => {
     const d = base();
     d.gapQuestions = [gap("Kubernetes", ["q:q2"])];
-    expect(applyInterviewPrepGuard(EVIDENCE, [], d).sections.gapQuestions[0].unsupportedReason).toBe('requirementTerm "Kubernetes" is not one of the missing required terms');
+    expect(applyInterviewPrepGuard(EVIDENCE, both([]), d).sections.gapQuestions[0].unsupportedReason).toBe('requirementTerm "Kubernetes" is not one of the missing required terms');
   });
 
   it("flags a gap question that cites only another gap's requirement id", () => {
     const evidence = [...EVIDENCE, { id: "q:q3", kind: "requirement" as const, text: "[required] Terraform", sourceUrl: null }];
-    const gaps = [...GAPS, { term: "Terraform", requirementId: "q3" }];
+    const gaps = both([K8S_GAP, { term: "Terraform", requirementId: "q3" }]);
     const d = base();
     d.gapQuestions = [gap("Kubernetes", ["q:q3"])];
     expect(applyInterviewPrepGuard(evidence, gaps, d).sections.gapQuestions[0].unsupportedReason).toBe("does not cite the requirement it probes");
@@ -156,6 +159,39 @@ describe("applyInterviewPrepGuard", () => {
     const d = base();
     d.gapQuestions = [gap("Kubernetes", ["q:q2", "p:k8s"])];
     expect(applyInterviewPrepGuard(EVIDENCE, GAPS, d).sections.gapQuestions[0].unsupportedReason).toBe('cites profile evidence that contains the missing term "Kubernetes"');
+  });
+
+  describe("with more gap terms than the model was given (I1)", () => {
+    // Seven missing required terms; only the first five (MAX_GAP_TERMS) went to the model.
+    const SEVEN = ["T1", "T2", "T3", "T4", "T5", "T6", "Terraform"].map((term, i) => ({ term, requirementId: `g${i + 1}` }));
+    const evidence = [...EVIDENCE, ...SEVEN.map((g) => ({ id: `q:${g.requirementId}`, kind: "requirement" as const, text: `[required] ${g.term}`, sourceUrl: null }))];
+    const gaps = { modelGapTerms: SEVEN.slice(0, 5), allGapTerms: SEVEN };
+
+    it("flags a likely question that targets the 7th gap term by text", () => {
+      const d = base();
+      d.gapQuestions = [];
+      d.likelyQuestions[0] = { question: "How do you use Terraform?", category: "technical", answerOutline: ["A"], evidenceIds: ["q:q1", "p:b1"] };
+      expect(applyInterviewPrepGuard(evidence, gaps, d).sections.likelyQuestions[0].unsupportedReason).toBe(
+        'targets a missing required term "Terraform"; use a gap question'
+      );
+    });
+
+    it("flags a likely question that cites the 7th gap term's requirement id", () => {
+      const d = base();
+      d.gapQuestions = [];
+      d.likelyQuestions[0] = likely(["q:g7", "p:b1"]);
+      expect(applyInterviewPrepGuard(evidence, gaps, d).sections.likelyQuestions[0].unsupportedReason).toBe(
+        'targets a missing required term "Terraform"; use a gap question'
+      );
+    });
+
+    it("flags a gap question for the 7th term (not given to the model) as not one of the missing required terms", () => {
+      const d = base();
+      d.gapQuestions = [gap("Terraform", ["q:g7"]), gap("T1", ["q:g1"])];
+      const r = applyInterviewPrepGuard(evidence, gaps, d);
+      expect(r.sections.gapQuestions[0].unsupportedReason).toBe('requirementTerm "Terraform" is not one of the missing required terms');
+      expect(r.sections.gapQuestions[1].supported).toBe(true);
+    });
   });
 
   it("sets requiresReview on any unsupported item or on the model's own flag", () => {

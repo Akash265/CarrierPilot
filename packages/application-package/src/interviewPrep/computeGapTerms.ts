@@ -1,5 +1,5 @@
 import type { EvidenceCatalogEntry } from "@ai-career/resume-optimization";
-import { MAX_GAP_TERMS, type GapTerm } from "../types";
+import type { GapTerm } from "../types";
 import type { RequirementForEvidence } from "../pitch/buildEvidenceIndex";
 
 function escapeRegExp(s: string): string {
@@ -30,8 +30,11 @@ function compareStrings(a: string, b: string): number {
  * formatted exactly as buildEvidenceIndex formats it ("context: text"), so a term found here can never
  * also appear in a p: evidence snapshot. job_requirements has no order column, so terms are sorted
  * (term, then id, by plain code-unit comparison for stability across environments) for a stable result.
- * Capped at MAX_GAP_TERMS.
- * Known limitation (design §9): "Postgres" in the profile does not cover "PostgreSQL" in the job.
+ * Returns EVERY missing required term (no cap, D100): callers that feed the model slice the first
+ * MAX_GAP_TERMS themselves, while the likely-question gap check and the stored snapshot use all of them.
+ * Known limitations (design §9, D92): "Postgres" in the profile does not cover "PostgreSQL" in the job,
+ * and a phrase-shaped required term ("Production data pipeline building experience") is almost never
+ * contained verbatim in profile text, so it becomes a false gap.
  */
 export function computeGapTerms(requirements: RequirementForEvidence[], catalog: EvidenceCatalogEntry[]): GapTerm[] {
   const haystack = catalog.map((e) => (e.context ? `${e.context}: ${e.text}` : e.text)).join("\n").toLowerCase();
@@ -48,7 +51,6 @@ export function computeGapTerms(requirements: RequirementForEvidence[], catalog:
     seen.add(key);
     if (containsTerm(haystack, key)) continue;
     gaps.push(candidate);
-    if (gaps.length === MAX_GAP_TERMS) break;
   }
   return gaps;
 }
