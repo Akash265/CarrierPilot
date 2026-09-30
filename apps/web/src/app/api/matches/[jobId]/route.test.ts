@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeAll, beforeEach, afterAll } from "vites
 import type postgres from "postgres";
 import { eq } from "drizzle-orm";
 import { schema, withUserContext, createDbClient } from "@ai-career/db";
-import { openAdminDb, wipeMatchingData, insertJob, insertCareerGoal, insertMatch } from "../../../../test/jobsDb";
+import { openAdminDb, wipeMatchingData, insertJob, insertCareerGoal, insertMatch, insertApplication } from "../../../../test/jobsDb";
 
 vi.mock("@ai-career/config", () => ({
   loadEnv: () => ({
@@ -49,6 +49,15 @@ describe("GET /api/matches/[jobId]", () => {
   it("answers 404 for an unknown or malformed job id", async () => {
     expect((await get("00000000-0000-0000-0000-00000000ffff")).status).toBe(404);
     expect((await get("nope")).status).toBe(404);
+  });
+
+  it("includes the job's applicationId (null when not applied)", async () => {
+    const jobId = await insertJob(admin, USER, {});
+    const goalId = await insertCareerGoal(admin, USER);
+    await insertMatch(admin, USER, jobId, goalId);
+    expect((await (await GET(new Request("http://localhost"), { params: Promise.resolve({ jobId }) })).json()).applicationId).toBeNull();
+    const appId = await insertApplication(admin, USER, { jobId });
+    expect((await (await GET(new Request("http://localhost"), { params: Promise.resolve({ jobId }) })).json()).applicationId).toBe(appId);
   });
 });
 

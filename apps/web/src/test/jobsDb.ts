@@ -32,6 +32,7 @@ export async function openAdminDb(): Promise<postgres.Sql> {
 
 /** Scoped to one user id, since other suites use the same database at the same time. */
 export async function wipeJobData(adminSql: postgres.Sql, userId: string): Promise<void> {
+  await adminSql`DELETE FROM applications WHERE user_id = ${userId}`;
   await adminSql`DELETE FROM jobs WHERE user_id = ${userId}`;
   await adminSql`DELETE FROM job_sources WHERE user_id = ${userId}`;
 }
@@ -244,5 +245,23 @@ export async function insertInterviewPrep(
     VALUES (${userId}, ${jobId}, ${opts.version ?? 1}, 'ok', now(), ${JSON.stringify(DEFAULT_INTERVIEW_PREP_SECTIONS)}::jsonb,
             '["Kubernetes"]'::jsonb, false, 'h', 'test-model')
     RETURNING id`;
+  return row.id as string;
+}
+
+export async function insertApplication(
+  adminSql: postgres.Sql,
+  userId: string,
+  opts: { jobId?: string | null; companyName?: string; status?: string; terminal?: boolean; followUpAt?: string | null; appliedAt?: string } = {}
+): Promise<string> {
+  const [row] = await adminSql`
+    INSERT INTO applications (user_id, job_id, company_name, job_title, status, status_changed_at, applied_at, follow_up_at,
+                              feature_snapshot, terminal_at)
+    VALUES (${userId}, ${opts.jobId ?? null}, ${opts.companyName ?? "Acme"}, 'Data Engineer', ${opts.status ?? "applied"}, now(),
+            ${opts.appliedAt ?? "2026-09-30"}, ${opts.followUpAt ?? null},
+            '{"snapshotVersion":1,"external":false,"match":{"overallScore":78},"ats":{"overallScore":82},"documents":{"resume":{"version":3},"pitch":null,"coverLetter":null}}'::jsonb,
+            ${opts.terminal ? new Date().toISOString() : null}::timestamptz)
+    RETURNING id`;
+  await adminSql`INSERT INTO application_events (user_id, application_id, type, occurred_at, to_status)
+                 VALUES (${userId}, ${row.id}, 'status_change', now(), ${opts.status ?? "applied"})`;
   return row.id as string;
 }
