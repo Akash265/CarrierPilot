@@ -107,7 +107,7 @@ Pure modules (no DB) plus thin DB operations, mirroring `application-package`.
 ### 4.1 Status rules (`status.ts`)
 - `TERMINAL_STATUSES`, `isTerminal(status)`.
 - `planStatusChange({ current, to, now, occurredAt })` → `{ status, statusChangedAt, terminalAt }` or a `SameStatus` error.
-  - Moving to a terminal status sets `terminalAt = occurredAt ?? now`.
+  - Moving to a terminal status sets `terminalAt = now`, **not** `occurredAt`. A backdated rejection must not start deletion immediately; the user gets the full retention period from the moment they record it. `statusChangedAt` uses `occurredAt ?? now` for display.
   - Moving to a non-terminal status sets `terminalAt = null`.
   - Moving from one terminal status to another keeps the original `terminalAt`, so the clock does not restart.
 
@@ -141,21 +141,26 @@ All run under the existing `withUser` / `app.current_user_id` pattern.
 - `planRetention({ applications, now, retentionDays })` returns the applications to purge: `retentionDays > 0`, `job_id IS NOT NULL`, `terminal_at <= now − retentionDays`, and not already purged since that `terminal_at` (see "Reopen after purge" below). External applications are excluded because they have no generated data.
 - `planOrphanSweep({ objects, referencedKeys, now, minAgeMs = 24h })` returns object keys that are not referenced and whose `lastModified` is older than `minAgeMs`. The age guard protects an export that has uploaded its object but not yet committed its row.
 - `runRetentionSweep({ db, storage, userId, now, retentionDays })`:
-  1. Take a per-user advisory lock (skip if held).
-  2. For each planned application:
-     1. Delete that job's `generated_documents` MinIO objects one by one, treating not-found as success.
-     2. Then, in one transaction: delete the job's `generated_documents`, `resume_optimizations` (ATS evaluations cascade), `application_pitches`, `cover_letters` and `interview_preparations` rows; set `retention_purged_at`; insert a `documents_purged` event with counts only.
+  1. Select candidates and apply `planRetention`.
+  2. For each planned application, in one transaction:
+     1. Re-read the application row with `FOR UPDATE SKIP LOCKED`; skip it if it is locked, gone, or no longer due. This replaces a per-user advisory lock: session-level advisory locks are unreliable on a pooled connection, and row locks make two concurrent sweeps skip each other's work.
+     2. Collect the job's `generated_documents` object keys.
+     3. Delete the job's `generated_documents`, `resume_optimizations` (ATS evaluations cascade), `application_pitches`, `cover_letters` and `interview_preparations` rows.
+     4. Set `retention_purged_at`, and insert a `documents_purged` event with counts only.
+  3. **After** the transaction commits, delete the collected MinIO objects one by one; S3 delete is idempotent.
 
-     Objects go first, so a crash leaves rows pending (retried next run), never rows pointing at missing objects.
-  3. Orphan sweep: list `generated-documents` under `{userId}/`, diff against referenced keys, and delete per `planOrphanSweep`.
-  4. Return counts. Log ids and counts only.
+     Rows go first, so a crash can only leave objects without rows, never rows pointing at missing objects. Those objects are exactly what the orphan sweep collects.
+  4. Orphan sweep: list `generated-documents` under `{userId}/`, diff against referenced keys, and delete per `planOrphanSweep`.
+  5. Return counts. Log ids and counts only.
 - Company research (company-level, not per-application) is kept.
-- **Reopen after purge.** A purged application that is reopened stays purged; deleted data is not restored. New documents can be generated. Reaching a terminal status again sets a new `terminal_at`, which is later than `retention_purged_at`, so it becomes eligible again. The planner's full condition is therefore `terminal_at <= now − retentionDays AND (retention_purged_at IS NULL OR retention_purged_at < terminal_at)`. A terminal→terminal change keeps `terminal_at` (§4.1), so it never triggers a second purge.
+- **Reopen after purge.** A purged application that is reopened stays purged; deleted data is not restored. While an application exists its job is ineligible (§5), so the generation routes refuse new documents for it; a job with no generated rows purges to zero counts. Reaching a terminal status again sets a new `terminal_at`, which is later than `retention_purged_at`, so it becomes eligible again. The planner's full condition is therefore `terminal_at <= now − retentionDays AND (retention_purged_at IS NULL OR retention_purged_at < terminal_at)`. A terminal→terminal change keeps `terminal_at` (§4.1), so it never triggers a second purge.
 - `RETENTION_DAYS` (config, integer ≥ 0, default 30). `0` disables the sweep.
 
 ## 5. Matching change
 
-`packages/matching` eligibility gains a rule. The retrieval step loads the set of `job_id`s with an application (one query per run). A job in that set gets `eligible=false`, `ineligibleReason = "already applied"`. It is deterministic and has no LLM involvement. Existing `job_matches` rows update on the next run. The match detail page shows the application status immediately via `GET /api/applications/for-job/[jobId]`.
+`packages/matching` eligibility gains a rule. The retrieval step loads the set of `job_id`s with an application (one query per run). A job in that set gets `eligible=false`, with reason `You applied to this job at {company}.` This is checked first, before "dismissed". It is deterministic and has no LLM involvement. Existing `job_matches` rows update on the next run. The match detail page shows the application status immediately via `GET /api/applications/for-job/[jobId]`.
+
+Because an applied job becomes ineligible, `GET /api/matches/[jobId]` also returns `applicationId` (or null). `MatchDetailClient` then keeps showing the resume/pitch/cover-letter/interview-prep/documents panels when the match is eligible **or** an application exists, so the documents you sent stay viewable after the next matching run. Generating new versions for an applied job is refused by the existing "not an eligible match" check. This is accepted: the application is the record of what was sent.
 
 ## 6. API
 
@@ -170,7 +175,7 @@ Routes validate with Zod and call `packages/applications`. All run as `DEFAULT_U
 | `POST /api/applications/[id]/status` | `{ toStatus, occurredAt?, note? }`. | 400, 404, 409 same status |
 | `POST /api/applications/[id]/events` | User event types from §4.2. | 400, 404 |
 | `DELETE /api/applications/[id]` | Remove (mistakes); events cascade; the job returns to the match feed on the next run. | 404 |
-| `GET /api/applications/for-job/[jobId]` | The application for a job, or `null`. | — |
+| `GET /api/applications/for-job/[jobId]` | `{ application: {id, status, appliedAt} \| null, documentOptions: { resumes, pitches, coverLetters } }`. Each option is `{id, version, origin}`, newest first. The Mark-as-applied panel needs one call. | 404 non-UUID |
 
 Other users' rows are invisible under RLS, so they return 404. Unexpected errors return 500 with a generic message; logs carry the error class, never note, recruiter or document content.
 
@@ -187,7 +192,7 @@ Other users' rows are invisible under RLS, so they return 404. Unexpected errors
 - **`/applications/[id]`**:
   - Header with company and title, plus job/posting links when present.
   - A status select. Choosing a terminal status shows the confirmation "Documents generated for this job will be deleted after {RETENTION_DAYS} days".
-  - Sent documents, linking to their panels and downloads, or "Documents deleted after retention period" once purged.
+  - Sent documents, as "Resume v3 / Pitch v2 / Cover letter v1" from the snapshot, with a link to `/matches/[jobId]` where the panels and downloads live, or "Documents deleted after retention period" once purged.
   - An editable fields form.
   - The event timeline and a log-event form (note / recruiter contact / interview).
   - A one-line "Match {overall} · ATS {overall} at time of applying" from the snapshot. The full snapshot is not shown.
@@ -213,7 +218,8 @@ TDD per CLAUDE.md §10.
   - Follow-up done/snooze.
   - Deleting a job nulls `job_id` and the application survives.
   - The purge removes exactly one job's objects and rows and leaves another job's untouched.
-  - A crash between object and row deletion is retried to completion.
+  - A row-locked application is skipped.
+  - An object whose removal fails after commit is collected by a later orphan sweep.
   - The orphan sweep respects the 24h guard.
   - The "already applied" eligibility rule, and the job returns after the application is deleted.
 - **Routes:** every endpoint's success and error codes.
