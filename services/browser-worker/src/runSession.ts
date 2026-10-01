@@ -8,9 +8,9 @@ import {
   loadAutofillContext, transitionSession,
   type AutomationStatus, type BrowserJobData, type FieldAuditEntry, type PortalAdapter, type TransitionPatch,
 } from "@ai-career/browser";
-import { GuardViolation, performAction, verifyAction } from "./actions";
+import { GuardViolation, performAction, verifyAction, type AttachmentPaths } from "./actions";
 import { downloadAttachments, type FetchDocument } from "./attachments";
-import { launchBrowser, type BrowserHandle, type BrowserOptions, type ReleasedWindows } from "./browser";
+import { launchBrowser, SESSION_DIR_PREFIX, type BrowserHandle, type BrowserOptions, type ReleasedWindows } from "./browser";
 import { readPageText, takeSnapshot } from "./snapshot";
 
 const NAVIGATION_TIMEOUT_MS = 30_000;
@@ -75,25 +75,44 @@ export async function runSession(deps: RunSessionDeps, data: BrowserJobData): Pr
     const row = await transitionSession(db, userId, sessionId, ACTIVE_STATUSES, to, patch);
     return row ? to : "skipped";
   };
-  const release = (to: AutomationStatus, patch: TransitionPatch, ms: number) => {
-    releaseMs = ms;
-    return end(to, patch);
+  // Only hands the window to the released registry when the terminal transition actually landed; a cancel or a
+  // concurrent sweep that beat us to it means there is nothing to release, so the handle is simply closed instead.
+  const release = async (to: AutomationStatus, patch: TransitionPatch, ms: number): Promise<RunSessionResult> => {
+    const result = await end(to, patch);
+    if (result === to) releaseMs = ms;
+    return result;
+  };
+  // Design §6 / review: a cancel that arrives between the decision to release and the write must still win --
+  // otherwise the user is handed a window for a session the DB already considers cancelled.
+  const releaseUnlessCancelled = async (to: AutomationStatus, patch: TransitionPatch, ms: number): Promise<RunSessionResult> => {
+    if (await isCancelRequested(db, userId, sessionId)) return await end("abandoned", { errorCode: "cancelled" });
+    return await release(to, patch, ms);
   };
 
   try {
     if (!hostAllowed(claimed.formUrl, adapter, extra)) return await end("needs_manual", { errorCode: "form_url_not_allowed" });
 
     const ctx = await loadAutofillContext(db, userId, sessionId);
-    const rootDir = await mkdtemp(path.join(tmpdir(), "careerpilot-autofill-"));
-    const { paths, failed } = await downloadAttachments(
-      deps.fetchDocument, { resume: ctx.resumeDocument, coverLetter: ctx.coverLetterDocument }, path.join(rootDir, "files")
-    );
+    const rootDir = await mkdtemp(path.join(tmpdir(), SESSION_DIR_PREFIX));
+    let paths: AttachmentPaths;
+    let failed: ("resume" | "cover_letter")[];
+    try {
+      ({ paths, failed } = await downloadAttachments(
+        deps.fetchDocument, { resume: ctx.resumeDocument, coverLetter: ctx.coverLetterDocument }, path.join(rootDir, "files")
+      ));
+    } catch (error) {
+      await rm(rootDir, { recursive: true, force: true }).catch(() => undefined);
+      throw error;
+    }
     try {
       handle = await launchBrowser({ ...deps.browser, rootDir });
     } catch {
       await rm(rootDir, { recursive: true, force: true }).catch(() => undefined);
       return await end("failed", { errorCode: "browser_launch_failed" });
     }
+    // From here on the window is "active": a shutdown/crash before this session reaches a release/close ending
+    // must still be able to find and close it, so its temp profile/attachments are never leaked (spec §5).
+    deps.released.setActive(handle);
     deps.onBrowser?.(handle);
 
     if (await isCancelRequested(db, userId, sessionId)) return await end("abandoned", { errorCode: "cancelled" });
@@ -102,11 +121,13 @@ export async function runSession(deps: RunSessionDeps, data: BrowserJobData): Pr
     const page = handle.page;
     try {
       const response = await page.goto(claimed.formUrl, { waitUntil: "domcontentloaded", timeout: NAVIGATION_TIMEOUT_MS });
-      if (response && !response.ok()) return await release("needs_manual", { errorCode: "navigation_failed" }, deps.timeoutMs);
+      if (response && !response.ok()) return await releaseUnlessCancelled("needs_manual", { errorCode: "navigation_failed" }, deps.timeoutMs);
     } catch {
-      return await release("needs_manual", { errorCode: "navigation_failed" }, deps.timeoutMs);
+      return await releaseUnlessCancelled("needs_manual", { errorCode: "navigation_failed" }, deps.timeoutMs);
     }
-    if (!hostAllowed(page.url(), adapter, extra)) return await release("needs_manual", { errorCode: "off_host_redirect" }, deps.timeoutMs);
+    if (!hostAllowed(page.url(), adapter, extra)) {
+      return await releaseUnlessCancelled("needs_manual", { errorCode: "off_host_redirect" }, deps.timeoutMs);
+    }
     await page.waitForSelector(adapter.snapshotConfig.formSelector, { state: "attached", timeout: FORM_WAIT_MS }).catch(() => undefined);
 
     const snapshot = await takeSnapshot(page, adapter);
@@ -115,7 +136,9 @@ export async function runSession(deps: RunSessionDeps, data: BrowserJobData): Pr
     });
     const plan = buildFillPlan(snapshot, adapter, values);
     const audit = markUnavailable(plan.audit, failed);
-    if (!plan.healthy) return await release("needs_manual", { errorCode: "health_check_failed", fieldAudit: audit }, deps.timeoutMs);
+    if (!plan.healthy) {
+      return await releaseUnlessCancelled("needs_manual", { errorCode: "health_check_failed", fieldAudit: audit }, deps.timeoutMs);
+    }
 
     for (const action of plan.actions) {
       if (await isCancelRequested(db, userId, sessionId)) return await end("abandoned", { errorCode: "cancelled", fieldAudit: audit });
@@ -148,15 +171,18 @@ export async function runSession(deps: RunSessionDeps, data: BrowserJobData): Pr
         if (p.isClosed()) continue;
         const text = await readPageText(p).catch(() => "");
         if (detectSubmission(adapter, { url: p.url(), text, formUrl: claimed.formUrl })) {
-          return await release("submission_detected", { submissionDetectedAt: new Date() }, deps.timeoutMs - elapsed);
+          return await releaseUnlessCancelled("submission_detected", { submissionDetectedAt: new Date() }, deps.timeoutMs - elapsed);
         }
       }
     }
-  } catch {
+  } catch (error) {
+    // Surface the failure to BullMQ (and main.ts's "failed" handler, which logs the error class) instead of
+    // quietly resolving "failed" -- an unexpected error must not look like a completed job.
     await failSession(db, userId, sessionId, "unexpected_error").catch(() => undefined);
-    return "failed";
+    throw error;
   } finally {
     if (handle) {
+      deps.released.setActive(null);
       if (releaseMs !== null && !handle.isClosed()) deps.released.release(handle, releaseMs);
       else await handle.close();
     }

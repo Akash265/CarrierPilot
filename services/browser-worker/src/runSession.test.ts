@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeAll, beforeEach, afterAll } from "vitest";
+import { existsSync } from "node:fs";
 import { openTestDb, wipeUser, seedAutofillJob, insertSessionRow, type TestDb } from "@ai-career/browser/testing";
 import { getSession, requestCancel, type FieldAuditEntry } from "@ai-career/browser";
 import { runSession, type RunSessionDeps } from "./runSession";
@@ -118,10 +119,12 @@ describe("runSession endings", () => {
   it("abandons on cancel and closes the window", async () => {
     const { id, result } = await start("/greenhouse");
     await waitForStatus(id, "awaiting_user");
+    const rootDir = handle!.rootDir;
     await requestCancel(t.db, USER, id);
     expect(await result).toBe("abandoned");
     expect(await getSession(t.db, USER, id)).toMatchObject({ errorCode: "cancelled" });
     expect(handle!.isClosed()).toBe(true);
+    expect(existsSync(rootDir)).toBe(false); // temp profile/attachments cleaned up, not leaked
   });
 
   it("abandons when the user closes the window", async () => {
@@ -143,6 +146,16 @@ describe("runSession endings", () => {
     expect(await result).toBe("needs_manual");
     const row = await getSession(t.db, USER, id);
     expect(row).toMatchObject({ errorCode: "health_check_failed" });
+    expect(released.size).toBe(1);
+    const rootDir = handle!.rootDir;
+    await released.closeAll();
+    expect(existsSync(rootDir)).toBe(false); // released window's temp profile/attachments cleaned up on close
+  });
+
+  it("needs manual work when the form fails to load (404), and releases the window", async () => {
+    const { id, result } = await start("/does-not-exist"); // fixture server's default route answers 404
+    expect(await result).toBe("needs_manual");
+    expect(await getSession(t.db, USER, id)).toMatchObject({ errorCode: "navigation_failed" });
     expect(released.size).toBe(1);
     await released.closeAll();
   });
@@ -171,5 +184,18 @@ describe("runSession endings", () => {
     const { jobId } = await seedAutofillJob(t.adminSql, USER);
     const id = await insertSessionRow(t.adminSql, USER, jobId, { status: "abandoned" });
     expect(await runSession(deps(), { sessionId: id, userId: USER })).toBe("skipped");
+  });
+
+  it("rejects and leaves the row failed/unexpected_error when something throws unexpectedly, and still closes the window", async () => {
+    let caught: BrowserHandle | undefined;
+    const { id, result } = await start("/greenhouse", {
+      onBrowser: (h) => {
+        caught = h;
+        throw new Error("boom");
+      },
+    });
+    await expect(result).rejects.toThrow("boom");
+    expect(await getSession(t.db, USER, id)).toMatchObject({ status: "failed", errorCode: "unexpected_error" });
+    expect(caught?.isClosed()).toBe(true); // finally still closed the window despite the throw
   });
 });

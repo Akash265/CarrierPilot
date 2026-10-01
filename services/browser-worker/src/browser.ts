@@ -1,4 +1,6 @@
-import { mkdir, rm } from "node:fs/promises";
+import type { Dirent } from "node:fs";
+import { mkdir, readdir, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { chromium, type BrowserContext, type Page } from "playwright-core";
 
@@ -6,6 +8,9 @@ export interface BrowserOptions {
   headless: boolean;
   executablePath?: string;
 }
+
+/** Shared by runSession's mkdtemp call and removeStaleSessionDirs' cleanup scan below. */
+export const SESSION_DIR_PREFIX = "careerpilot-autofill-";
 
 export interface BrowserHandle {
   context: BrowserContext;
@@ -56,13 +61,22 @@ export async function launchBrowser(opts: BrowserOptions & { rootDir: string }):
 }
 
 /**
- * Windows handed to the user after the job returns (needs_manual, submission_detected -- spec §11.6). Each is
- * closed at its deadline, when the user closes it, or on worker shutdown, so the queue is never blocked by one.
+ * Windows handed to the user after the job returns (needs_manual, submission_detected -- spec §11.6), plus the
+ * one window a session currently in progress (launching/filling/awaiting_user) has open. Each released window is
+ * closed at its deadline, when the user closes it, or on worker shutdown; the in-progress window has no deadline
+ * of its own, but shutdown must still close it so its temp profile/attachments are not leaked (spec §5).
  */
 export class ReleasedWindows {
   private readonly timers = new Map<BrowserHandle, NodeJS.Timeout>();
+  private active: BrowserHandle | null = null;
+
+  /** runSession calls this right after launch and clears it (pass null) in its finally, win or lose. */
+  setActive(handle: BrowserHandle | null): void {
+    this.active = handle;
+  }
 
   release(handle: BrowserHandle, ms: number): void {
+    if (this.active === handle) this.active = null;
     const alreadyTracked = this.timers.has(handle);
     const existing = this.timers.get(handle);
     if (existing) clearTimeout(existing);
@@ -77,14 +91,35 @@ export class ReleasedWindows {
     const timer = this.timers.get(handle);
     if (timer) clearTimeout(timer);
     this.timers.delete(handle);
+    if (this.active === handle) this.active = null;
     await handle.close();
   }
 
   async closeAll(): Promise<void> {
-    await Promise.all([...this.timers.keys()].map((h) => this.closeOne(h)));
+    const targets = new Set(this.timers.keys());
+    if (this.active) targets.add(this.active);
+    await Promise.all([...targets].map((h) => this.closeOne(h)));
   }
 
   get size(): number {
     return this.timers.size;
   }
+}
+
+/**
+ * Startup cleanup (spec §5): a worker that is killed or crashes mid-session leaves its throwaway profile and
+ * downloaded attachments behind in the OS temp dir. Single-worker assumption: only one browser-worker process is
+ * ever expected to run against a given tmp root, so every careerpilot-autofill-* directory found at startup
+ * belongs to a previous process that is no longer running and is safe to remove. Returns how many were removed.
+ */
+export async function removeStaleSessionDirs(tmpRoot: string = tmpdir()): Promise<number> {
+  let entries: Dirent[];
+  try {
+    entries = await readdir(tmpRoot, { withFileTypes: true });
+  } catch {
+    return 0;
+  }
+  const stale = entries.filter((e) => e.isDirectory() && e.name.startsWith(SESSION_DIR_PREFIX));
+  await Promise.all(stale.map((e) => rm(path.join(tmpRoot, e.name), { recursive: true, force: true }).catch(() => undefined)));
+  return stale.length;
 }

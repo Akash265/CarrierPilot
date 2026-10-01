@@ -1,9 +1,9 @@
 import { describe, it, expect, afterEach } from "vitest";
 import { existsSync } from "node:fs";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { launchBrowser, ReleasedWindows, type BrowserHandle } from "./browser";
+import { launchBrowser, removeStaleSessionDirs, ReleasedWindows, SESSION_DIR_PREFIX, type BrowserHandle } from "./browser";
 
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -66,5 +66,49 @@ describe("ReleasedWindows", () => {
     await handle.context.close();
     await wait(100);
     expect(released.size).toBe(0);
+  });
+
+  it("setActive + closeAll closes the active (in-progress) window even though it was never released", async () => {
+    const handle = await freshHandle();
+    const released = new ReleasedWindows();
+    released.setActive(handle);
+    expect(released.size).toBe(0); // active is not a released/timed window
+    await released.closeAll();
+    expect(handle.isClosed()).toBe(true);
+  });
+
+  it("setActive is cleared by release(): closeAll then closes it via the normal timed path, not twice", async () => {
+    const handle = await freshHandle();
+    const released = new ReleasedWindows();
+    released.setActive(handle);
+    released.release(handle, 60_000);
+    expect(released.size).toBe(1);
+    await released.closeAll();
+    expect(handle.isClosed()).toBe(true);
+    expect(released.size).toBe(0);
+  });
+});
+
+describe("removeStaleSessionDirs", () => {
+  it("removes only directories matching the session prefix, under the given root", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "cp-stale-scan-"));
+    roots.push(root);
+    const stale1 = path.join(root, `${SESSION_DIR_PREFIX}aaaaaa`);
+    const stale2 = path.join(root, `${SESSION_DIR_PREFIX}bbbbbb`);
+    const unrelated = path.join(root, "some-other-dir");
+    await mkdir(stale1, { recursive: true });
+    await mkdir(stale2, { recursive: true });
+    await mkdir(unrelated, { recursive: true });
+
+    const removed = await removeStaleSessionDirs(root);
+
+    expect(removed).toBe(2);
+    expect(existsSync(stale1)).toBe(false);
+    expect(existsSync(stale2)).toBe(false);
+    expect(existsSync(unrelated)).toBe(true);
+  });
+
+  it("returns 0 for a root that does not exist, without throwing", async () => {
+    await expect(removeStaleSessionDirs(path.join(tmpdir(), "cp-does-not-exist-xyz"))).resolves.toBe(0);
   });
 });
