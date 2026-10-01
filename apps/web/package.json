@@ -13,6 +13,7 @@
   "dependencies": {
     "@ai-career/ai": "workspace:*",
     "@ai-career/application-package": "workspace:*",
+    "@ai-career/applications": "workspace:*",
     "@ai-career/config": "workspace:*",
     "@ai-career/db": "workspace:*",
     "@ai-career/document-export": "workspace:*",

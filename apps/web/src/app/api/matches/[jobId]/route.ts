@@ -22,7 +22,12 @@ export async function GET(_request: Request, { params }: { params: Promise<{ job
       if (!matchRow) return NextResponse.json({ error: "Match not found" }, { status: 404 });
       const job = await getJobDetail(tx, jobId);
       if (!job) return NextResponse.json({ error: "Match not found" }, { status: 404 });
-      return NextResponse.json({ job, match: toMatchView(matchRow) });
+      const [application] = await tx
+        .select({ id: schema.applications.id })
+        .from(schema.applications)
+        .where(eq(schema.applications.jobId, jobId))
+        .limit(1);
+      return NextResponse.json({ job, match: toMatchView(matchRow), applicationId: application?.id ?? null });
     });
   } finally {
     await closeDbClient(db);

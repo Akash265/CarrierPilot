@@ -38,6 +38,9 @@ const envSchema = z
     MATCHING_EXPLANATION_TTL_DAYS: z.coerce.number().min(1).default(7),
     // Phase 7a: web searches allowed per company-research call (the tool's max_uses). Bounds cost.
     COMPANY_RESEARCH_MAX_SEARCHES: z.coerce.number().int().min(1).max(20).default(5),
+    // Phase 9: days after an application reaches a terminal status before its job's generated documents
+    // are deleted (architecture §9). 0 disables the retention sweep entirely.
+    RETENTION_DAYS: z.coerce.number().int().min(0).default(30),
   })
   .superRefine((val, ctx) => {
     if (val.EMBEDDING_PROVIDER === "voyage" && !val.VOYAGE_API_KEY) {

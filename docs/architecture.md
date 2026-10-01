@@ -1,6 +1,6 @@
 # Architecture — AI Career Intelligence & Application Platform
 
-Status: **Phases 0–6 and 7a–7c are implemented** (foundation, candidate profile, career goal, job intelligence, hybrid matching, ATS resume optimization, company research + Hiring Manager Pitch, document export, cover letter + interview preparation); browser automation (Phase 8) onward is designed but not yet built. This document describes the agreed architecture as of 2026-09-06. See `DECISIONS.md` for the rationale behind each choice. Update this file as implementation reveals deviations — it must describe what's actually built, not an aspiration.
+Status: **Phases 0–7c and 9 are implemented** (foundation, candidate profile, career goal, job intelligence, hybrid matching, ATS resume optimization, company research + Hiring Manager Pitch, document export, cover letter + interview preparation, application tracker); **Phase 8 (browser automation) is deferred**. This document describes the agreed architecture as of 2026-09-06. See `DECISIONS.md` for the rationale behind each choice. Update this file as implementation reveals deviations — it must describe what's actually built, not an aspiration.
 
 ## 1. Product framing
 
@@ -152,13 +152,13 @@ Caching: embedding cache (permanent, content-hash keyed), match-reason cache (7-
 - `career_goal_constraints` is the single source of truth for search-relevant preferences. `candidate_profiles` therefore keeps only contact fields, `years_of_experience` and `work_authorization_notes`; its earlier work-mode, salary-expectation, visa, preferred-role and industry columns and the `company_preferences` table were dropped ([D21](../DECISIONS.md)).
 - `job_sources`, `ingestion_runs`, `raw_job_postings`, `jobs`, `job_postings`, `job_duplicate_candidates` (Phase 4, [D35](../DECISIONS.md)/[D36](../DECISIONS.md)). `jobs` is derived from its postings by a pure merge; salary uses the D6 raw + normalized + currency + period + `is_parsed` shape (implemented as `salary_raw`, `salary_min`, `salary_max`, `salary_currency`, `salary_period`, `salary_is_parsed`, with the min/max annualized).
 
-Everything else (job_requirements, resume_optimizations, ats_evaluations, application_outcomes, learning_features, plus the original core tables) follows spec §19 as written. `application_pitches` deviates from spec §19's one-line description; see §14 and [D71](../DECISIONS.md). `generated_documents` is not in spec §19 at all; see §15 and [D81](../DECISIONS.md).
+Everything else (job_requirements, resume_optimizations, ats_evaluations, application_outcomes, learning_features, plus the original core tables) follows spec §19 as written. `application_pitches` deviates from spec §19's one-line description; see §14 and [D71](../DECISIONS.md). `generated_documents` is not in spec §19 at all; see §15 and [D81](../DECISIONS.md). `applications` and `application_events` (Phase 9) deviate from spec §19 by having no `application_outcomes` table at all ([D117](../DECISIONS.md)) and a nullable `job_id` for external applications ([D113](../DECISIONS.md)); see §17.
 
 ## 9. Security & privacy
 
 - Uploaded files: scanned/stripped of macros and EXIF, renamed with UUID, stored encrypted (MinIO local / R2 optional).
 - Log scrubbing: exact-match substring redaction of known profile values ([D9](../DECISIONS.md)) — no NER/generic-regex PII detection.
-- Retention: resume text and generated documents auto-deleted 30 days after an application reaches a terminal status (Rejected/Hired).
+- Retention: `RETENTION_DAYS` (default 30) after an application reaches a terminal status, the job-specific generated documents and tailored resume text for that job are deleted -- resume optimizations, pitches, cover letters, interview prep and their rendered files. The base resume/profile is never deleted by retention. Implemented in Phase 9; see §17.
 - Structured logging only; no resume/profile content in production logs regardless of scrubbing (defense in depth).
 
 ## 10. What's still open
@@ -294,7 +294,7 @@ DocumentModel ──► storeDocument: hash → reuse | renderPdf (pdfkit + embe
 - **Machine readability.** Single column, real text, no images/tables; every renderer test extracts the text back with the same parsers used for uploads (D83).
 - **Storage.** Generated keys, RLS-first download, attachment + nosniff + no-store headers (D85); identical exports de-duplicated by content hash, scoped per job so two jobs never share a stored file (D81, D84 update, migration `0021`).
 - **Consistency.** `exportResume` reads the profile snapshot hash and the profile rows in one `REPEATABLE READ` transaction so a concurrent profile edit cannot pair an old hash with new rows (D84 update). `storeDocument` deletes its MinIO upload if the row insert fails for any reason other than the expected de-dup conflict, so a failed insert never orphans an object (D84).
-- **Known gaps.** Deleting a job leaves its MinIO objects (Phase 9 retention); plain visual design; no templates. A resume row that de-duplicates by content keeps the filename from its first export -- a later company-name change in the job data does not rename it. If a stored object ever disappears without its row (e.g. a future retention sweep that deletes objects but not rows), the row keeps being reused by hash-based reuse and download returns 502; Phase 9's retention job must delete rows together with their objects, not objects alone. The PDF's bullet glyph can be orphaned at a page break when the bullet text wraps to the next page (cosmetic). The embedded Noto Sans covers Latin/Greek/Cyrillic only -- CJK, Arabic and Hebrew names render as boxes in the PDF (pdfkit does no font fallback or bidi shaping); DOCX is unaffected, since it defers to the viewer's own fonts (D83 update).
+- **Known gaps.** A job's MinIO objects are swept by Phase 9 retention (see §17), not by deleting the job itself; plain visual design; no templates. A resume row that de-duplicates by content keeps the filename from its first export -- a later company-name change in the job data does not rename it. If a stored object ever disappears without its row outside of Phase 9's own sweep (which always deletes rows before objects, D119), the row keeps being reused by hash-based reuse and download returns 502. The PDF's bullet glyph can be orphaned at a page break when the bullet text wraps to the next page (cosmetic). The embedded Noto Sans covers Latin/Greek/Cyrillic only -- CJK, Arabic and Hebrew names render as boxes in the PDF (pdfkit does no font fallback or bidi shaping); DOCX is unaffected, since it defers to the viewer's own fonts (D83 update).
 - Rationale: `docs/superpowers/specs/2026-09-24-phase-7b-document-export-design.md`, DECISIONS.md D81–D87.
 
 ## 16. Cover Letter & Interview Preparation (Phase 7c)
@@ -331,3 +331,73 @@ hasUnsafeText → cover_letters            hasUnsafeText → interview_preparati
 - **Evals.** `eval:cover-letter` / `eval:interview-prep` (manual, real API). Latest (interview prep count rules, D110): interview prep: all 4 fixtures generated (up from 3/4 in D109), 55/57 items supported, 10/10 gap terms answered and supported, 2 likely questions flagged for targeting a gap term (fixture-4's known "Apache Spark" alias, D92), 0 framings flagged; the previously-failing thin-evidence fixture generated 3 honest likely questions instead of a 502. Earlier: pitch 9/9 bullets supported, 0 uncited numbers; cover letter 18/18 paragraphs supported over 4 fixtures, 1 paragraph naming a gap term, 0 uncited numbers (both unchanged by D110, not re-run). D94, D103, D107, D109.
 - **Known gaps.** Gap detection has no alias/synonym handling ("Spark" does not cover "Apache Spark"; "Postgres" does not cover "PostgreSQL") (D92). Phrase-shaped and "other"-typed required terms ("Production data pipeline building experience") are excluded from gap detection rather than reported as false gaps, so such a requirement is never treated as a gap even when the profile lacks it (D104) — the real fix for both is upstream term extraction, not the matcher. `strict: true` (D109) makes the interview-prep call's tool_use.input structurally conform; a thin-evidence response that comes back below the schema's floor (1 item, D110) still legitimately fails Zod and 502s, but the floor is now low enough that this is expected to be rare. Gap detection can differ slightly from the ATS keyword-coverage list (boundary-aware vs substring); the likely-question gap check can false-positive on generic gap terms; the model is not told about missing terms beyond the fifth, so a likely question about one is flagged rather than avoided (D100). Calls are synchronous — no worker, no progress beyond a loading message. The guard checks citations, not semantic faithfulness: it cannot tell whether an answer outline says only what its cited facts say, and the framing claim check is a heuristic (paraphrased claims pass; a positive clause that later names the term is flagged; a conditional marker in the same clause hides a claim, D102, D105). No per-question notes, no mock interview, no editing of interview prep packs. The evidence block sent to the model is not length-capped (same as the pitch).
 - Rationale: `docs/superpowers/specs/2026-09-29-phase-7c-interview-prep-cover-letter-design.md`, DECISIONS.md D89–D110.
+
+## 17. Application Tracker (Phase 9)
+
+```
+"Mark as applied" (any match page)  |  "Add external application"
+        │                                       │
+        ▼                                       ▼
+createApplication  -- loads job/match/ATS/documents, builds a one-time feature_snapshot,
+                       inserts applications + an initial status_change event (one tx)
+        │
+        ▼
+applications  (status on the row; terminal_at drives retention)  +  application_events  (append-only)
+        │                              │
+        ▼                              ▼
+runMatching's eligibility        services/maintenance-worker  (daily BullMQ scheduler, + `pnpm retention:run`)
+("already applied" excludes            │
+ the job from the ranked feed)          ▼
+                                  runRetentionSweep  -- rows first (per-application tx, FOR UPDATE SKIP LOCKED),
+                                  MinIO objects after commit, then an orphan sweep (24h-guarded)
+```
+
+- **Package boundary.** `packages/applications` (no BullMQ, no LLM calls -- purely deterministic): `bodies.ts`
+  (Zod request schemas), `status.ts` (`planStatusChange`), `snapshot.ts` (`buildFeatureSnapshot`),
+  `documentLinks.ts` (`loadLinkedDocuments`, cross-job validation), `createApplication.ts`,
+  `mutateApplication.ts` (`changeStatus`/`addEvent`/`updateApplication`/`deleteApplication`),
+  `readApplications.ts` (`getApplication`/`listApplications`/`getApplicationForJob`/`listDocumentOptions`),
+  `retention/{planRetention,runRetentionSweep}.ts`. Consumed by `apps/web`'s `/api/applications` routes (plus
+  `/api/applications/for-job/[jobId]`) and the `ApplicationPanel` / `/applications` / `/applications/[id]` UI,
+  and by `services/maintenance-worker`.
+- **Two new tables.** `applications` (nullable `job_id`, `ON DELETE SET NULL`, for external applications --
+  D113; a partial unique index on `(user_id, job_id) WHERE job_id IS NOT NULL` enforces one application per
+  ingested job; `feature_snapshot jsonb` written once at creation, D116; `terminal_at` drives retention, D115)
+  and `application_events` (append-only, `ON DELETE CASCADE` from `applications`, seven event types --
+  migrations `0024_far_captain_universe.sql`, `0025_applications_rls.sql`). Both RLS-scoped like every other
+  user table (D2).
+- **Lifecycle.** Permissive: any status may move to any other; every change is logged (D114). `terminal_at`
+  is set to *now* on entering a terminal status, kept across a terminal→terminal move, and cleared on reopen
+  (D115) -- this is the sole retention clock. No `application_outcomes` table; the outcome is the terminal
+  status plus its event (D117, deviates from spec §19).
+- **Matching integration.** `evaluateEligibility` gained a deterministic `alreadyApplied` check, run first;
+  `runMatching` loads applied job ids once per run. An applied job's match page keeps its generation panels
+  visible (`match.eligible || applicationId !== null`) so what was actually sent stays viewable after the job
+  leaves the ranked feed; regenerating a document for it is refused by the existing eligibility check (D118,
+  supersedes the Phase 5 gap noted in §12).
+- **Maintenance worker.** `services/maintenance-worker`, same shape as `job-ingestion`/`matching-worker`: a
+  BullMQ queue (`"maintenance"`) with one upserted repeatable scheduler (`retention-daily`, every 24h) and a
+  concurrency-1 worker that calls `runRetentionSweep` for `DEFAULT_USER_ID`. `pnpm retention:run` runs the
+  identical sweep once via a plain script (`runOnce.ts`), for manual use and E2E. No Dockerfile or compose
+  service exists for it (same known gap as the other two workers, §10/§11/§12).
+- **Retention.** `RETENTION_DAYS` (env, integer ≥ 0, default 30; `0` disables the whole sweep). Per due
+  application, one transaction re-locks the row (`FOR UPDATE SKIP LOCKED`, replacing an unreliable
+  per-user advisory lock on a pooled connection), deletes the job's generated rows across five tables, marks
+  `retention_purged_at`, and logs a `documents_purged` event (counts only) -- MinIO objects are only removed
+  **after** that transaction commits, so a crash can only orphan objects, never leave a row pointing at a
+  missing one. A separate orphan sweep (24h-old-or-more, unreferenced keys only) collects anything that
+  slips through (D119).
+- **Known gaps.** Editing which document version is linked to an application after applying does not update
+  `feature_snapshot` -- it keeps showing the original choice (D116). No Dockerfile for
+  `services/maintenance-worker`. An applied job's documents cannot be regenerated (D118, by design, not a
+  bug). Calendar dates (`applied_at`, `follow_up_at`, and the "today" used for the due list and date-picker
+  defaults) are UTC dates on both server (`todayUtc`) and client (`ApplicationPanel`'s module-local `todayUtc` uses
+  `toISOString().slice(0, 10)`, not the browser's local calendar day) -- near local midnight, a user in a
+  non-UTC timezone can see "today" roll over up to many hours off from their wall clock. The server rejects an
+  `appliedAt` after today and a snooze date that is not after today (D123). `packages/ingestion` now nulls
+  non-http(s) posting URLs at normalization (D124, closes D113's known gap); `createApplication` and the
+  application detail page keep their render guards as defense in depth for rows ingested before that fix.
+- **Current document options.** `ApplicationPanel` re-fetches its version options before submitting, on window
+  focus and on `DOCUMENTS_CHANGED_EVENT` (which the resume/pitch/cover-letter panels dispatch after a generate or
+  edit), so the write-once `feature_snapshot` records the versions actually current at submit time (D123).
+- Rationale: `docs/superpowers/specs/2026-09-30-phase-9-application-tracker-design.md`, DECISIONS.md D112–D123.

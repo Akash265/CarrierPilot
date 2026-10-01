@@ -1,0 +1,33 @@
+{
+  "name": "@ai-career/maintenance-worker",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "dotenv -e ../../.env -- tsx src/main.ts",
+    "dev": "dotenv -e ../../.env -- tsx watch src/main.ts",
+    "retention:run": "dotenv -e ../../.env -- tsx src/runOnce.ts",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint src"
+  },
+  "dependencies": {
+    "@ai-career/applications": "workspace:*",
+    "@ai-career/config": "workspace:*",
+    "@ai-career/db": "workspace:*",
+    "@ai-career/storage": "workspace:*",
+    "bullmq": "^5.34.0",
+    "ioredis": "^5.4.0",
+    "minio": "^8.0.2"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "dotenv-cli": "^7.4.0",
+    "eslint": "^9.0.0",
+    "postgres": "^3.4.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0",
+    "typescript-eslint": "^8.0.0",
+    "vitest": "^2.1.0"
+  }
+}

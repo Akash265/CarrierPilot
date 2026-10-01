@@ -2,6 +2,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { ResumeOptimizationPanel } from "./ResumeOptimizationPanel";
+import { DOCUMENTS_CHANGED_EVENT } from "./DownloadButtons";
 
 const optimization = {
   id: "opt1", version: 1,
@@ -21,6 +22,13 @@ function mockFetchSequence(responses: { body: unknown; status?: number }[]) {
 }
 
 beforeEach(() => vi.unstubAllGlobals());
+
+/** Counts DOCUMENTS_CHANGED_EVENT dispatches (ApplicationPanel refreshes its version options on it). */
+function listenForDocumentsChanged() {
+  const listener = vi.fn();
+  window.addEventListener(DOCUMENTS_CHANGED_EVENT, listener);
+  return listener;
+}
 
 describe("ResumeOptimizationPanel", () => {
   it("shows an empty state and an Optimize Resume button when nothing has been generated yet", async () => {
@@ -45,6 +53,7 @@ describe("ResumeOptimizationPanel", () => {
   });
 
   it("calls the run endpoint and reloads the list when Regenerate is clicked", async () => {
+    const changed = listenForDocumentsChanged();
     const fetchMock = mockFetchSequence([
       { body: { optimizations: [optimization] } },
       { body: { optimization: { ...optimization, id: "opt2", version: 2 } }, status: 201 },
@@ -58,6 +67,8 @@ describe("ResumeOptimizationPanel", () => {
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
     expect(fetchMock.mock.calls[1][0]).toBe("/api/resume-optimizations/j1/run");
     expect(fetchMock.mock.calls[1][1]).toMatchObject({ method: "POST" });
+    await waitFor(() => expect(changed).toHaveBeenCalledTimes(1));
+    window.removeEventListener(DOCUMENTS_CHANGED_EVENT, changed);
   });
 
   it("shows the 'Was:' evidence line when originalText differs from optimizedText, even if changeType is mislabeled 'unchanged'", async () => {

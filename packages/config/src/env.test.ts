@@ -112,4 +112,10 @@ describe("loadEnv", () => {
     const custom = loadEnv({ ...validSource, MATCHING_EXPLAIN_TOP_N: "10" });
     expect(custom.MATCHING_EXPLAIN_TOP_N).toBe(10);
   });
+
+  it("defaults RETENTION_DAYS to 30, accepts 0, and rejects negatives", () => {
+    expect(loadEnv({ ...validSource }).RETENTION_DAYS).toBe(30);
+    expect(loadEnv({ ...validSource, RETENTION_DAYS: "0" }).RETENTION_DAYS).toBe(0);
+    expect(() => loadEnv({ ...validSource, RETENTION_DAYS: "-1" })).toThrow(/RETENTION_DAYS/);
+  });
 });

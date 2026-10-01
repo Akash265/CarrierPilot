@@ -155,4 +155,22 @@ describe("runMatching", () => {
       runMatching(testDb.db, { userId: USER, anthropicClient: failingClient, env: ENV })
     ).rejects.toMatchObject({ errorClass: "unknown" });
   });
+
+  it("marks a job with an application as ineligible, and restores it once the application is deleted", async () => {
+    await seedGoalAndProfile();
+    const jobId = await seedJob({ title: "Data Engineer" });
+    await testDb.adminSql`
+      INSERT INTO applications (user_id, job_id, company_name, job_title, status, status_changed_at, applied_at, feature_snapshot)
+      VALUES (${USER}, ${jobId}, 'Acme', 'Data Engineer', 'applied', now(), current_date, '{}'::jsonb)`;
+
+    await runMatching(testDb.db, { userId: USER, anthropicClient: fakeAnthropic(), env: ENV });
+    let [row] = await testDb.adminSql`SELECT eligible, ineligible_reason FROM job_matches WHERE job_id = ${jobId}`;
+    expect(row.eligible).toBe(false);
+    expect(row.ineligible_reason).toBe("You applied to this job at Acme.");
+
+    await testDb.adminSql`DELETE FROM applications WHERE user_id = ${USER}`;
+    await runMatching(testDb.db, { userId: USER, anthropicClient: fakeAnthropic(), env: ENV });
+    [row] = await testDb.adminSql`SELECT eligible FROM job_matches WHERE job_id = ${jobId}`;
+    expect(row.eligible).toBe(true);
+  });
 });

@@ -169,6 +169,20 @@
       "when": 1790704631706,
       "tag": "0023_cover_letter_interview_prep_rls",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1790763194350,
+      "tag": "0024_far_captain_universe",
+      "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1790763202214,
+      "tag": "0025_applications_rls",
+      "breakpoints": true
     }
   ]
 }

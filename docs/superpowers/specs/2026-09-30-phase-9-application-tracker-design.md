@@ -228,7 +228,48 @@ TDD per CLAUDE.md §10.
 
 ## 10. Risks
 
-- **Retention deletes irreversibly.** It is mitigated by the terminal-status confirmation, the `RETENTION_DAYS=0` kill switch, objects-before-rows ordering, and per-job scoping tested against a second job's data.
+- **Retention deletes irreversibly.** It is mitigated by the terminal-status confirmation, the `RETENTION_DAYS=0` kill switch, rows-before-objects ordering, and per-job scoping tested against a second job's data.
 - **The snapshot only reflects data at apply time.** A match computed against an older goal is recorded as-is (with its `careerGoalId`) rather than recomputed.
 - **External applications give Phase 10 sparse features.** They are flagged `external: true`, so Phase 10 can exclude or down-weight them.
 - **Free-text fields may hold PII** (recruiter contact). They are covered by the existing redaction and never logged.
+
+## 11. Post-implementation notes
+
+Deviations and gaps found while building this design, in implementation order (see DECISIONS.md D112–D121
+for the full rationale of each):
+
+- **§4.1 `terminal_at`.** Confirmed exactly as designed: it is set to *now*, never the user-supplied,
+  possibly-backdated `occurredAt`, and is kept (not reset) on a terminal→terminal status change (D115).
+- **§5 matching / applied-job panels.** Implemented as designed, plus one detail the design left implicit:
+  because an applied job becomes ineligible on its next matching run, `GET /api/matches/[jobId]` returns
+  `applicationId`, and the match page keeps showing the resume/pitch/cover-letter/interview-prep/documents
+  panels when `match.eligible || applicationId !== null` — not only when eligible. Generating a *new*
+  document version for that (now-ineligible) job is refused by the pre-existing "not an eligible match"
+  check; this is accepted, since the application record is what was actually sent (D118).
+- **§4.5 retention.** Implemented as designed (rows in a per-application transaction with
+  `FOR UPDATE SKIP LOCKED`, MinIO objects removed only after commit, an orphan sweep with a 24h age guard)
+  — D119. One gap surfaced during implementation, not anticipated by the design: `failedObjectDeletes` can
+  double-count a single object that fails to delete during its own purge step and then fails again in that
+  same run's orphan sweep, since the key is already unreferenced and past the 24h guard by the time the
+  orphan sweep runs. (Fixed after the final review: failed keys are tracked in a per-run `Set`, so each
+  counts once -- D123.)
+- **`GET /api/applications/[id]` documents (§6 table).** The route returns the versions sent through the
+  `snapshotSummary` built from `feature_snapshot` (resume, pitch and cover-letter version numbers, plus the
+  match and ATS scores), not "linked documents that still exist (with
+  downloads)". The detail page lists those versions and links to `/matches/[jobId]`, where the documents and
+  their downloads live until retention deletes them.
+- **Date bounds (added after the final review, D123).** `appliedAt` (create and update) may not be after
+  today (UTC, 5-minute clock-skew allowance); a snoozed follow-up date must be strictly after today.
+- **Ingested `job_url` (not in the original design text).** `createApplication` copies the job's most
+  recently seen posting URL only when it is http(s) (D113). `packages/ingestion` now nulls a non-http(s)
+  posting URL at normalization, closing that gap (D124); `createApplication` and the application detail
+  page keep their scheme re-checks as defense in depth for rows ingested before the fix.
+- **Calendar dates are UTC, not local.** Both the server (`todayUtc`) and the client (`ApplicationPanel`'s
+  default applied-date) compute "today" from `toISOString().slice(0, 10)`, i.e. the UTC calendar day, not
+  the browser's local one. For a user well away from UTC, this can be off by a day for a few hours around
+  midnight local time. Not fixed in this phase.
+- **`packages/applications` test helper.** The `postgres.js` admin client used by the integration test
+  helpers (`packages/applications/src/testing/db.ts`) rejects a raw JS `Date` as a tagged-template parameter
+  once `drizzle(adminSql)` has wrapped it: Drizzle's postgres-js driver (`drizzle-orm/postgres-js/driver.js`)
+  replaces the shared client's date/timestamp parsers and serializers with pass-throughs. (`migrate()` is not
+  the cause.) Tests that backdate a timestamp pass an ISO string with an explicit `::timestamptz` cast instead.

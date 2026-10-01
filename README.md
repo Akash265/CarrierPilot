@@ -39,6 +39,16 @@ rationale behind each architectural choice.
    process with no scheduler -- matching only ever runs when the `/matches`
    page's "Find Matches" button enqueues it. Run exactly one worker process
    (concurrency is 1 either way).
+9. Start the maintenance worker (needed for the Phase 9 retention sweep to
+   run on its own): `pnpm --filter @ai-career/maintenance-worker start`. A
+   plain Node process (no Dockerfile, same as the other two workers) that
+   upserts a daily BullMQ scheduler on boot and then deletes generated
+   documents for applications that have been in a terminal status
+   (accepted/declined/rejected/withdrawn/no_response) for `RETENTION_DAYS`
+   (default 30; `0` disables it). To run the sweep once by hand -- e.g. right
+   after backdating a `terminal_at` for testing -- use
+   `pnpm retention:run` instead of starting the worker; it runs the exact
+   same code path a single time and exits.
 
 After adding new migrations, migrate the *test* database once before running
 the whole suite:
@@ -150,3 +160,17 @@ framings for required skills missing from your profile (the gap list is
 computed deterministically, not by the model), company talking points and
 questions to ask. Existing checkouts: run `pnpm --filter @ai-career/db
 db:migrate` to add the two new tables.
+
+Phase 9 (Application Tracker) complete: "Mark as applied" on any match
+page (or "Add external application" on `/applications`) records which
+resume/pitch/cover-letter versions you actually sent, a one-time snapshot of
+the match/ATS scores at that moment, and puts the job on a `/applications`
+tracker with a status timeline, follow-up dates, and a log of notes,
+recruiter contact and interview events. An applied job leaves the ranked
+`/matches` feed ("already applied") but its generated documents stay
+viewable on `/matches/[jobId]` until retention deletes them; the
+application's detail page lists the versions sent and links there.
+Browser automation (Phase 8) is deferred, so every application is recorded
+by hand rather than by an automation session. Existing checkouts: run
+`pnpm --filter @ai-career/db db:migrate` to add the two new tables, and see
+below to run the retention sweep.

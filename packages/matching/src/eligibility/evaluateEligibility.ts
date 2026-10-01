@@ -12,6 +12,8 @@ export interface EligibilityInput {
   candidateYearsOfExperience: number | null;
   experienceGraceYears: number;
   previouslyDismissed: boolean;
+  /** An application exists for this job (Phase 9). Checked first: the user already acted on it. */
+  alreadyApplied: boolean;
 }
 
 export interface EligibilityResult {
@@ -24,10 +26,14 @@ const ELIGIBLE: EligibilityResult = { eligible: true, reason: null };
 
 /**
  * Deterministic hard filter (design doc §5). Order matters only for which single reason is
- * reported when several would apply; "previously dismissed" is checked first since it reflects
- * an explicit user decision that should never be second-guessed by any other rule.
+ * reported when several would apply; "already applied" is checked first, then "previously
+ * dismissed", since both reflect an explicit user decision that no other rule should second-guess.
  */
 export function evaluateEligibility(input: EligibilityInput): EligibilityResult {
+  if (input.alreadyApplied) {
+    return { eligible: false, reason: `You applied to this job at ${input.companyName}.` };
+  }
+
   if (input.previouslyDismissed) {
     return { eligible: false, reason: `You dismissed this job at ${input.companyName}.` };
   }

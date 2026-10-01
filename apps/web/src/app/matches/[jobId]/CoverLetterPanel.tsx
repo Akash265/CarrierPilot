@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { DownloadButtons } from "./DownloadButtons";
+import { DOCUMENTS_CHANGED_EVENT, DownloadButtons } from "./DownloadButtons";
 import { EvidenceList, type EvidenceView } from "./EvidenceList";
 import type { ResearchStatus } from "./viewTypes";
 
@@ -132,6 +132,8 @@ export function CoverLetterPanel({ jobId }: { jobId: string }) {
         setActionError(body?.error ?? fallback);
         return false;
       }
+      // generate/save create a new version: ApplicationPanel refreshes its "Mark as applied" options on this event.
+      window.dispatchEvent(new Event(DOCUMENTS_CHANGED_EVENT));
       await load(loadOpts);
       return true;
     } catch {

@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { ApplicationPanel } from "./ApplicationPanel";
 import { ResumeOptimizationPanel } from "./ResumeOptimizationPanel";
 import { PitchPanel } from "./PitchPanel";
 import { CoverLetterPanel } from "./CoverLetterPanel";
@@ -25,7 +26,7 @@ interface MatchView {
   userAction: "none" | "saved" | "dismissed";
 }
 
-type Outcome = { kind: "missing" } | { kind: "error" } | { kind: "ready"; job: JobView; match: MatchView };
+type Outcome = { kind: "missing" } | { kind: "error" } | { kind: "ready"; job: JobView; match: MatchView; applicationId: string | null };
 type State = { kind: "loading" } | Outcome;
 
 const FACTOR_LABELS: [string, string][] = [
@@ -50,7 +51,12 @@ export function MatchDetailClient({ jobId }: { jobId: string }) {
         if (!res.ok) return finish({ kind: "error" });
         const body = await res.json();
         if (body && typeof body.job === "object" && typeof body.match === "object") {
-          finish({ kind: "ready", job: body.job, match: body.match });
+          finish({
+            kind: "ready",
+            job: body.job,
+            match: body.match,
+            applicationId: typeof body.applicationId === "string" ? body.applicationId : null,
+          });
         } else {
           finish({ kind: "error" });
         }
@@ -68,6 +74,8 @@ export function MatchDetailClient({ jobId }: { jobId: string }) {
   if (state.kind === "error") return <div className="flex flex-col gap-3"><p role="alert" className="text-red-600">Could not load this match.</p>{back}</div>;
 
   const { job, match } = state;
+  // An applied job becomes ineligible on the next matching run ("already applied"); its documents must stay viewable.
+  const showWorkspace = match.eligible || state.applicationId !== null;
 
   return (
     <div className="flex flex-col gap-6">
@@ -125,11 +133,12 @@ export function MatchDetailClient({ jobId }: { jobId: string }) {
         </section>
       )}
 
-      {match.eligible && <ResumeOptimizationPanel jobId={jobId} />}
-      {match.eligible && <PitchPanel jobId={jobId} />}
-      {match.eligible && <CoverLetterPanel jobId={jobId} />}
-      {match.eligible && <InterviewPrepPanel jobId={jobId} />}
-      {match.eligible && <DocumentsList jobId={jobId} />}
+      <ApplicationPanel jobId={jobId} />
+      {showWorkspace && <ResumeOptimizationPanel jobId={jobId} />}
+      {showWorkspace && <PitchPanel jobId={jobId} />}
+      {showWorkspace && <CoverLetterPanel jobId={jobId} />}
+      {showWorkspace && <InterviewPrepPanel jobId={jobId} />}
+      {showWorkspace && <DocumentsList jobId={jobId} />}
 
       <section aria-labelledby="description-heading">
         <h2 id="description-heading" className="mb-2 font-medium">Job description</h2>

@@ -21,6 +21,9 @@ function mockFetch(matchBody: unknown, matchStatus = 200) {
       if (url.includes("/api/application-pitches/")) {
         return { ok: true, status: 200, json: async () => ({ versions: [], research: null }) } as Response;
       }
+      if (url.includes("/api/applications/for-job/")) {
+        return { ok: true, status: 200, json: async () => ({ application: null, documentOptions: { resumes: [], pitches: [], coverLetters: [] } }) } as Response;
+      }
       if (url.includes("/api/documents")) {
         return { ok: true, status: 200, json: async () => ({ documents: [] }) } as Response;
       }
@@ -67,5 +70,20 @@ describe("MatchDetailClient", () => {
     expect(screen.queryByText("Slightly under target salary")).not.toBeInTheDocument();
     expect(screen.queryByText("Tableau requested, not found")).not.toBeInTheDocument();
     expect(screen.queryByText("A strong overall match.")).not.toBeInTheDocument();
+  });
+
+  it("keeps the document panels for an applied job even when it is no longer eligible", async () => {
+    vi.stubGlobal("fetch", vi.fn((url: string) =>
+      url.startsWith("/api/matches/")
+        ? Promise.resolve({ ok: true, status: 200, json: async () => ({
+            job: { id: "j1", title: "DE", companyName: "Acme", locationRaw: null, workMode: "remote", descriptionText: "" },
+            match: { eligible: false, ineligibleReason: "You applied to this job at Acme.", overallScore: null, factors: null, explanation: null, userAction: "none" },
+            applicationId: "a1",
+          }) } as Response)
+        : Promise.resolve({ ok: true, status: 200, json: async () => ({ application: null, documentOptions: { resumes: [], pitches: [], coverLetters: [] }, documents: [], optimizations: [], versions: [], research: null }) } as Response)
+    ));
+    render(<MatchDetailClient jobId="j1" />);
+    expect(await screen.findByRole("heading", { name: "Application" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Documents" })).toBeInTheDocument();
   });
 });
