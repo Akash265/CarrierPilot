@@ -378,8 +378,12 @@ runMatching's eligibility        services/maintenance-worker  (daily BullMQ sche
 - **Maintenance worker.** `services/maintenance-worker`, same shape as `job-ingestion`/`matching-worker`: a
   BullMQ queue (`"maintenance"`) with one upserted repeatable scheduler (`retention-daily`, every 24h) and a
   concurrency-1 worker that calls `runRetentionSweep` for `DEFAULT_USER_ID`. `pnpm retention:run` runs the
-  identical sweep once via a plain script (`runOnce.ts`), for manual use and E2E. No Dockerfile or compose
-  service exists for it (same known gap as the other two workers, §10/§11/§12).
+  identical sweep once via a plain script (`runOnce.ts`), for manual use and E2E. It is the one containerized
+  service ([D125](../DECISIONS.md)): `services/maintenance-worker/Dockerfile` (repo-root context, `pnpm deploy
+  --prod` of just this service and its workspace packages, run as the non-root `node` user under `tsx`, no
+  `.env` baked in -- `.dockerignore` and a CI check enforce that) and an opt-in `maintenance-worker` compose
+  service behind the `workers` profile. The other two workers and the web app are still not containerized
+  (§11/§12).
 - **Retention.** `RETENTION_DAYS` (env, integer ≥ 0, default 30; `0` disables the whole sweep). Per due
   application, one transaction re-locks the row (`FOR UPDATE SKIP LOCKED`, replacing an unreliable
   per-user advisory lock on a pooled connection), deletes the job's generated rows across five tables, marks
@@ -388,8 +392,7 @@ runMatching's eligibility        services/maintenance-worker  (daily BullMQ sche
   missing one. A separate orphan sweep (24h-old-or-more, unreferenced keys only) collects anything that
   slips through (D119).
 - **Known gaps.** Editing which document version is linked to an application after applying does not update
-  `feature_snapshot` -- it keeps showing the original choice (D116). No Dockerfile for
-  `services/maintenance-worker`. An applied job's documents cannot be regenerated (D118, by design, not a
+  `feature_snapshot` -- it keeps showing the original choice (D116). An applied job's documents cannot be regenerated (D118, by design, not a
   bug). Calendar dates (`applied_at`, `follow_up_at`, and the "today" used for the due list and date-picker
   defaults) are UTC dates on both server (`todayUtc`) and client (`ApplicationPanel`'s module-local `todayUtc` uses
   `toISOString().slice(0, 10)`, not the browser's local calendar day) -- near local midnight, a user in a

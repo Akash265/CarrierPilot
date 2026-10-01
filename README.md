@@ -40,15 +40,20 @@ rationale behind each architectural choice.
    page's "Find Matches" button enqueues it. Run exactly one worker process
    (concurrency is 1 either way).
 9. Start the maintenance worker (needed for the Phase 9 retention sweep to
-   run on its own): `pnpm --filter @ai-career/maintenance-worker start`. A
-   plain Node process (no Dockerfile, same as the other two workers) that
-   upserts a daily BullMQ scheduler on boot and then deletes generated
+   run on its own): `pnpm --filter @ai-career/maintenance-worker start`, or
+   in Docker with `docker compose -f infra/docker-compose.yml --profile workers
+   up -d --build` (opt-in profile; plain `up -d` still starts only the infra;
+   the container reads the repo's `.env` and reaches Postgres/Redis/MinIO by
+   service name). It upserts a daily BullMQ scheduler on boot (the first run
+   fires immediately) and then deletes generated
    documents for applications that have been in a terminal status
    (accepted/declined/rejected/withdrawn/no_response) for `RETENTION_DAYS`
    (default 30; `0` disables it). To run the sweep once by hand -- e.g. right
    after backdating a `terminal_at` for testing -- use
    `pnpm retention:run` instead of starting the worker; it runs the exact
-   same code path a single time and exits.
+   same code path a single time and exits. Inside Docker the equivalent is
+   `docker compose -f infra/docker-compose.yml --profile workers run --rm
+   maintenance-worker node_modules/.bin/tsx src/runOnce.ts`.
 
 After adding new migrations, migrate the *test* database once before running
 the whole suite:

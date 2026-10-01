@@ -593,6 +593,9 @@ importers:
       minio:
         specifier: ^8.0.2
         version: 8.0.7
+      tsx:
+        specifier: ^4.19.0
+        version: 4.23.13
     devDependencies:
       '@types/node':
         specifier: ^22.10.0
@@ -606,9 +609,6 @@ importers:
       postgres:
         specifier: ^3.4.0
         version: 3.4.9
-      tsx:
-        specifier: ^4.19.0
-        version: 4.23.13
       typescript:
         specifier: ^5.7.0
         version: 5.9.3

@@ -1181,3 +1181,10 @@ concurrency 1) and calls `scheduleRetention` (`worker.ts`), which upserts a repe
 `retention:run` script) -> `services/maintenance-worker/src/runOnce.ts` (new): calls `runRetentionSweep`
 once, directly, with the same `RetentionStorage` adapter and env-derived `RETENTION_DAYS` -- the same code
 path as the scheduled job, for manual/E2E use.
+
+In Docker (D125): `docker compose -f infra/docker-compose.yml --profile workers up -d --build` builds
+`services/maintenance-worker/Dockerfile` (repo-root context) and starts the `maintenance-worker` service,
+whose `CMD` is `tsx src/main.ts` -- the same entry point as above, with config from the repo's `.env`
+(`env_file`) and `DATABASE_URL`/`REDIS_URL`/`MINIO_ENDPOINT` overridden to the compose service names. The
+one-off sweep is `docker compose ... --profile workers run --rm maintenance-worker node_modules/.bin/tsx
+src/runOnce.ts`.
