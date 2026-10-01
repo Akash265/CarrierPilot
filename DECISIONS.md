@@ -973,4 +973,14 @@ No browser console errors and no HTTP responses ≥400 across the run.
 - Plain `up -d` still starts only the three infrastructure services.
 **What it affects:** `services/maintenance-worker/Dockerfile`, `services/maintenance-worker/package.json`, `pnpm-lock.yaml`, `.dockerignore`, `infra/docker-compose.yml`, `.github/workflows/ci.yml`, README (step 9), `docs/architecture.md` §17, FLOW.md §12d.
 
+### D126. The worker's base image comes from ECR Public's official-images mirror, and CI retries the build
+**Decision:** `services/maintenance-worker/Dockerfile` takes its base from `ARG NODE_IMAGE=public.ecr.aws/docker/library/node:22-slim` for both stages. That is AWS ECR Public's mirror of Docker's official `node` image, and it serves the same `node v22.23.3` build as the Docker Hub `node:22-slim` used in D125. The CI image-build step also retries `docker build` up to 3 times, 15s apart, before failing.
+**Why:** The first CI run of D125's step failed before pulling anything. Fetching Docker Hub's anonymous auth token (`POST https://auth.docker.io/token`) failed with `read: connection reset by peer`, so the step never reached the image itself. The job's own service containers had pulled from Docker Hub fine moments earlier, which marks this as Docker Hub flakiness or anonymous rate-limiting on shared GitHub runner IPs, not a Dockerfile defect. It is the same class of registry failure as D88 (MinIO). A clean `--no-cache` local build now loads metadata only from `public.ecr.aws`, with no Docker Hub token step. The retry covers any remaining transient registry error; it was tested by forcing all three attempts to fail (exit 1 after the third) under `bash -e`, the shell GitHub Actions uses.
+**Supersedes:** D125's choice of `node:22-slim` from Docker Hub as the base image. D125 is otherwise unchanged.
+**Alternatives considered:**
+- Logging in to Docker Hub in CI: needs a stored credential for a public image.
+- Pinning the image by digest: does not address the auth failure, and makes Node patch updates manual.
+- Retry alone: keeps depending on the endpoint that failed.
+**What it affects:** `services/maintenance-worker/Dockerfile`, `.github/workflows/ci.yml`.
+
 *Entries are appended chronologically. Do not edit or delete past entries when a decision is later reversed — add a new entry that supersedes it and cross-reference the original.*

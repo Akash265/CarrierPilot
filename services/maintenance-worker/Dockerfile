@@ -3,7 +3,11 @@
 # Workspace packages ship raw TypeScript (no build step), so the worker runs under tsx, exactly as
 # `pnpm --filter @ai-career/maintenance-worker start` does outside Docker (DECISIONS.md D125).
 
-FROM node:22-slim AS build
+# Base image comes from Docker's official-images mirror on AWS ECR Public, not Docker Hub: CI's anonymous
+# Docker Hub token fetch is flaky/rate-limited on shared GitHub runners (same class of failure as D88).
+ARG NODE_IMAGE=public.ecr.aws/docker/library/node:22-slim
+
+FROM ${NODE_IMAGE} AS build
 WORKDIR /repo
 # pnpm pinned by the root package.json "packageManager" field.
 RUN corepack enable
@@ -13,7 +17,7 @@ COPY . .
 RUN pnpm install --frozen-lockfile --filter @ai-career/maintenance-worker... \
  && pnpm --filter @ai-career/maintenance-worker deploy --prod /out
 
-FROM node:22-slim
+FROM ${NODE_IMAGE}
 ENV NODE_ENV=production
 WORKDIR /app
 COPY --from=build --chown=node:node /out ./
