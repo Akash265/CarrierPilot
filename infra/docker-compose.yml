@@ -53,6 +53,29 @@ services:
       timeout: 5s
       retries: 10
 
+  # Opt-in: `docker compose --profile workers up -d` (plain `up -d` still starts only the infra above).
+  # Daily retention sweep (DECISIONS.md D119, D125). Config comes from the repo's .env; only the
+  # hostnames are overridden to reach the services above on the compose network.
+  maintenance-worker:
+    profiles: ["workers"]
+    build:
+      context: ..
+      dockerfile: services/maintenance-worker/Dockerfile
+    image: careerpilot-maintenance-worker
+    restart: unless-stopped
+    env_file: ../.env
+    environment:
+      DATABASE_URL: postgres://career_intel_app:career_intel_app@postgres:5432/career_intel
+      REDIS_URL: redis://redis:6379
+      MINIO_ENDPOINT: http://minio:9000
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+
 volumes:
   postgres_data:
   minio_data:
