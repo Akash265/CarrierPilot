@@ -15,5 +15,7 @@ export function applicationErrorResponse(error: unknown): NextResponse | null {
       return NextResponse.json({ error: "The application already has this status" }, { status: 409 });
     case "document_mismatch":
       return NextResponse.json({ error: "A selected document does not belong to this job" }, { status: 422 });
+    case "session_not_linkable":
+      return NextResponse.json({ error: "This autofill session cannot be linked to an application" }, { status: 409 });
   }
 }

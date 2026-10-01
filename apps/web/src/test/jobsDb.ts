@@ -265,3 +265,34 @@ export async function insertApplication(
                  VALUES (${userId}, ${row.id}, 'status_change', now(), ${opts.status ?? "applied"})`;
   return row.id as string;
 }
+
+/** Phase 8. candidate_profiles has one row per user and does not cascade from jobs: tests delete it themselves. */
+export async function insertProfile(adminSql: postgres.Sql, userId: string): Promise<void> {
+  await adminSql`
+    INSERT INTO candidate_profiles (user_id, full_name, email) VALUES (${userId}, 'Jane Doe', 'jane@example.com')
+    ON CONFLICT (user_id) DO NOTHING`;
+}
+
+export async function insertGeneratedPdf(adminSql: postgres.Sql, userId: string, jobId: string, kind: "resume" | "cover_letter"): Promise<string> {
+  const [row] = await adminSql`
+    INSERT INTO generated_documents (user_id, job_id, kind, format, object_key, byte_size, content_hash, renderer_version, download_filename)
+    VALUES (${userId}, ${jobId}, ${kind}, 'pdf', ${`${userId}/${kind}-${jobId}.pdf`}, 10, ${"h-" + kind}, 'r1', ${kind + ".pdf"})
+    RETURNING id`;
+  return row.id as string;
+}
+
+export async function insertAutomationSession(
+  adminSql: postgres.Sql,
+  userId: string,
+  jobId: string,
+  opts: { status?: string; fieldAudit?: object[] } = {}
+): Promise<string> {
+  const status = opts.status ?? "queued";
+  const terminal = ["submission_detected", "abandoned", "needs_manual", "failed"].includes(status);
+  const [row] = await adminSql`
+    INSERT INTO automation_sessions (user_id, job_id, portal, adapter_version, form_url, status, ended_at, field_audit)
+    VALUES (${userId}, ${jobId}, 'greenhouse', 'greenhouse-v1', 'https://job-boards.greenhouse.io/acme/jobs/123', ${status},
+            ${terminal ? new Date().toISOString() : null}::timestamptz, ${JSON.stringify(opts.fieldAudit ?? [])}::jsonb)
+    RETURNING id`;
+  return row.id as string;
+}
