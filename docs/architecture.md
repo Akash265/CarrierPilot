@@ -394,8 +394,9 @@ runMatching's eligibility        services/maintenance-worker  (daily BullMQ sche
   defaults) are UTC dates on both server (`todayUtc`) and client (`ApplicationPanel`'s module-local `todayUtc` uses
   `toISOString().slice(0, 10)`, not the browser's local calendar day) -- near local midnight, a user in a
   non-UTC timezone can see "today" roll over up to many hours off from their wall clock. The server rejects an
-  `appliedAt` after today and a snooze date that is not after today (D123). `packages/ingestion` still accepts non-http(s)
-  posting URLs; only `createApplication` and the application detail page guard against rendering one (D113).
+  `appliedAt` after today and a snooze date that is not after today (D123). `packages/ingestion` now nulls
+  non-http(s) posting URLs at normalization (D124, closes D113's known gap); `createApplication` and the
+  application detail page keep their render guards as defense in depth for rows ingested before that fix.
 - **Current document options.** `ApplicationPanel` re-fetches its version options before submitting, on window
   focus and on `DOCUMENTS_CHANGED_EVENT` (which the resume/pitch/cover-letter panels dispatch after a generate or
   edit), so the write-once `feature_snapshot` records the versions actually current at submit time (D123).

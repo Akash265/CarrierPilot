@@ -631,6 +631,10 @@ pnpm --filter @ai-career/job-ingestion start          services/job-ingestion/src
       │     │     unpaired surrogate -- the jsonb `normalized` column rejects both, and the normalizer
       │     │     itself can mint one by decoding an entity or slicing an emoji in half (D44). It reuses
       │     │     the normalize-failure branch above; no new branch was added to runIngestion.ts
+      │     │     assemble() also runs the source's `url` through `safeHttpUrl` (the same
+      │     │     `/^https?:\/\//i` check `createApplication.ts` and `ApplicationDetailClient.tsx`
+      │     │     already used) and stores `null` for a `javascript:`/`data:`/other non-http(s) value --
+      │     │     never rejects the record for this alone (D124, closes D113's known gap)
       │     └─ persistPosting                            pipeline/persistPosting.ts
       │        ├─ tier 1: (source, external id) exists? unchanged content_hash → touch last_seen_at
       │        │          (and recompute the job if the posting had been closed); else update
@@ -1092,7 +1096,8 @@ and stops), resolves each dropdown against the fresh options as above, then
      1. Ingested path: load the `jobs` row (missing -> `job_not_found` -> 404); `loadLinkedDocuments`
         (`packages/applications/src/documentLinks.ts`, new) re-validates every linked document actually
         belongs to this `jobId` (mismatch -> `document_mismatch` -> 422); load the job's `job_matches` row and
-        its most-recently-seen `job_postings.url` (kept only if http(s) -- `safeHttpUrl`, D113).
+        its most-recently-seen `job_postings.url` (kept only if http(s) -- `safeHttpUrl`, D113; ingestion
+        itself nulls a non-http(s) `url` at normalization since D124, so this is now defense in depth).
      2. `buildFeatureSnapshot` (`packages/applications/src/snapshot.ts`, new) assembles the D116 snapshot from
         whatever job/match/ATS/document state exists right now.
      3. Insert the `applications` row (status `applied`) and its initial `status_change` event
@@ -1101,6 +1106,11 @@ and stops), resolves each dropdown against the fresh options as above, then
         (`applicationErrorResponse`, `apps/web/src/lib/applications/errorResponse.ts`, new).
   -> Route returns 201 `{ application }` (`toApplicationView`, `apps/web/src/lib/applications/serializeApplication.ts`,
      new); panel updates its own state directly from the response (no re-fetch after the POST).
+  -> On a 409 (another request -- e.g. another tab -- won the race since the panel's own pre-submit
+     re-fetch), the panel re-runs `GET for-job` once more (D124's web fix, the same `fetchForJob`/`load`
+     used elsewhere in this flow): if that reload finds the application, the panel switches straight to the
+     "Applied on ..." view instead of just showing the error; if the reload itself fails or still finds no
+     application, the server's error text is shown as before.
 
 ### 12b. Status changes, events and edits (request-driven)
 

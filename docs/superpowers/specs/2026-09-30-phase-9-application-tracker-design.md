@@ -261,10 +261,9 @@ for the full rationale of each):
 - **Date bounds (added after the final review, D123).** `appliedAt` (create and update) may not be after
   today (UTC, 5-minute clock-skew allowance); a snoozed follow-up date must be strictly after today.
 - **Ingested `job_url` (not in the original design text).** `createApplication` copies the job's most
-  recently seen posting URL only when it is http(s); `packages/ingestion` does not constrain a posting's
-  `url` field to http(s) at all, so a non-conforming URL is silently dropped rather than stored, and the
-  application detail page independently re-checks the scheme before rendering it as a link, as defense in
-  depth (D113).
+  recently seen posting URL only when it is http(s) (D113). `packages/ingestion` now nulls a non-http(s)
+  posting URL at normalization, closing that gap (D124); `createApplication` and the application detail
+  page keep their scheme re-checks as defense in depth for rows ingested before the fix.
 - **Calendar dates are UTC, not local.** Both the server (`todayUtc`) and the client (`ApplicationPanel`'s
   default applied-date) compute "today" from `toISOString().slice(0, 10)`, i.e. the UTC calendar day, not
   the browser's local one. For a user well away from UTC, this can be off by a day for a few hours around
