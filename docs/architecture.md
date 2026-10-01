@@ -1,6 +1,6 @@
 # Architecture — AI Career Intelligence & Application Platform
 
-Status: **Phases 0–7c and 9 are implemented** (foundation, candidate profile, career goal, job intelligence, hybrid matching, ATS resume optimization, company research + Hiring Manager Pitch, document export, cover letter + interview preparation, application tracker); **Phase 8 (browser automation) is deferred**. This document describes the agreed architecture as of 2026-09-06. See `DECISIONS.md` for the rationale behind each choice. Update this file as implementation reveals deviations — it must describe what's actually built, not an aspiration.
+Status: **Phases 0–9 are implemented** (foundation, candidate profile, career goal, job intelligence, hybrid matching, ATS resume optimization, company research + Hiring Manager Pitch, document export, cover letter + interview preparation, application tracker, guarded browser autofill). This document describes the agreed architecture as of 2026-09-06. See `DECISIONS.md` for the rationale behind each choice. Update this file as implementation reveals deviations — it must describe what's actually built, not an aspiration.
 
 ## 1. Product framing
 
@@ -19,7 +19,7 @@ API / DOMAIN SERVICES (business logic lives here — workers only execute)
  ├─ Candidate Profile          ├─ Resume Optimization
  ├─ Career Goal Parser         ├─ ATS Evaluation
  ├─ Job Intelligence           ├─ Application Tracker
- ├─ Matching Engine            └─ Browser Automation Control (Auto-Prep)
+ ├─ Matching Engine            └─ Browser Automation Control (guarded autofill)
  │
  ▼
 POSTGRESQL + pgvector + pg_trgm     (RLS-enabled, user_id-scoped — D2)
@@ -30,7 +30,7 @@ POSTGRESQL + pgvector + pg_trgm     (RLS-enabled, user_id-scoped — D2)
  ▼
 REDIS + BULLMQ
  ├─ job ingestion workers        ├─ evaluation workers
- ├─ resume generation workers    └─ browser automation (Auto-Prep) workers
+ ├─ resume generation workers    └─ browser automation (guarded autofill) worker — host-run only, §18
  │
  ▼
 MINIO (local) / R2 (optional cloud) — encrypted object storage
@@ -106,25 +106,40 @@ Output structured per spec §11 (`modified_bullet_points`, `added_terms`, `justi
 
 ATS/Machine Readability evaluation runs after optimization, scoring keyword coverage, required-skill coverage, semantic similarity, action-verb quality, format readability, experience alignment, factual consistency — reported transparently as an internal signal, never claimed as a guarantee of real-world ATS behavior (spec §10.2).
 
-## 6. Application automation — "Auto-Prep", not autofill ([D4](../DECISIONS.md))
+## 6. Application automation — guarded autofill ([D127](../DECISIONS.md))
 
 ```
-Prepare → Generate Resume + Pitch → Build structured application payload
-   (candidate fields mapped to Workday/Lever/Greenhouse schema)
+"Open & autofill application" (AutofillPanel, /matches/[jobId])
         ↓
-Open Application Portal
+createSession: resolve Greenhouse/Lever posting → build form URL (never scraped) → automation_sessions (queued)
         ↓
-Per-ATS adapter (versioned plugin) attempts field mapping + runs selector health-check
+enqueue onto BullMQ "browser-automation" (concurrency 1) ──fails──▶ failed / enqueue_failed, 503
         ↓
-   Healthy? ──No──▶ fall back to manual mode, flag for user, log which fields are unmapped
+services/browser-worker (host-run, headed Chrome — not containerized)
+  launch throwaway profile → navigate (host-allowlisted) → snapshot the form (plain-JS extractor, D131)
+        ↓
+  classify every field (standard-field rules + shared label regexes, D129) → build a fill plan
+        ↓
+  health check: every required field matched exactly once? ──No──▶ needs_manual (nothing filled), window released
         │ Yes
         ▼
-Assisted paste (clipboard / extension helper) — never a silent auto-submit
+  guarded fill/select/check/attach (actions.ts, D130) — each action verified by reading the value back
         ↓
-USER REVIEWS AND CLICKS FINAL SUBMIT MANUALLY
+  awaiting_user: window handed to the person; worker only polls for close / timeout / cancel / confirmation text
+        ↓
+   confirmation text/URL seen? ──Yes──▶ submission_detected (window released, not closed)
+        │ No (closed / timed out / cancelled)
+        ▼
+  abandoned
+        ↓
+USER REVIEWS AND CLICKS SUBMIT THEMSELVES — the worker has no click/press/submit code path at all (D130)
+        ↓
+"Record as applied?" (submission_detected or abandoned) → links the session's own attached resume/cover letter
 ```
 
-The "stop before submit" invariant (spec §4, §13) is structural here — a human performs the paste and the click — not merely a pause step inside a DOM automation script.
+The "stop before submit" invariant (spec §4, §13) is structural: no Playwright call in `services/browser-worker`
+can click, press a key, or submit a form (enforced by a source-scanning test, D130) — not a pause step inside
+a DOM automation script. See §18 for the as-built package/table/route inventory and DECISIONS.md D127–D136.
 
 ## 7. AI/model layer ([D7](../DECISIONS.md), [D8](../DECISIONS.md))
 
@@ -147,7 +162,7 @@ Caching: embedding cache (permanent, content-hash keyed), match-reason cache (7-
 
 - `profile_facts` — sentence/bullet-level candidate facts, each with its own embedding. Required by the entailment guardrail ([D5](../DECISIONS.md)); not present in the original spec, which only implied resume-level embedding.
 - All tables carry `user_id UUID` with RLS policies ([D2](../DECISIONS.md)), defaulting to a fixed local UUID via `DEFAULT_USER_ID`.
-- `automation_sessions` stores the generated payload and per-field mapped/unmapped state rather than raw DOM-automation logs ([D4](../DECISIONS.md)).
+- `automation_sessions` (Phase 8) stores one row per guarded-autofill attempt: portal/adapter version, the built form URL, lifecycle status, a `field_audit` of per-field actions/reasons/value *sources* (never values), and optional links to the attached documents and the resulting application ([D127](../DECISIONS.md), [D136](../DECISIONS.md)); see §18.
 - `career_goals` / `career_goal_constraints` (implemented in Phase 3) deviate from spec §19's one-line description: a goal is versioned and never edited in place (`version`, `is_active`, [D23](../DECISIONS.md)), a row is created when the goal is parsed with its own `parse_status`/`parse_error` ([D24](../DECISIONS.md)), and the constraints row holds 21 structured fields including the minimum salary as `salary_floor_raw` / `salary_floor_normalized` / `salary_currency` / `salary_is_parsed` and the preferred salary as the parallel `salary_target_*` columns ([D22](../DECISIONS.md), [D25](../DECISIONS.md), [D28](../DECISIONS.md)).
 - `career_goal_constraints` is the single source of truth for search-relevant preferences. `candidate_profiles` therefore keeps only contact fields, `years_of_experience` and `work_authorization_notes`; its earlier work-mode, salary-expectation, visa, preferred-role and industry columns and the `company_preferences` table were dropped ([D21](../DECISIONS.md)).
 - `job_sources`, `ingestion_runs`, `raw_job_postings`, `jobs`, `job_postings`, `job_duplicate_candidates` (Phase 4, [D35](../DECISIONS.md)/[D36](../DECISIONS.md)). `jobs` is derived from its postings by a pure merge; salary uses the D6 raw + normalized + currency + period + `is_parsed` shape (implemented as `salary_raw`, `salary_min`, `salary_max`, `salary_currency`, `salary_period`, `salary_is_parsed`, with the min/max annualized).
@@ -404,3 +419,55 @@ runMatching's eligibility        services/maintenance-worker  (daily BullMQ sche
   focus and on `DOCUMENTS_CHANGED_EVENT` (which the resume/pitch/cover-letter panels dispatch after a generate or
   edit), so the write-once `feature_snapshot` records the versions actually current at submit time (D123).
 - Rationale: `docs/superpowers/specs/2026-09-30-phase-9-application-tracker-design.md`, DECISIONS.md D112–D123.
+
+## 18. Phase 8 as built — Browser Automation (Guarded Autofill)
+
+See §6 for the end-to-end diagram. This section is the as-built inventory; FLOW.md §13 traces the exact
+call order and DECISIONS.md D127–D136 the rationale behind each piece.
+
+- **Package.** `packages/browser` — pure logic, no Playwright/BullMQ/ioredis import. Adapters
+  (`adapters/{types,greenhouse,lever,index,resolveAutofillTarget}.ts`, D128), the form-snapshot type
+  (`types.ts`), the plain-JS in-page extractor (`snapshot/extractSnapshotSource.ts`, D131), deterministic
+  value mapping (`values/buildAutofillValues.ts`), field classification (`plan/classifyField.ts`, D129), the
+  fill-plan builder (`plan/buildFillPlan.ts`), confirmation detection (`detect/detectSubmission.ts`, D134),
+  and the session lifecycle (`sessions/{createSession,transitions,readSessions,support,loadAutofillContext}.ts`,
+  all operating through `withUserContext`).
+- **Service.** `services/browser-worker` — host-run only (`pnpm --filter @ai-career/browser-worker start`,
+  no Dockerfile/compose service: a headed Chrome window needs the user's own desktop). BullMQ consumer at
+  concurrency 1 (`worker.ts`); `runSession.ts` is the per-session state machine; `actions.ts` is the sole
+  module allowed to mutate the page, behind the stop-before-submit guard (D130); `browser.ts` owns Chrome
+  launch, the throwaway per-session profile/attachments directory, and the released-window registry (below);
+  `attachments.ts` downloads the session's resume/cover-letter PDFs from MinIO; `snapshot.ts` evaluates the
+  extractor and reads back visible text for detection; `main.ts` wires it together, runs the startup
+  cleanup/sweep, and logs ids/statuses/error classes only (D136).
+- **Table.** `automation_sessions` (migrations `0026_faulty_agent_zero.sql`, `0027_automation_sessions_rls.sql`)
+  — RLS-scoped like every other table (D2); a partial unique index enforces at most one active
+  (`queued`/`launching`/`filling`/`awaiting_user`) session per user, and a second enforces at most one
+  session per linked `application_id` (D132). `field_audit jsonb` holds the array of `FieldAuditEntry`
+  (never a value, D136); `stopped_before_submit` stays `true` always, since the worker has no path that sets
+  it otherwise.
+- **Routes.** `POST /api/automation-sessions` (create + enqueue), `GET /api/automation-sessions?jobId=`
+  (support + resume-available + latest-10 sessions, polled by the panel), `GET /api/automation-sessions/[id]`
+  (single-session detail), `POST /api/automation-sessions/[id]/cancel`; `POST /api/applications` gained the
+  optional `automationSessionId` field (D135). All under `apps/web/src/app/api/automation-sessions` except
+  the last, which extends the existing Phase 9 route.
+- **UI.** `AutofillPanel` on `/matches/[jobId]` (alongside the Phase 6/7/9 panels): start button (disabled
+  without a resume export or while a session is active), live status text, a flagged/filled/skipped field
+  audit, Cancel, "Record as applied?", and past sessions for the job.
+- **Never-filled categories.** `github`, `website`, `work_authorization`, `eeo` (always flagged when
+  required, skipped when optional; `eeo` keeps reason `intentionally_not_filled`), any unrecognized field
+  (same required/optional split), and anything behind a combobox widget (`role="combobox"`/
+  `aria-autocomplete` — an option can only be chosen by a click, which the worker cannot perform; this is
+  why Greenhouse's yes/no sponsorship question, country and EEO fields are always flagged there). Three
+  canonicals — `sponsorship`, `salary_expectation`, `resume` — are flagged whenever matched but not filled
+  regardless of the field's own `required` attribute (D129).
+- **Released-window model.** On `needs_manual` and `submission_detected` the worker does not close the
+  browser window — it hands it to the user and returns the BullMQ job immediately, so the next queued
+  session is not blocked behind an open window the user hasn't dealt with yet. `ReleasedWindows`
+  (`services/browser-worker/src/browser.ts`) closes each released window at its own deadline (the remaining
+  session timeout), when the user closes it themselves, or on worker shutdown; a separate "active window"
+  slot tracks the one window a session still in progress has open, so shutdown closes that one too instead
+  of leaking its temp profile and attachments (D132). Every other ending (`abandoned`, `failed`) closes the
+  window immediately.
+- **Session ids reserved for this phase's tests.** `00000000-0000-0000-0000-0000000008a1`–`…8a9`,
+  `…8b1`–`…8b5` (global-constraints.md), verified unused repo-wide before use.
