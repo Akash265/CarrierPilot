@@ -39,6 +39,13 @@ describe("CreateApplicationBodySchema", () => {
     expect(CreateApplicationBodySchema.safeParse({ external: { companyName: "  ", jobTitle: "B" } }).success).toBe(false);
     expect(CreateApplicationBodySchema.safeParse({ jobId: JOB, featureSnapshot: {} }).success).toBe(false);
   });
+  it("accepts automationSessionId only together with jobId", () => {
+    const id = "11111111-1111-4111-8111-111111111111";
+    expect(CreateApplicationBodySchema.safeParse({ jobId: id, automationSessionId: id }).success).toBe(true);
+    const external = CreateApplicationBodySchema.safeParse({ external: { companyName: "A", jobTitle: "B" }, automationSessionId: id });
+    expect(external.success).toBe(false);
+    expect(CreateApplicationBodySchema.safeParse({ jobId: id, automationSessionId: "nope" }).success).toBe(false);
+  });
 });
 
 describe("appliedAt bound (not after today, UTC)", () => {

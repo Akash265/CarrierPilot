@@ -75,4 +75,63 @@ describe("createApplication", () => {
     const s = await seedJobWithDocuments(t.adminSql, USER);
     expect(await errorClassOf(createApplication(t.db, "00000000-0000-0000-0000-0000000009a2", { jobId: s.jobId }, NOW))).toBe("job_not_found");
   });
+
+  async function seedSession(jobId: string, status: string, docs: { resumeOptimizationId?: string; coverLetterId?: string } = {}) {
+    const doc = async (kind: "resume" | "cover_letter", sourceId: string | undefined) => {
+      if (!sourceId) return null;
+      const [row] = await t.adminSql`
+        INSERT INTO generated_documents (user_id, job_id, kind, format, resume_optimization_id, cover_letter_id, object_key, byte_size,
+                                         content_hash, renderer_version, download_filename)
+        VALUES (${USER}, ${jobId}, ${kind}, 'pdf', ${kind === "resume" ? sourceId : null}, ${kind === "cover_letter" ? sourceId : null},
+                ${`${USER}/${kind}.pdf`}, 10, ${"h-" + kind}, 'r1', ${kind + ".pdf"})
+        RETURNING id`;
+      return row.id as string;
+    };
+    const terminal = ["submission_detected", "abandoned", "needs_manual", "failed"].includes(status);
+    const [row] = await t.adminSql`
+      INSERT INTO automation_sessions (user_id, job_id, portal, adapter_version, form_url, status, ended_at, resume_document_id, cover_letter_document_id)
+      VALUES (${USER}, ${jobId}, 'greenhouse', 'greenhouse-v1', 'https://job-boards.greenhouse.io/acme/jobs/1', ${status},
+              ${terminal ? NOW.toISOString() : null}::timestamptz, ${await doc("resume", docs.resumeOptimizationId)},
+              ${await doc("cover_letter", docs.coverLetterId)})
+      RETURNING id`;
+    return row.id as string;
+  }
+
+  it("links a detected-submission session and defaults the documents to the files it attached", async () => {
+    const s = await seedJobWithDocuments(t.adminSql, USER);
+    const sessionId = await seedSession(s.jobId, "submission_detected", { resumeOptimizationId: s.resumeId, coverLetterId: s.coverLetterId });
+    const row = await createApplication(t.db, USER, { jobId: s.jobId, automationSessionId: sessionId }, NOW);
+    expect(row).toMatchObject({ resumeOptimizationId: s.resumeId, coverLetterId: s.coverLetterId, applicationPitchId: null });
+    const [session] = await t.adminSql`SELECT application_id FROM automation_sessions WHERE id = ${sessionId}`;
+    expect(session.application_id).toBe(row.id);
+  });
+
+  it("lets explicit body ids win over the session's attachments", async () => {
+    const s = await seedJobWithDocuments(t.adminSql, USER);
+    const sessionId = await seedSession(s.jobId, "abandoned", { resumeOptimizationId: s.resumeId });
+    const row = await createApplication(t.db, USER, { jobId: s.jobId, automationSessionId: sessionId, resumeOptimizationId: null }, NOW);
+    expect(row.resumeOptimizationId).toBeNull();
+  });
+
+  it("rejects a session that is active, already linked, for another job or unknown", async () => {
+    const s = await seedJobWithDocuments(t.adminSql, USER);
+    const active = await seedSession(s.jobId, "awaiting_user");
+    expect(await errorClassOf(createApplication(t.db, USER, { jobId: s.jobId, automationSessionId: active }, NOW))).toBe("session_not_linkable");
+    const other = await seedJobWithDocuments(t.adminSql, USER, { title: "Analytics Engineer" });
+    const otherJobSession = await seedSession(other.jobId, "abandoned");
+    expect(await errorClassOf(createApplication(t.db, USER, { jobId: s.jobId, automationSessionId: otherJobSession }, NOW))).toBe("session_not_linkable");
+    expect(await errorClassOf(createApplication(t.db, USER, { jobId: s.jobId, automationSessionId: "11111111-1111-4111-8111-111111111111" }, NOW))).toBe("session_not_linkable");
+    const done = await seedSession(other.jobId, "submission_detected");
+    await createApplication(t.db, USER, { jobId: other.jobId, automationSessionId: done }, NOW);
+    // Free the job for the "already linked" case (deleting the application SET NULLs `done`'s link).
+    await t.adminSql`DELETE FROM applications WHERE job_id = ${other.jobId}`;
+    const linked = await seedSession(other.jobId, "abandoned");
+    const [app] = await t.adminSql`
+      INSERT INTO applications (user_id, job_id, company_name, job_title, status, status_changed_at, applied_at, feature_snapshot)
+      VALUES (${USER}, null, 'Elsewhere', 'Role', 'applied', now(), current_date, '{}'::jsonb) RETURNING id`;
+    await t.adminSql`UPDATE automation_sessions SET application_id = ${app.id} WHERE id = ${linked}`;
+    expect(await errorClassOf(createApplication(t.db, USER, { jobId: other.jobId, automationSessionId: linked }, NOW))).toBe("session_not_linkable");
+    expect(await t.adminSql`SELECT 1 FROM applications WHERE job_id = ${other.jobId}`).toHaveLength(0);
+    expect(await t.adminSql`SELECT 1 FROM applications WHERE job_id = ${s.jobId}`).toHaveLength(0);
+  });
 });

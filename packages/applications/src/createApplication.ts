@@ -4,9 +4,10 @@ import { ApplicationError } from "./errors";
 import { todayUtc, type CreateApplicationBody } from "./bodies";
 import { buildFeatureSnapshot } from "./snapshot";
 import { loadLinkedDocuments } from "./documentLinks";
+import { lockLinkableSession, withSessionDocuments, type LinkableSession } from "./sessionLink";
 import type { ApplicationRow } from "./types";
 
-const { jobs, jobPostings, jobMatches, applications, applicationEvents } = schema;
+const { jobs, jobPostings, jobMatches, applications, applicationEvents, automationSessions } = schema;
 
 const HTTP_URL_RE = /^https?:\/\//i;
 /** Ingested posting URLs are untrusted (job-source content); only http(s) is safe to store/render as a link. */
@@ -22,6 +23,7 @@ function isUniqueViolation(error: unknown): boolean {
  * Phase 9 design §4.4. Builds the feature snapshot server-side (the client never sends one) and writes
  * the application plus its initial status_change event in one transaction. The partial unique index
  * (user_id, job_id) is the concurrency backstop for "one application per job" -> already_applied.
+ * With automationSessionId (Phase 8), the session is locked, validated and linked in the same transaction.
  */
 export async function createApplication(
   db: DbClient,
@@ -33,6 +35,7 @@ export async function createApplication(
   try {
     return await withUserContext(db, userId, async (tx) => {
       let values: Pick<ApplicationRow, "jobId" | "companyName" | "jobTitle" | "jobUrl" | "featureSnapshot" | "resumeOptimizationId" | "applicationPitchId" | "coverLetterId">;
+      let session: LinkableSession | null = null;
 
       if (body.external) {
         values = {
@@ -49,7 +52,8 @@ export async function createApplication(
         const jobId = body.jobId!;
         const [job] = await tx.select().from(jobs).where(eq(jobs.id, jobId)).limit(1);
         if (!job) throw new ApplicationError("job_not_found");
-        const docs = await loadLinkedDocuments(tx, jobId, body);
+        if (body.automationSessionId) session = await lockLinkableSession(tx, body.automationSessionId, jobId);
+        const docs = await loadLinkedDocuments(tx, jobId, session ? await withSessionDocuments(tx, session, body) : body);
         const [match] = await tx.select().from(jobMatches).where(eq(jobMatches.jobId, jobId)).limit(1);
         const [posting] = await tx
           .select({ url: jobPostings.url })
@@ -91,6 +95,9 @@ export async function createApplication(
       await tx.insert(applicationEvents).values({
         applicationId: row.id, type: "status_change", occurredAt: now, fromStatus: null, toStatus: "applied", detail: {},
       });
+      if (session) {
+        await tx.update(automationSessions).set({ applicationId: row.id, updatedAt: now }).where(eq(automationSessions.id, session.id));
+      }
       return row;
     });
   } catch (error) {
