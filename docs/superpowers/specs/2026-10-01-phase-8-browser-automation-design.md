@@ -215,3 +215,19 @@ CI: the worker integration tests run headless against the Google Chrome preinsta
 - **Employer-specific custom questions** are mostly flagged; time saved is mainly on standard fields and attachments. Accepted for v1.
 - **Bot detection / CAPTCHA** on the hosted forms: the user is in the window and handles it; the worker never solves CAPTCHAs.
 - **Terms of service**: the user submits manually from a normal browser session; no automated submission. LEGAL.md gets a short note.
+
+## 11. Plan-time refinements (2026-10-01)
+
+Found while writing the implementation plan, mostly from inspecting the live Greenhouse and Lever forms:
+
+1. **Greenhouse yes/no questions are combobox widgets** (react-select, `role="combobox"`), not native selects; so are country and the EEO fields. Combobox widgets are never filled (an option needs a click), so on Greenhouse the sponsorship question is always flagged. Lever uses native radios/selects, so sponsorship is filled there.
+2. **Lever's location input is an autocomplete widget** (free text plus a hidden `selectedLocation`): the `lever-v1` adapter flags it (`autocomplete_widget`). Lever has no cover-letter file input (only a free-text "Additional information" box), so no cover letter is attached on Lever.
+3. **Health check = required canonicals:** the form root exists and each of the adapter's required canonical fields (Greenhouse: first name, last name, email, resume; Lever: full name, email, resume) is matched by exactly one field.
+4. **Never-filled fields use one rule:** flagged when required, skipped when optional (EEO keeps reason `intentionally_not_filled`).
+5. **The startup sweep only touches `launching`/`filling`/`awaiting_user`.** A `queued` session waits for the worker; the panel shows a "is the worker running?" hint after 10 s, and Cancel moves it to `abandoned`.
+6. **Released windows.** On `needs_manual` and `submission_detected` the worker leaves the window open, returns the job (so the next session is not blocked behind an open window), and closes that window at the session timeout or on worker shutdown.
+7. **Detection polls** every second (URL + first 5,000 chars of body text across the context's pages) instead of event listeners, and the session timeout, cancel flag and closed-window checks run in the same loop.
+8. **"Record as applied" is one click:** `POST /api/applications {jobId, automationSessionId}` links the documents that were actually attached (generated_documents → resume optimization / cover letter); there is no version picker on this path.
+9. **The snapshot extractor is a plain-JS string** evaluated in the page and unit-tested in jsdom against the sanitized real forms, because tsx's `keepNames` breaks functions passed to `page.evaluate`.
+10. **Attachments live as long as the window.** Chrome reads an `<input type=file>` when the form is submitted, so the downloaded PDFs share a temp root with the throwaway browser profile and are deleted together when the window closes.
+11. **E2E is live, never submitting.** The real app + worker are run headed against one live Greenhouse and one live Lever posting, stopping before Submit (window closed → `abandoned` → "Record as applied"). Confirmation detection is covered by the real-Chrome fixture integration tests, since triggering it live would need a real submission.
