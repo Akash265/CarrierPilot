@@ -944,4 +944,33 @@ No browser console errors and no HTTP responses ≥400 across the run.
 **Alternatives considered:** Rejecting the whole record when its URL has a bad scheme (rejected: the brief and D113 both treat the URL as a nice-to-have field, not identity — a bad URL must not cost an otherwise-valid posting); validating the scheme only at read time in more call sites (rejected: already proven fragile — D113 needed two separate defensive checks precisely because ingestion itself didn't enforce it).
 **What it affects:** `packages/ingestion/src/normalize/normalizeRecord.ts` and its test; `apps/web/src/app/matches/[jobId]/ApplicationPanel.tsx` and its test; `docs/architecture.md` §17; `docs/superpowers/specs/2026-09-30-phase-9-application-tracker-design.md` §11; FLOW.md §6, §12a.
 
+## 2026-10-01 — Containerizing the maintenance worker
+
+### D125. The maintenance worker gets a Dockerfile and an opt-in compose service
+**Decision:**
+- **Image.** `services/maintenance-worker/Dockerfile` builds from the repo root, because the build context must be the pnpm workspace.
+  - Build stage (`node:22-slim`, pnpm 9.15.0 via corepack from the root `packageManager` pin): `pnpm install --frozen-lockfile --filter @ai-career/maintenance-worker...`, then `pnpm --filter @ai-career/maintenance-worker deploy --prod /out`. This copies only this service, its four workspace packages (`applications`, `config`, `db`, `storage`) and their production dependencies.
+  - Runtime stage: a fresh `node:22-slim` running the copy as the non-root `node` user, with `CMD ["node_modules/.bin/tsx", "src/main.ts"]`.
+  - `tsx` moved from the service's `devDependencies` to `dependencies`. The workspace packages ship raw TypeScript with no build step, so `tsx` is this process's runtime, exactly as `pnpm --filter @ai-career/maintenance-worker start` uses it outside Docker. With `--prod` the image is about 417 MB, versus 622 MB with dev dependencies.
+- **Secrets.** A root `.dockerignore` excludes `.env`/`.env.*` (except `.env.example`), every `node_modules`, `.git`, `.claude`, `.superpowers` and build outputs. Configuration comes only from the container environment through `loadEnv`; no `.env` is baked in. The CI step below asserts this.
+- **Compose.** A `maintenance-worker` service in `infra/docker-compose.yml`:
+  - It sits behind the `workers` profile, so the existing `docker compose up -d` still starts only Postgres, Redis and MinIO.
+  - It reads the repo's `.env` (`env_file: ../.env`) and overrides only `DATABASE_URL`/`REDIS_URL`/`MINIO_ENDPOINT` to the compose service names. Those overrides use the same local dev credentials already in this file and in `infra/postgres/init.sql`.
+  - It starts after the three services are healthy, with `restart: unless-stopped`.
+- **CI.** A final step builds the image and runs `tsx --version` in it. It also fails if any `.env` file exists anywhere in the image; CI writes a `.env` into the build context earlier in the job, so this tests the `.dockerignore` for real.
+**Supersedes:** D32's "no Dockerfile or compose service" for this one worker only. `services/job-ingestion`, `services/matching-worker` and the web app are still not containerized.
+**Why:** The retention sweep only runs if the worker is running. A compose service with a restart policy keeps it running without a terminal open. Using an opt-in profile keeps the documented dev flow unchanged.
+**Alternatives considered:**
+- Bundling with esbuild into one JS file: adds a build tool and a second way of running the same code, for no benefit at this scale.
+- Copying the whole installed workspace into the runtime image: much larger, and it ships the web app's sources and dev tooling.
+- Starting the worker by default in plain `up -d`: changes the existing dev workflow and would run deletions for anyone who only wanted the infrastructure.
+- Containerizing all three workers at once: out of scope for this change, though now a straightforward copy of this pattern.
+**Verified locally:**
+- The image contains no `.env`, and the CI-style detector does fire when one is planted.
+- `docker compose --profile workers up -d --build` started the container, which logged `worker_started`. The scheduler's first run completed against the compose Postgres/Redis/MinIO with 0 purged, because the dev database has no applications.
+- The one-off `docker compose ... run --rm maintenance-worker node_modules/.bin/tsx src/runOnce.ts` completed.
+- After a restart, exactly one `retention-daily` scheduler exists in Redis.
+- Plain `up -d` still starts only the three infrastructure services.
+**What it affects:** `services/maintenance-worker/Dockerfile`, `services/maintenance-worker/package.json`, `pnpm-lock.yaml`, `.dockerignore`, `infra/docker-compose.yml`, `.github/workflows/ci.yml`, README (step 9), `docs/architecture.md` §17, FLOW.md §12d.
+
 *Entries are appended chronologically. Do not edit or delete past entries when a decision is later reversed — add a new entry that supersedes it and cross-reference the original.*
