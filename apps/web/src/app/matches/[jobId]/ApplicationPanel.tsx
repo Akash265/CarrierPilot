@@ -4,6 +4,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import Link from "next/link";
 import { STATUS_LABELS } from "../../../lib/applications/statusLabels";
 import { DOCUMENTS_CHANGED_EVENT } from "./DownloadButtons";
+import { APPLICATION_RECORDED_EVENT } from "./AutofillPanel";
 
 interface DocumentOption {
   id: string;
@@ -56,7 +57,8 @@ export function ApplicationPanel({ jobId }: { jobId: string }) {
   const [error, setError] = useState<string | null>(null);
 
   // Options are re-fetched on mount, when a document is generated/edited/exported on this page
-  // (DOCUMENTS_CHANGED_EVENT) and when the window regains focus, so the defaults track the newest versions.
+  // (DOCUMENTS_CHANGED_EVENT), when an autofill session is recorded as applied (APPLICATION_RECORDED_EVENT,
+  // Phase 8) and when the window regains focus, so the defaults track the newest versions.
   useEffect(() => {
     let ignore = false;
     const load = () =>
@@ -70,10 +72,12 @@ export function ApplicationPanel({ jobId }: { jobId: string }) {
         });
     load();
     window.addEventListener(DOCUMENTS_CHANGED_EVENT, load);
+    window.addEventListener(APPLICATION_RECORDED_EVENT, load);
     window.addEventListener("focus", load);
     return () => {
       ignore = true;
       window.removeEventListener(DOCUMENTS_CHANGED_EVENT, load);
+      window.removeEventListener(APPLICATION_RECORDED_EVENT, load);
       window.removeEventListener("focus", load);
     };
   }, [jobId]);

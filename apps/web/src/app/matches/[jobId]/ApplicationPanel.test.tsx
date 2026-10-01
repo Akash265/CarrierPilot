@@ -1,8 +1,9 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor, act } from "@testing-library/react";
 import { ApplicationPanel } from "./ApplicationPanel";
 import { DOCUMENTS_CHANGED_EVENT } from "./DownloadButtons";
+import { APPLICATION_RECORDED_EVENT } from "./AutofillPanel";
 
 beforeEach(() => vi.unstubAllGlobals());
 
@@ -129,5 +130,17 @@ describe("ApplicationPanel", () => {
     expect(await screen.findByText(/applied on 2026-09-30/i)).toBeInTheDocument();
     const [, init] = fetchMock.mock.calls.find(([, i]) => i?.method === "POST")!;
     expect(JSON.parse(init!.body as string)).toMatchObject({ resumeOptimizationId: null, applicationPitchId: "p1" });
+  });
+
+  it("reloads when an autofill session is recorded as applied", async () => {
+    const fetchMock = vi.fn(() => json({ application: null, documentOptions: options }));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<ApplicationPanel jobId="j1" />);
+    await screen.findByRole("button", { name: "Mark as applied" });
+    const before = fetchMock.mock.calls.length;
+    act(() => {
+      window.dispatchEvent(new Event(APPLICATION_RECORDED_EVENT));
+    });
+    await waitFor(() => expect(fetchMock.mock.calls.length).toBeGreaterThan(before));
   });
 });
