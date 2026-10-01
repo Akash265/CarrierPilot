@@ -63,9 +63,14 @@ export class ReleasedWindows {
   private readonly timers = new Map<BrowserHandle, NodeJS.Timeout>();
 
   release(handle: BrowserHandle, ms: number): void {
+    const alreadyTracked = this.timers.has(handle);
+    const existing = this.timers.get(handle);
+    if (existing) clearTimeout(existing);
     const timer = setTimeout(() => void this.closeOne(handle), Math.max(0, ms));
     this.timers.set(handle, timer);
-    handle.context.on("close", () => void this.closeOne(handle));
+    // Register the close listener only the first time: a second release() for the same handle must
+    // replace the deadline, not add another listener that would double-invoke closeOne.
+    if (!alreadyTracked) handle.context.on("close", () => void this.closeOne(handle));
   }
 
   private async closeOne(handle: BrowserHandle): Promise<void> {
