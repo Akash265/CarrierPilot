@@ -41,13 +41,47 @@ describe("ApplicationPanel", () => {
     expect(screen.queryByRole("button", { name: /mark as applied/i })).not.toBeInTheDocument();
   });
 
-  it("shows the server's error message when creation fails", async () => {
+  it("shows the server's error message when creation fails and the reload still finds no application", async () => {
+    // Every GET (mount-time load and the post-409 reload) returns no application, so the error must stick.
     vi.stubGlobal("fetch", vi.fn((_u: string, init?: RequestInit) =>
       init?.method === "POST" ? json({ error: "You already have an application for this job" }, false, 409) : json({ application: null, documentOptions: options })
     ));
     render(<ApplicationPanel jobId="j1" />);
     fireEvent.click(await screen.findByRole("button", { name: /mark as applied/i }));
     await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent(/already have an application/i));
+    expect(screen.queryByRole("link", { name: /open in tracker/i })).not.toBeInTheDocument();
+  });
+
+  it("shows the server's error message when creation fails and the reload itself fails", async () => {
+    let gets = 0;
+    vi.stubGlobal("fetch", vi.fn((_u: string, init?: RequestInit) => {
+      if (init?.method === "POST") return json({ error: "You already have an application for this job" }, false, 409);
+      gets += 1;
+      // GET #1 (mount) and #2 (submit's pre-POST re-fetch) succeed with no application;
+      // GET #3, the reload triggered by the 409, fails.
+      return gets <= 2 ? json({ application: null, documentOptions: options }) : Promise.reject(new Error("network error"));
+    }));
+    render(<ApplicationPanel jobId="j1" />);
+    fireEvent.click(await screen.findByRole("button", { name: /mark as applied/i }));
+    await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent(/already have an application/i));
+  });
+
+  it("switches to the applied state when a 409 means another tab already recorded the application", async () => {
+    let gets = 0;
+    vi.stubGlobal("fetch", vi.fn((_u: string, init?: RequestInit) => {
+      if (init?.method === "POST") return json({ error: "You already have an application for this job" }, false, 409);
+      gets += 1;
+      // GET #1 (mount) and #2 (submit's pre-POST re-fetch) find nothing yet; GET #3, the reload
+      // triggered by the 409, finds the application that the other tab recorded in the meantime.
+      return gets <= 2
+        ? json({ application: null, documentOptions: options })
+        : json({ application: { id: "a1", status: "applied", appliedAt: "2026-09-30" }, documentOptions: options });
+    }));
+    render(<ApplicationPanel jobId="j1" />);
+    fireEvent.click(await screen.findByRole("button", { name: /mark as applied/i }));
+    expect(await screen.findByText(/applied on 2026-09-30/i)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /open in tracker/i })).toHaveAttribute("href", "/applications/a1");
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
   it("submits the newest versions from a fresh fetch, not the stale mount-time options", async () => {

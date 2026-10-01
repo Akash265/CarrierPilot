@@ -106,6 +106,20 @@ export function ApplicationPanel({ jobId }: { jobId: string }) {
       });
       const body = await res.json().catch(() => ({}));
       if (!res.ok) {
+        // 409 means another tab (or request) already recorded the application: reload and switch to
+        // the applied state instead of just showing the error. If the reload fails or still finds
+        // nothing, fall through and show the server's error message.
+        if (res.status === 409) {
+          try {
+            const after = await fetchForJob(jobId);
+            if (after.application) {
+              setState({ kind: "ready", data: after });
+              return;
+            }
+          } catch {
+            // reload failed; fall through to show the server's error message
+          }
+        }
         setError(typeof body.error === "string" ? body.error : "Could not record the application.");
         return;
       }
