@@ -1,7 +1,7 @@
 # Phase 9 — Application Tracker: Design
 
 Date: 2026-09-30
-Status: Approved in brainstorming (sections 1–3), pending written-spec review
+Status: Implemented, merged and pushed to main on 2026-10-01 (merge `eb53746`; follow-ups through `1ac340e`). Approved in brainstorming (sections 1–3) and as a written spec on 2026-09-30. §11 records what changed during implementation.
 Spec sources: project spec §14 (Application Tracker & Feedback Loop), §16 (Rejection & Re-optimization Loop), §19 (tables), §21 (Phase 9); architecture.md §9 (retention).
 
 ## 1. Scope
@@ -235,7 +235,7 @@ TDD per CLAUDE.md §10.
 
 ## 11. Post-implementation notes
 
-Deviations and gaps found while building this design, in implementation order (see DECISIONS.md D112–D121
+Deviations and gaps found while building this design, in implementation order (see DECISIONS.md D112–D126
 for the full rationale of each):
 
 - **§4.1 `terminal_at`.** Confirmed exactly as designed: it is set to *now*, never the user-supplied,
@@ -273,3 +273,14 @@ for the full rationale of each):
   once `drizzle(adminSql)` has wrapped it: Drizzle's postgres-js driver (`drizzle-orm/postgres-js/driver.js`)
   replaces the shared client's date/timestamp parsers and serializers with pass-throughs. (`migrate()` is not
   the cause.) Tests that backdate a timestamp pass an ISO string with an explicit `::timestamptz` cast instead.
+- **"Already applied" (409) on Mark as applied (D124).** If the create call returns 409 (e.g. another tab
+  recorded the application first), the panel reloads and switches to the existing application's
+  "Applied on … · Open in tracker" view instead of only showing the error.
+- **§8 maintenance worker containerized (D125, D126; supersedes §8's "No Dockerfile is added").**
+  `services/maintenance-worker/Dockerfile` (repo-root context, `pnpm deploy --prod`, non-root, `tsx`
+  runtime, base image from `public.ecr.aws/docker/library/node:22-slim`), a root `.dockerignore`, and an
+  opt-in `maintenance-worker` compose service behind the `workers` profile. CI builds the image (with up
+  to 3 retries) and fails if any `.env` is baked in. The other workers and the web app remain
+  uncontainerized.
+- **Real-browser E2E (D122).** The full flow, including a real retention purge against MinIO, was run in
+  Chrome against the production build before merge.
