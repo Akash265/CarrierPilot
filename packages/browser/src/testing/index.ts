@@ -1,1 +1,1 @@
-// Testing utilities placeholder for later phases
+export { snapshotFromHtml, readFixture } from "./snapshotFromHtml";

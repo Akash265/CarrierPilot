@@ -7,3 +7,4 @@ export {
 } from "./adapters";
 export { resolveAutofillTarget, type PostingRef, type AutofillTarget, type UnsupportedReason } from "./adapters/resolveAutofillTarget";
 export { detectSubmission } from "./detect/detectSubmission";
+export { EXTRACT_SNAPSHOT_SOURCE } from "./snapshot/extractSnapshotSource";
