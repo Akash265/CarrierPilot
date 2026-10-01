@@ -8,3 +8,6 @@ export {
 export { resolveAutofillTarget, type PostingRef, type AutofillTarget, type UnsupportedReason } from "./adapters/resolveAutofillTarget";
 export { detectSubmission } from "./detect/detectSubmission";
 export { EXTRACT_SNAPSHOT_SOURCE } from "./snapshot/extractSnapshotSource";
+export { buildAutofillValues, type AutofillInput } from "./values/buildAutofillValues";
+export { classifyField, type Classification } from "./plan/classifyField";
+export { buildFillPlan } from "./plan/buildFillPlan";
