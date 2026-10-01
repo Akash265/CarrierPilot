@@ -9,6 +9,9 @@ const TEXT_CONTROLS = new Set<SnapshotControl>(["text", "email", "tel", "url", "
 const YES = /^yes\b/i;
 const NO = /^no\b/i;
 
+const isAlwaysFlag = (c: string): c is "sponsorship" | "salary_expectation" | "resume" =>
+  c === "sponsorship" || c === "salary_expectation" || c === "resume";
+
 function toAction(field: SnapshotField, value: AutofillValue): FillAction | { reason: string } {
   if (value.kind === "text") {
     return TEXT_CONTROLS.has(field.control)
@@ -52,7 +55,10 @@ export function buildFillPlan(snapshot: FormSnapshot, adapter: PortalAdapter, va
     const canonical = cls?.canonical ?? null;
     const entry = (action: FieldAuditEntry["action"], reason: string | null, valueSource: string | null = null) =>
       audit.push({ key: field.key, label: field.label, required: field.required, canonical, action, reason, valueSource, verified: null });
-    const notFilled = (reason: string) => entry(field.required ? "flagged" : "skipped", reason);
+    const notFilled = (reason: string) => {
+      const shouldAlwaysFlag = canonical !== null && isAlwaysFlag(canonical);
+      entry(shouldAlwaysFlag || field.required ? "flagged" : "skipped", reason);
+    };
 
     if (!healthy) { entry("skipped", "health_check_failed"); continue; }
     if (!cls) { notFilled("unrecognized"); continue; }

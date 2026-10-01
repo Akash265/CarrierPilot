@@ -116,4 +116,32 @@ describe("buildFillPlan rules", () => {
       expect(serialized).not.toContain(secret);
     }
   });
+
+  it("always flags unfilled sponsorship questions even when optional", () => {
+    const noGoal = buildAutofillValues({ ...INPUT, goal: null });
+    const sponsorshipRadio = f({ key: "f_sp", control: "radio_group", required: false, label: "Will you require sponsorship?", options: [
+      { key: "f_sp_y", label: "Yes", value: "1" }, { key: "f_sp_n", label: "No", value: "0" },
+    ] });
+    const plan = buildFillPlan(snap([...healthyGh, sponsorshipRadio]), greenhouseV1, noGoal);
+    expect(plan.audit.find((a) => a.key === "f_sp")).toMatchObject({ canonical: "sponsorship", action: "flagged", reason: "no_value" });
+  });
+
+  it("always flags unfilled salary_expectation questions even when optional", () => {
+    const noSalary = buildAutofillValues({ ...INPUT, goal: null });
+    const salaryText = f({ key: "f_sal", control: "text", required: false, label: "What are your salary expectations?" });
+    const plan = buildFillPlan(snap([...healthyGh, salaryText]), greenhouseV1, noSalary);
+    expect(plan.audit.find((a) => a.key === "f_sal")).toMatchObject({ canonical: "salary_expectation", action: "flagged", reason: "no_value" });
+  });
+
+  it("always flags salary_expectation with unsupported control even when optional", () => {
+    const salaryCombo = f({ key: "f_sal_combo", control: "combobox", required: false, label: "What are your salary expectations?" });
+    const plan = buildFillPlan(snap([...healthyGh, salaryCombo]), greenhouseV1, values);
+    expect(plan.audit.find((a) => a.key === "f_sal_combo")).toMatchObject({ canonical: "salary_expectation", action: "flagged", reason: "unsupported_control" });
+  });
+
+  it("still skips optional unrecognized fields", () => {
+    const unknown = f({ key: "f_unknown", control: "text", required: false, label: "Some random question" });
+    const plan = buildFillPlan(snap([...healthyGh, unknown]), greenhouseV1, values);
+    expect(plan.audit.find((a) => a.key === "f_unknown")).toMatchObject({ action: "skipped", reason: "unrecognized" });
+  });
 });
