@@ -41,6 +41,12 @@ function nonEmpty(value: string | null | undefined): string | null {
   return v ? v : null;
 }
 
+const HTTP_URL_RE = /^https?:\/\//i;
+/** Posting URLs are untrusted third-party data; only http(s) is safe to store (closes D113's known gap). */
+function safeHttpUrl(url: string | null): string | null {
+  return url && HTTP_URL_RE.test(url) ? url : null;
+}
+
 /** Longest stored identity string. Their keys are btree-indexed, and Postgres rejects an index row over ~2.7KB. */
 const MAX_IDENTITY_CHARS = 500;
 /**
@@ -71,7 +77,7 @@ function assemble(input: Common): NormalizedJob {
   const salaryText = c.salaryHint ? `Salary: ${c.salaryHint}\n${c.descriptionText}` : c.descriptionText;
   const job: NormalizedJob = {
     externalId: c.externalId,
-    url: c.url,
+    url: safeHttpUrl(c.url),
     companyName: c.companyName,
     companyKey: companyKeyValue,
     title: c.title,

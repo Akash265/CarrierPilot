@@ -327,6 +327,65 @@ describe("normalizeRecord — text the normalizer itself makes unstorable", () =
   });
 });
 
+describe("normalizeRecord — non-http(s) posting URLs are dropped at normalization", () => {
+  it("nulls a javascript: URL for greenhouse and otherwise normalizes as before", () => {
+    const job = normalizeRecord(greenhouse, {
+      externalId: "1",
+      payload: { ...greenhouseJobFixture, absolute_url: "javascript:alert(1)" },
+    });
+    expect(job.url).toBeNull();
+    expect(job.title).toBe("AI Engineer");
+    expect(job.companyName).toBe("GitLab");
+  });
+
+  it("nulls a javascript: URL for lever and otherwise normalizes as before", () => {
+    const job = normalizeRecord(lever, {
+      externalId: leverPostingFixture.id,
+      payload: { ...leverPostingFixture, hostedUrl: "javascript:alert(1)" },
+    });
+    expect(job.url).toBeNull();
+    expect(job.title).toBe("Senior Data Engineer");
+  });
+
+  it("nulls a javascript: URL for upload and otherwise normalizes as before", () => {
+    const job = normalizeRecord(upload, {
+      externalId: "u1",
+      payload: { title: "Data Engineer", company: "Acme GmbH", url: "javascript:alert(1)" },
+    });
+    expect(job.url).toBeNull();
+    expect(job.companyName).toBe("Acme GmbH");
+  });
+
+  it("keeps an https:// URL unchanged", () => {
+    const job = normalizeRecord(upload, {
+      externalId: "u2",
+      payload: { title: "Engineer", company: "Acme", url: "https://acme.example/jobs/2" },
+    });
+    expect(job.url).toBe("https://acme.example/jobs/2");
+  });
+
+  it("keeps an HTTP:// URL unchanged (case-insensitive scheme match)", () => {
+    const job = normalizeRecord(upload, {
+      externalId: "u3",
+      payload: { title: "Engineer", company: "Acme", url: "HTTP://acme.example/jobs/3" },
+    });
+    expect(job.url).toBe("HTTP://acme.example/jobs/3");
+  });
+
+  it("nulls a data: URL and an ftp: URL", () => {
+    const dataJob = normalizeRecord(upload, {
+      externalId: "u4",
+      payload: { title: "Engineer", company: "Acme", url: "data:text/html,<script>1</script>" },
+    });
+    expect(dataJob.url).toBeNull();
+    const ftpJob = normalizeRecord(upload, {
+      externalId: "u5",
+      payload: { title: "Engineer", company: "Acme", url: "ftp://acme.example/jobs/5" },
+    });
+    expect(ftpJob.url).toBeNull();
+  });
+});
+
 describe("normalizeRecord — unparseable upload salary", () => {
   it.each(["competitive", "DOE", "negotiable"])("invents no figure for salary cell %j", (salary) => {
     const job = normalizeRecord(upload, { externalId: "1", payload: { title: "Engineer", company: "Acme", salary } });
