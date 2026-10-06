@@ -49,7 +49,7 @@ Out of scope (deferred):
 | `field_audit` | jsonb not null default `[]` | array of `FieldAuditEntry` (§4.5); CHECK `jsonb_typeof = 'array'` |
 | `stopped_before_submit` | boolean not null default true | spec §19 field; the worker has no submit path, so it stays true |
 | `cancel_requested_at` | timestamptz null | set by the cancel route, polled by the worker |
-| `error_code` | text null | set only with `failed` / `needs_manual` |
+| `error_code` | text null | set with `failed` / `needs_manual`, and also with `abandoned` (`cancelled`, `timeout`, `window_closed`) |
 | `submission_detected_at` | timestamptz null | |
 | `started_at` | timestamptz null | when the worker picked the job up |
 | `ended_at` | timestamptz null | set on every terminal status |

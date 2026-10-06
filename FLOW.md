@@ -1243,28 +1243,52 @@ Each job -> `runSession` (`services/browser-worker/src/runSession.ts`, design §
      `chromium.launchPersistentContext(rootDir/profile, ...)`; failure -> `failed`/`browser_launch_failed`,
      `rootDir` removed. On success `deps.released.setActive(handle)` marks the window as the one in-progress
      window shutdown must also close (D132).
-  6. `transitionSession(..., ["launching"], "filling")` -> `page.goto(formUrl)` -> `hostAllowed(page.url())`
-     again (redirect check) -> `page.waitForSelector(adapter.snapshotConfig.formSelector)`.
-  7. `takeSnapshot(page, adapter)` (`services/browser-worker/src/snapshot.ts`) evaluates
+  6. `isCancelRequested` -> a cancel that landed between claiming the row and getting a window open still
+     wins here, before the row ever reaches `filling` -> `abandoned`/`cancelled` (window closed, not
+     released: the user never saw it).
+  7. `transitionSession(..., ["launching"], "filling")` -> `page.goto(formUrl)` -> `hostAllowed(page.url())`
+     again (redirect check #1: the navigation itself landed off-host) -> `page.waitForSelector(adapter.snapshotConfig.formSelector)`
+     -> `hostAllowed(page.url())` a third time (redirect check #2, D138: a client-side redirect that fires
+     after the form has loaded but before anything is read from the page) -- either failure ->
+     `needs_manual`/`off_host_redirect` through `releaseUnlessCancelled` (13b step 14), nothing filled.
+  8. `takeSnapshot(page, adapter)` (`services/browser-worker/src/snapshot.ts`) evaluates
      `EXTRACT_SNAPSHOT_SOURCE` (`packages/browser/src/snapshot/extractSnapshotSource.ts`, D131) as a string
-     expression in the page, returning a `FormSnapshot`.
-  8. `buildAutofillValues` (`packages/browser/src/values/buildAutofillValues.ts`, design §4.3) turns
+     expression in the page, then pipes the page's return value through `sanitizeSnapshot`
+     (`packages/browser/src/snapshot/sanitizeSnapshot.ts`, D138) -- the page's own JS is untrusted content, so
+     every field is hand-checked (string types, the worker's own `[fg]\d+` key pattern, a known control, a
+     500-field/200-option cap, labels re-truncated to 200 chars) before anything downstream touches it; a
+     shape that doesn't check out returns `null`, which `runSession` treats the same as a failed health
+     check -- `needs_manual`/`health_check_failed`, empty audit.
+  9. `buildAutofillValues` (`packages/browser/src/values/buildAutofillValues.ts`, design §4.3) turns
      profile + goal + attachment-availability into `AutofillValues`, each carrying a `source` label.
-  9. `buildFillPlan(snapshot, adapter, values)` (`packages/browser/src/plan/buildFillPlan.ts`, design §4.4) ->
-     `classifyField` per field (`packages/browser/src/plan/classifyField.ts`, D129) -> health check (every
-     `adapter.requiredCanonicals` matched by exactly one field, else `needs_manual`/`health_check_failed`,
-     nothing filled) -> one `FillAction` + one `FieldAuditEntry` per field.
-  10. Per action: `performAction` then `verifyAction` (`services/browser-worker/src/actions.ts`, D130) --
-      `assertTarget` guards every mutation against anything but the expected control kind; a verify mismatch
-      flips the audit entry to `flagged`/`verify_mismatch`; a thrown `GuardViolation`/other error flips it to
-      `flagged`/`guard_blocked`/`fill_error` and the loop continues with the next action. Cancel is checked
-      before each action.
-  11. `transitionSession(..., ["filling"], "awaiting_user", {fieldAudit, resumeDocumentId, coverLetterDocumentId})`.
-  12. Polling loop (1 s, `pollMs`): `handle.isClosed()` -> `abandoned`/`window_closed`; elapsed >= timeout ->
+  10. `buildFillPlan(snapshot, adapter, values)` (`packages/browser/src/plan/buildFillPlan.ts`, design §4.4) ->
+      `classifyField` per field (`packages/browser/src/plan/classifyField.ts`, D129, D138) -> health check
+      (every `adapter.requiredCanonicals` matched by exactly one field, else
+      `needs_manual`/`health_check_failed`, nothing filled) -> one `FillAction` + one `FieldAuditEntry` per
+      field. `classifyField`'s shared sponsorship rule now also checks the label for a polarity marker
+      (`without`/`not`/`no longer`/`unable`/`n't`, D138) and, if found, flags the field `ambiguous_wording`
+      instead of classifying it for a plain Yes/No fill -- `buildFillPlan`'s existing always-flag rule for
+      `sponsorship` (D129) then flags it regardless of `required`. The shared `linkedin` label rule also now
+      excludes a "how did you hear about us" / referral-source question (D138).
+  11. Per action: a fourth `hostAllowed(page.url())` check, immediately before `performAction` (D138: the
+      redirect could land strictly mid-loop, between two actions) -- failure -> `needs_manual`/
+      `off_host_redirect` through `releaseUnlessCancelled`, with the audit discarded (`fieldAudit: []`) since
+      a page that has already navigated away is not the one any of this audit's `filled` entries describes.
+      Otherwise: `performAction` then `verifyAction` (`services/browser-worker/src/actions.ts`, D130, D138) --
+      `assertTarget` guards every mutation against anything but the expected control kind (now itself under
+      the same 5 s `ACTION_TIMEOUT_MS` as the mutation/read-back that follows it, D138, so a target that goes
+      missing mid-navigation fails this check fast instead of hanging on Playwright's 30 s default); a verify
+      mismatch flips the audit entry to `flagged`/`verify_mismatch`; a thrown `GuardViolation`/other error
+      flips it to `flagged`/`guard_blocked`/`fill_error` and the loop continues with the next action. Cancel
+      is checked before each action, ahead of the host check.
+  12. `transitionSession(..., ["filling"], "awaiting_user", {fieldAudit, resumeDocumentId, coverLetterDocumentId})`.
+  13. Polling loop (1 s, `pollMs`): `handle.isClosed()` -> `abandoned`/`window_closed`; elapsed >= timeout ->
       `abandoned`/`timeout`; every other tick, `isCancelRequested` -> `abandoned`/`cancelled`; for each open
       page, `readPageText` (`snapshot.ts`) + `detectSubmission(adapter, {url, text, formUrl})`
-      (`packages/browser/src/detect/detectSubmission.ts`, D134) -> `submission_detected`.
-  13. End: on `needs_manual`/`submission_detected` the window is released (`deps.released.release(handle, ms)`,
+      (`packages/browser/src/detect/detectSubmission.ts`, D134) -> `submission_detected`. (No host re-check
+      here: `detectSubmission` already restricts to the form's own host, D134, and a page the user is
+      actively looking at is left alone rather than second-guessed.)
+  14. End: on `needs_manual`/`submission_detected` the window is released (`deps.released.release(handle, ms)`,
       D132) instead of closed, unless a cancel landed in between (`releaseUnlessCancelled` re-checks and ends
       `abandoned` instead); every other ending closes the window and its `rootDir` immediately. An uncaught
       error anywhere in the try block -> `failSession(..., "unexpected_error")` then rethrows, so BullMQ marks
@@ -1283,7 +1307,7 @@ running?" hint once a `queued` session has waited over 10 s.
 (`apps/web/src/app/api/automation-sessions/[id]/cancel/route.ts`, new) -> `requestCancel`
 (`packages/browser/src/sessions/transitions.ts`, D133): locks the row `FOR UPDATE`; `queued` -> `abandoned`
 directly in the same transaction; any other active status -> sets `cancel_requested_at` only, which
-`runSession`'s poll loop (13b step 12) and its per-action check (13b step 10) pick up; terminal ->
+`runSession`'s poll loop (13b step 13) and its per-action check (13b step 11) pick up; terminal ->
 `not_cancellable` -> 409.
 
 `GET /api/automation-sessions/[id]` (`[id]/route.ts`) -> `getSession` -- single-session detail, used for
@@ -1307,7 +1331,17 @@ has no application yet) -> `POST /api/applications {jobId, automationSessionId}`
      `UPDATE automation_sessions SET application_id = {row.id}` -- all in the one transaction.
   -> Route returns 201; `AutofillPanel.record` dispatches `window.dispatchEvent(new
      Event(APPLICATION_RECORDED_EVENT))` ("application:recorded") so `ApplicationPanel` (12a) reloads and
-     switches to its "Applied on ..." view without a page refresh.
+     switches to its "Applied on ..." view without a page refresh. `AutofillPanel`'s own "Did you submit
+     anyway? Record as applied" prompt (the `abandoned` case) only renders when `latest.startedAt` is non-null
+     (D138): a session cancelled while still `queued` is `abandoned` with no `startedAt`, since the worker
+     never claimed it and no browser window was ever opened for the user to have submitted from.
+  -> The same event now also flows the other way (D138): `ApplicationPanel.submit`'s own successful "Mark as
+     applied" (the ordinary document-picker path, not the autofill one) dispatches
+     `APPLICATION_RECORDED_EVENT` too, and `AutofillPanel` now also listens for it and reloads its overview --
+     so its Record button disappears (an application now exists for the job) instead of staying up and 409ing
+     if clicked. `ApplicationPanel` guards its own listener (`justRecordedRef`) against redoing the fetch its
+     own dispatch would otherwise immediately retrigger, since the POST response it just got is already the
+     answer.
 
 ### Changing Phase 8 behavior
 
@@ -1326,9 +1360,18 @@ has no application yet) -> `POST /api/applications {jobId, automationSessionId}`
   always-flag-regardless-of-required exceptions (D129) are encoded.
 - **`services/browser-worker/src/actions.ts` is the only module allowed to call a Playwright locator mutation
   method.** Any new action kind must be added to `FillAction` (`packages/browser/src/types.ts`), given a
-  guarded case in `performAction`/`verifyAction`, and must keep `noClick.test.ts` (D130) passing -- it scans
-  every non-test file in `services/browser-worker/src` for click/press/submit/keyboard/dispatchEvent calls
-  and fails the build if any exist outside this invariant.
+  guarded case in `performAction`/`verifyAction` -- pass an explicit `{ timeout: ACTION_TIMEOUT_MS }` on every
+  Playwright call in that case, including `assertTarget`'s own `locator.evaluate` (D138): without one,
+  Playwright's 30 s default timeout applies, which would let a single stale/detached target stall the whole
+  session instead of failing fast into the next loop iteration's host check -- and must keep `noClick.test.ts`
+  (D130, D138) passing -- it scans every non-test file in `services/browser-worker/src`, plus
+  `packages/browser/src/snapshot/extractSnapshotSource.ts` (the other code that runs inside the application
+  page), for click/press/submit/keyboard/dispatchEvent calls and fails the build if any exist outside this
+  invariant.
+- **The page's own form snapshot is untrusted input.** Anything the in-page extractor could be made to
+  return goes through `sanitizeSnapshot` (`packages/browser/src/snapshot/sanitizeSnapshot.ts`, D138) before
+  `classifyField`/`buildFillPlan` ever see it; a new `SnapshotControl` or a change to the snapshot shape must
+  be reflected there too, or the new shape is silently dropped (fields) or rejected outright (top-level).
 
 In Docker (D125): `docker compose -f infra/docker-compose.yml --profile workers up -d --build` builds
 `services/maintenance-worker/Dockerfile` (repo-root context) and starts the `maintenance-worker` service,

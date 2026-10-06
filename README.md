@@ -74,9 +74,15 @@ rationale behind each architectural choice.
       form in Chrome, fills your name, email, phone, LinkedIn, location,
       attaches your exported resume (and cover letter, on Greenhouse), and
       — only where the question is a plain yes/no, never a dropdown/combobox
-      widget — visa sponsorship and expected salary. GitHub/portfolio links,
-      work authorization, EEO/demographic questions and anything it doesn't
+      widget or worded with a "without"/"not"/"don't"-style negation — visa
+      sponsorship and expected salary. GitHub/portfolio links, work
+      authorization, EEO/demographic questions and anything it doesn't
       recognize are left for you, shown in the panel's field audit.
+    - The resume and cover letter are uploaded under fixed file names
+      (`resume.pdf`, `cover_letter.pdf`) regardless of what you named them or
+      how CareerPilot stores them internally — that's the file name the
+      employer sees attached, and it's also why your own file name or any
+      other local text never reaches the page.
     - **You always click Submit yourself.** The worker has no code path
       that can click, press a key, or submit a form — this is enforced by a
       test that scans the worker's source for exactly those calls, not just
