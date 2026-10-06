@@ -99,7 +99,7 @@ The family label is the target role's text as the user wrote it. The same role w
 | Match score | snapshot `match.overallScore` (0–100), only when `match.eligible` | <50, 50–69, 70–84, 85+ |
 | ATS score | snapshot `ats.overallScore` (0–100) | <50, 50–69, 70–84, 85+ |
 | Required keyword coverage | snapshot `ats.requiredKeywordCoverage` (0–1) | <50%, 50–79%, 80%+ |
-| Posting age at apply | snapshot `job.postingAgeDays` | 0–2, 3–7, 8–30, 30+ days |
+| Posting age at apply | snapshot `job.postingAgeDays` | 0–2, 3–7, 8–30, 31+ days |
 | Optimized resume sent | snapshot `documents.resume` | yes / no |
 | Pitch sent | snapshot `documents.pitch` | yes / no |
 | Cover letter sent | snapshot `documents.coverLetter` | yes / no |
@@ -126,7 +126,7 @@ For each dimension: an ordered list of buckets `{ key, label, decided, positives
 
 - Below `minBucket` decided: `rate`, `interval` and `standsOut` are `null` ("not enough data").
 - `standsOut`: `"higher"` if the bucket's interval low is above the tier's overall rate; `"lower"` if its interval high is below it; else `null`. Only when both the bucket and the headline have rates.
-- Ordering: fixed band order for banded dimensions; by decided count (desc) then label for role family, company and country. Company and country show at most 15 buckets; the rest are summed into one "Others" bucket that is never flagged.
+- Ordering: fixed band order for banded dimensions; by decided count (desc), then total applications (desc), then label for role family, company and country. Company and country show at most 15 buckets; the rest are summed into one "Others" bucket that is never flagged.
 
 ### 5.4 Rejection patterns (spec §16)
 
@@ -221,3 +221,10 @@ CI needs no change (both have defaults).
 - **The 30-day rule mislabels slow employers.** A late response after day 30 flips the label back to positive automatically (labels are computed on read).
 - **Role family depends on goal wording.** Renaming a target role between goal versions splits a family; the case/space-insensitive merge only covers cosmetic differences.
 - **Missed terms use current requirements.** If a job's description changed between optimization and apply, the recorded terms follow the new description. Rare in practice.
+
+## 13. Post-implementation notes
+
+- Posting-age bands end at "31+ days" (the original "30+" overlapped "8–30").
+- The UI's "How this is calculated" list words the caveat as "Some differences appear by chance; flags mark things worth a look, not conclusions." so the exact caveat sentence appears once, above the tables.
+- Breakdown ordering for role family, company and country breaks decided-count ties by total applications before the label (D144).
+- Decisions: D140–D144 (design), D145 (verification).

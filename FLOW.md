@@ -1385,3 +1385,40 @@ whose `CMD` is `tsx src/main.ts` -- the same entry point as above, with config f
 (`env_file`) and `DATABASE_URL`/`REDIS_URL`/`MINIO_ENDPOINT` overridden to the compose service names. The
 one-off sweep is `docker compose ... --profile workers run --rm maintenance-worker node_modules/.bin/tsx
 src/runOnce.ts`.
+
+---
+
+## 14. Phase 10a — Outcome Analytics
+
+### 14a. Reading insights (request-driven)
+
+```
+GET /api/insights            apps/web/src/app/api/insights/route.ts
+ ├─ loadEnv(); createDbClient(env)                    (closed in finally)
+ ├─ loadInsightInputs(db, DEFAULT_USER_ID)            packages/insights/src/load/loadInsightInputs.ts
+ │    one withUserContext transaction, repeatable read:
+ │    applications (id, job_id, company, title, status, applied_at, created_at, feature_snapshot -- no notes/recruiter/salary notes/url)
+ │    application_events of type status_change | recruiter_contact | interview (no detail)
+ │    confirmed career_goals ⋈ career_goal_constraints (target roles, salary floor)
+ ├─ buildOutcomeDataset(inputs, { now, undecidedDays: OUTCOME_UNDECIDED_DAYS })   dataset/buildOutcomeDataset.ts
+ │    per application, most recently applied first:
+ │    parseSnapshot (tolerant v1/v2) → labelOutcome (two tiers, D141) → pickGoal + roleFamilyKey (D142)
+ │    → salaryVsFloor → OutcomeRecord
+ ├─ computeInsights(records, { minBucket: INSIGHTS_MIN_BUCKET })                   stats/computeInsights.ts
+ │    headlines per tier → 13 DIMENSIONS breakdowns per tier (Wilson intervals, standsOut, Others cap)
+ │    → rejection patterns (missed terms, high coverage) (D144)
+ └─ 200 { settings, totals, tiers, breakdowns, patterns }
+/insights  apps/web/src/app/insights/page.tsx → InsightsClient.tsx fetches GET /api/insights once; the tier toggle is client-side.
+```
+
+### 14b. Snapshot v2 write (inside the existing createApplication transaction)
+
+`createApplication` (`packages/applications/src/createApplication.ts`), ingested branch, after `loadLinkedDocuments`:
+if a resume optimization is linked → read its `selected_bullets` and the job's `required` `job_requirements`
+→ `findMissedTerms(terms, joinOptimizedText(bullets))` (`missedTerms.ts`) → `buildFeatureSnapshot({ ..., missedRequiredTerms })`
+writes `snapshotVersion: 2` with `ats.missedRequiredTerms` (D143). Nothing else in the Phase 9 flow (§12) changes.
+
+### Changing Phase 10a behavior
+- Labels: `packages/insights/src/dataset/labels.ts` (+ `labels.test.ts`); the cutoff is `OUTCOME_UNDECIDED_DAYS`.
+- A new dimension: add a `DimensionDef` to `stats/dimensions.ts`; if it needs a new snapshot field, read it in `parseSnapshot.ts` and add it to `OutcomeRecord`.
+- A new snapshot field: write it in `packages/applications/src/snapshot.ts` and bump `snapshotVersion`; `parseSnapshot` must keep reading older versions.
