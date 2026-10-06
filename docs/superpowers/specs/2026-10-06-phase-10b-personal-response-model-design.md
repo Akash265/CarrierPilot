@@ -1,7 +1,7 @@
 # Phase 10b — Personal Response Model: Design
 
 Date: 2026-10-06
-Status: Implemented on branch phase-10b-response-model (2026-10-06); merge pending. Approved in brainstorming and as a written spec on 2026-10-06. §12 records what changed during implementation.
+Status: Implemented and merged to main (merge cc0e8bf, 2026-10-07). Approved in brainstorming and as a written spec on 2026-10-06. §12 records what changed during implementation.
 Spec sources: project spec §1, §8 ("initial ranking factors ... allowing future learning"), §14 ("train a simple personal model such as logistic regression ... show confidence and sample size rather than pretending"), §16, §21 (Phase 10 — interpretable baseline model, personal ranking adjustments), §24 criterion 15. Builds on Phase 10a (`docs/superpowers/specs/2026-10-06-phase-10a-outcome-analytics-design.md`, D140–D145).
 
 ## 1. Scope
