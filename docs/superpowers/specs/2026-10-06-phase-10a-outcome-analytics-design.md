@@ -1,7 +1,7 @@
 # Phase 10a — Outcome Analytics: Design
 
 Date: 2026-10-06
-Status: Approved in brainstorming (scope split, outcome tiers, role family, approach, sections 1–3) on 2026-10-06. Awaiting review as a written spec.
+Status: Implemented and merged to local main on 2026-10-06 (merge `82e8062`). Approved in brainstorming (scope split, outcome tiers, role family, approach, sections 1–3) and as a written spec on 2026-10-06. §13 records what changed during implementation.
 Spec sources: project spec §1 (learning from outcomes), §14 (Application Tracker & Feedback Loop: outcome-learning fields, interpretable model, confidence and sample size), §16 (Rejection & Re-optimization Loop), §19 (`application_outcomes`, `learning_features`), §21 (Phase 10 — Feedback & Learning), §24 success criteria 14–15.
 
 ## 1. Scope
