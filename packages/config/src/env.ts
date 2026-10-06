@@ -41,6 +41,11 @@ const envSchema = z
     // Phase 9: days after an application reaches a terminal status before its job's generated documents
     // are deleted (architecture §9). 0 disables the retention sweep entirely.
     RETENTION_DAYS: z.coerce.number().int().min(0).default(30),
+    // Phase 10a insights. An open application with no activity for this many days counts as "no response" /
+    // "no interview" (spec §4.2); a later response flips it back, since labels are computed on read.
+    OUTCOME_UNDECIDED_DAYS: z.coerce.number().int().min(1).default(30),
+    // Phase 10a insights. Fewer decided applications than this in a bucket shows counts only, never a rate.
+    INSIGHTS_MIN_BUCKET: z.coerce.number().int().min(2).default(5),
     // Phase 8 browser automation (services/browser-worker only). Chrome is found via Playwright's
     // channel "chrome" unless an explicit executable path is given. Headless is for tests: the whole
     // point of a session is a visible window the user finishes and submits.

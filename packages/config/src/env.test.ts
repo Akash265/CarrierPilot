@@ -129,4 +129,19 @@ describe("loadEnv", () => {
     expect(() => loadEnv({ ...validSource, BROWSER_HEADLESS: "yes" })).toThrow(/BROWSER_HEADLESS/);
     expect(() => loadEnv({ ...validSource, BROWSER_SESSION_TIMEOUT_MIN: "0" })).toThrow(/BROWSER_SESSION_TIMEOUT_MIN/);
   });
+
+  it("defaults the Phase 10a insights settings", () => {
+    const env = loadEnv(validSource);
+    expect(env.OUTCOME_UNDECIDED_DAYS).toBe(30);
+    expect(env.INSIGHTS_MIN_BUCKET).toBe(5);
+  });
+
+  it("parses and bounds the Phase 10a insights settings", () => {
+    const env = loadEnv({ ...validSource, OUTCOME_UNDECIDED_DAYS: "45", INSIGHTS_MIN_BUCKET: "8" });
+    expect(env.OUTCOME_UNDECIDED_DAYS).toBe(45);
+    expect(env.INSIGHTS_MIN_BUCKET).toBe(8);
+    expect(() => loadEnv({ ...validSource, OUTCOME_UNDECIDED_DAYS: "0" })).toThrow(/OUTCOME_UNDECIDED_DAYS/);
+    expect(() => loadEnv({ ...validSource, INSIGHTS_MIN_BUCKET: "1" })).toThrow(/INSIGHTS_MIN_BUCKET/);
+    expect(() => loadEnv({ ...validSource, INSIGHTS_MIN_BUCKET: "2.5" })).toThrow(/INSIGHTS_MIN_BUCKET/);
+  });
 });
