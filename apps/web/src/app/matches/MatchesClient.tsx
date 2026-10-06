@@ -11,6 +11,7 @@ import { MatchRow } from "./MatchRow";
 
 const POLL_INTERVAL_MS = 3000;
 const POLL_DURATION_MS = 60_000;
+const RANK_REASON_ID = "rank-with-history-reason";
 
 interface Result {
   matches: MatchListItem[];
@@ -160,16 +161,18 @@ export function MatchesClient() {
           Show excluded jobs
         </label>
         <label className="flex items-center gap-2 text-sm">
+          {/* Excluded jobs are never re-ranked, so the toggle is shown off and disabled there; the stored choice is kept. */}
           <input
             type="checkbox"
-            checked={rankWithHistory && modelActive}
-            disabled={!modelActive}
+            checked={rankWithHistory && modelActive && !showIneligible}
+            disabled={!modelActive || showIneligible}
+            aria-describedby={unavailableReason ? RANK_REASON_ID : undefined}
             onChange={(e) => writeRankPreference(e.target.checked)}
           />
           Rank with my history
         </label>
       </div>
-      {unavailableReason && <p className="text-xs text-gray-600">{unavailableReason}</p>}
+      {unavailableReason && <p id={RANK_REASON_ID} className="text-xs text-gray-600">{unavailableReason}</p>}
       {result?.ranking === "personal" && result.model?.blendWeight != null && (
         <p className="text-xs text-gray-600">{`Ranked with your history (weight ${Math.round(result.model.blendWeight * 100)}%)`}</p>
       )}

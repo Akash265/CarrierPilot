@@ -173,7 +173,43 @@ describe("MatchesClient", () => {
     render(<MatchesClient />);
     expect(await screen.findByText("Needs 30 decided applications with at least 8 responses and 8 without. You have 12 (3 with a response)."))
       .toBeInTheDocument();
-    expect(screen.getByRole("checkbox", { name: "Rank with my history" })).toBeDisabled();
+    const toggle = screen.getByRole("checkbox", { name: "Rank with my history" });
+    expect(toggle).toBeDisabled();
+    expect(toggle).toHaveAccessibleDescription(
+      "Needs 30 decided applications with at least 8 responses and 8 without. You have 12 (3 with a response)."
+    );
+  });
+
+  it("links no description to the toggle while the model is active", async () => {
+    mockFetch({
+      "GET /api/matches?eligible=true&page=1": () => ({ body: { matches: [matchItem()], page: 1, pageSize: 25, total: 1, ranking: "default", model: MODEL_ON } }),
+      "GET /api/matches/runs/latest": () => ({ body: { run: null } }),
+    });
+    render(<MatchesClient />);
+    await screen.findByText("Data Engineer");
+    expect(screen.getByRole("checkbox", { name: "Rank with my history" })).not.toHaveAttribute("aria-describedby");
+  });
+
+  it("disables Rank with my history while excluded jobs are shown, keeping the stored choice", async () => {
+    window.localStorage.setItem("careerpilot.rankWithHistory", "1");
+    const ineligible = matchItem({ eligible: false, ineligibleReason: "You dismissed this job.", overallScore: null, factors: null, explanation: null });
+    mockFetch({
+      "GET /api/matches?eligible=true&page=1&rank=personal": () => ({
+        body: { matches: [matchItem({ personal: PERSONAL })], page: 1, pageSize: 25, total: 1, ranking: "personal", model: MODEL_ON },
+      }),
+      "GET /api/matches?eligible=false&page=1": () => ({
+        body: { matches: [ineligible], page: 1, pageSize: 25, total: 1, ranking: "default", model: MODEL_ON },
+      }),
+      "GET /api/matches/runs/latest": () => ({ body: { run: null } }),
+    });
+    render(<MatchesClient />);
+    expect(await screen.findByText("Ranked with your history (weight 20%)")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("checkbox", { name: /Show excluded jobs/ }));
+    expect(await screen.findByText("You dismissed this job.")).toBeInTheDocument();
+    const toggle = screen.getByRole("checkbox", { name: "Rank with my history" });
+    expect(toggle).toBeDisabled();
+    expect(toggle).not.toBeChecked();
+    expect(window.localStorage.getItem("careerpilot.rankWithHistory")).toBe("1");
   });
 
   it("shows each match's likely response and ranks with history when turned on, remembering the choice", async () => {
