@@ -241,3 +241,15 @@ once a group has enough decided applications (`INSIGHTS_MIN_BUCKET`, default
 5). Applications count as "no response" after `OUTCOME_UNDECIDED_DAYS`
 (default 30) without activity. No AI calls; nothing changes your rankings
 yet (that is Phase 10b).
+
+Phase 10b (Personal Response Model) complete: on top of Phase 10a's labels,
+a model learns from your own decided applications which match factors have
+gone with getting a response, and shows "likely response X% (low–high%)"
+on matches once you have at least 30 decided applications — at least 8 with
+a response and 8 without (`OUTCOME_MODEL_MIN_DECIDED`/`OUTCOME_MODEL_MIN_PER_CLASS`,
+both env-configurable) — and the model beats your average on a held-out
+check. An opt-in "Rank with my history" toggle on `/matches` blends the
+prediction into the ranking, at a weight that grows with your history but
+never exceeds 50%. The model, its honesty check and which factors it found
+are explained on `/insights`. No AI calls; the model is fit fresh from your
+data on every request, not stored.
