@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import Link from "next/link";
 import { STATUS_LABELS } from "../../../lib/applications/statusLabels";
 import { DOCUMENTS_CHANGED_EVENT } from "./DownloadButtons";
@@ -56,12 +56,21 @@ export function ApplicationPanel({ jobId }: { jobId: string }) {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Set right before this panel dispatches APPLICATION_RECORDED_EVENT itself (in `submit`, below) so its own
+  // listener here doesn't immediately redo the fetch it already has the answer to from the POST response.
+  const justRecordedRef = useRef(false);
+
   // Options are re-fetched on mount, when a document is generated/edited/exported on this page
   // (DOCUMENTS_CHANGED_EVENT), when an autofill session is recorded as applied (APPLICATION_RECORDED_EVENT,
-  // Phase 8) and when the window regains focus, so the defaults track the newest versions.
+  // Phase 8, dispatched by AutofillPanel or by this panel's own successful submit below) and when the window
+  // regains focus, so the defaults track the newest versions.
   useEffect(() => {
     let ignore = false;
-    const load = () =>
+    const load = () => {
+      if (justRecordedRef.current) {
+        justRecordedRef.current = false;
+        return;
+      }
       fetchForJob(jobId)
         .then((data) => {
           if (!ignore) setState({ kind: "ready", data });
@@ -70,6 +79,7 @@ export function ApplicationPanel({ jobId }: { jobId: string }) {
           // A failed background refresh keeps the last good data; only the first load shows the error.
           if (!ignore) setState((prev) => (prev.kind === "ready" ? prev : { kind: "error" }));
         });
+    };
     load();
     window.addEventListener(DOCUMENTS_CHANGED_EVENT, load);
     window.addEventListener(APPLICATION_RECORDED_EVENT, load);
@@ -129,6 +139,11 @@ export function ApplicationPanel({ jobId }: { jobId: string }) {
       }
       const a = body.application;
       setState({ kind: "ready", data: { ...fresh, application: { id: a.id, status: a.status, appliedAt: a.appliedAt } } });
+      // So AutofillPanel reloads too: once this job has an application, its "Record as applied" button
+      // must stop offering a session link that would now 409 (Phase 8). justRecordedRef makes this panel's
+      // own listener (above) skip the redundant refetch it has no need for.
+      justRecordedRef.current = true;
+      window.dispatchEvent(new Event(APPLICATION_RECORDED_EVENT));
     } catch {
       setError("Could not record the application.");
     } finally {

@@ -8,7 +8,7 @@ beforeEach(() => vi.unstubAllGlobals());
 const json = (body: unknown, ok = true, status = 200) => Promise.resolve({ ok, status, json: async () => body } as Response);
 const session = (over: Record<string, unknown> = {}) => ({
   id: "s1", jobId: "j1", status: "awaiting_user", portal: "greenhouse", formUrl: "https://job-boards.greenhouse.io/acme/jobs/1",
-  errorCode: null, applicationId: null, cancelRequested: false, createdAt: new Date().toISOString(),
+  errorCode: null, applicationId: null, cancelRequested: false, startedAt: new Date().toISOString(), createdAt: new Date().toISOString(),
   fieldAudit: [
     { key: "f0", label: "Email", required: true, canonical: "email", action: "filled", reason: null, valueSource: "profile.email", verified: true },
     { key: "f1", label: "Phone", required: false, canonical: "phone", action: "flagged", reason: "verify_mismatch", valueSource: "profile.phoneNumber", verified: false },
@@ -97,6 +97,27 @@ describe("AutofillPanel", () => {
     render(<AutofillPanel jobId="j1" />);
     await screen.findByText("Submission detected");
     expect(screen.queryByRole("button", { name: "Record as applied" })).not.toBeInTheDocument();
+  });
+
+  it("hides the abandoned record prompt for a session cancelled before the worker ever started it", async () => {
+    vi.stubGlobal("fetch", vi.fn(() => json(overview({ sessions: [session({ status: "abandoned", errorCode: "cancelled", startedAt: null })] }))));
+    render(<AutofillPanel jobId="j1" />);
+    await screen.findByText("Ended without a detected submission");
+    expect(screen.queryByText(/did you submit anyway/i)).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Record as applied" })).not.toBeInTheDocument();
+  });
+
+  it("reloads when an application is recorded from outside the panel (ApplicationPanel's own Mark as applied)", async () => {
+    let applicationId: string | null = null;
+    const fetchMock = vi.fn(() => json(overview({ applicationId, sessions: [session({ status: "submission_detected" })] })));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<AutofillPanel jobId="j1" />);
+    await screen.findByText(/looks like you submitted/i);
+    const callsBefore = fetchMock.mock.calls.length;
+    applicationId = "a1";
+    window.dispatchEvent(new Event(APPLICATION_RECORDED_EVENT));
+    await waitFor(() => expect(fetchMock.mock.calls.length).toBeGreaterThan(callsBefore));
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Record as applied" })).not.toBeInTheDocument());
   });
 
   it("explains a needs-manual session and links the form", async () => {

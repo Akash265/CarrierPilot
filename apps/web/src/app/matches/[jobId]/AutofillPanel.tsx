@@ -22,6 +22,7 @@ interface SessionView {
   formUrl: string;
   errorCode: string | null;
   fieldAudit: AuditEntry[];
+  startedAt: string | null;
   createdAt: string;
 }
 interface Overview {
@@ -71,6 +72,7 @@ const REASON_TEXT: Record<string, string> = {
   autocomplete_widget: "Pick from the site's suggestions",
   unsupported_control: "Needs a choice in the site's dropdown",
   unrecognized_options: "Unexpected answer options",
+  ambiguous_wording: "Question is worded in a way we won't guess — answer it yourself",
   not_auto_filled: "Not filled automatically",
   intentionally_not_filled: "Intentionally not filled (equal-opportunity question)",
   verify_mismatch: "Value did not stick, check it",
@@ -143,6 +145,15 @@ export function AutofillPanel({ jobId }: { jobId: string }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [active, jobId]);
 
+  // ApplicationPanel's own "Mark as applied" (not this panel's "Record as applied") also dispatches this
+  // event, so the Record button here disappears once that application exists instead of 409ing if clicked.
+  useEffect(() => {
+    const onRecorded = () => void load();
+    window.addEventListener(APPLICATION_RECORDED_EVENT, onRecorded);
+    return () => window.removeEventListener(APPLICATION_RECORDED_EVENT, onRecorded);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [jobId]);
+
   // The "queued too long" hint depends on wall-clock time, so it lives in state refreshed on a timer; the
   // React purity lint rule rejects calling the impure Date.now() directly during render.
   useEffect(() => {
@@ -185,7 +196,13 @@ export function AutofillPanel({ jobId }: { jobId: string }) {
   };
 
   const audit = latest?.fieldAudit ?? [];
-  const canRecord = latest !== null && overview?.applicationId === null && (latest.status === "submission_detected" || latest.status === "abandoned");
+  // A session cancelled while still queued is "abandoned" with no startedAt (the worker never picked it up),
+  // so there was never a browser window the user could have submitted from -- the record prompt would be
+  // nonsensical and 409 if clicked (sessionLink requires a real session).
+  const canRecord =
+    latest !== null &&
+    overview?.applicationId === null &&
+    (latest.status === "submission_detected" || (latest.status === "abandoned" && latest.startedAt !== null));
 
   return (
     <section aria-labelledby="autofill-heading" className="flex flex-col gap-2 rounded border p-4">
