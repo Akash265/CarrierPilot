@@ -41,6 +41,18 @@ describe("GET /api/matches", () => {
     expect(body.total).toBe(2);
   });
 
+  it("leaves a closed job out of the eligible list even before the next matching run re-scores it", async () => {
+    const goalId = await insertCareerGoal(admin, USER);
+    const openJob = await insertJob(admin, USER, { title: "Open" });
+    const closedJob = await insertJob(admin, USER, { title: "Closed", status: "closed" });
+    await insertMatch(admin, USER, openJob, goalId, { overallScore: 40 });
+    await insertMatch(admin, USER, closedJob, goalId, { overallScore: 90 });
+
+    const body = await (await list()).json();
+    expect(body.matches.map((m: { jobTitle: string }) => m.jobTitle)).toEqual(["Open"]);
+    expect(body.total).toBe(1);
+  });
+
   it("lists ineligible matches with their reason when eligible=false", async () => {
     const goalId = await insertCareerGoal(admin, USER);
     const jobId = await insertJob(admin, USER, { title: "Excluded" });

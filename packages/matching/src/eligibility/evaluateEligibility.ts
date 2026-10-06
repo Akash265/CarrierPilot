@@ -14,6 +14,8 @@ export interface EligibilityInput {
   previouslyDismissed: boolean;
   /** An application exists for this job (Phase 9). Checked first: the user already acted on it. */
   alreadyApplied: boolean;
+  /** False once the job has closed (no open posting from any source). Checked right after "already applied". */
+  jobOpen: boolean;
 }
 
 export interface EligibilityResult {
@@ -26,12 +28,17 @@ const ELIGIBLE: EligibilityResult = { eligible: true, reason: null };
 
 /**
  * Deterministic hard filter (design doc §5). Order matters only for which single reason is
- * reported when several would apply; "already applied" is checked first, then "previously
- * dismissed", since both reflect an explicit user decision that no other rule should second-guess.
+ * reported when several would apply; "already applied" is checked first, then "posting closed"
+ * (nothing else matters once the job cannot be applied to), then "previously dismissed", since
+ * applied and dismissed reflect an explicit user decision that no other rule should second-guess.
  */
 export function evaluateEligibility(input: EligibilityInput): EligibilityResult {
   if (input.alreadyApplied) {
     return { eligible: false, reason: `You applied to this job at ${input.companyName}.` };
+  }
+
+  if (!input.jobOpen) {
+    return { eligible: false, reason: `This ${input.companyName} posting has closed.` };
   }
 
   if (input.previouslyDismissed) {

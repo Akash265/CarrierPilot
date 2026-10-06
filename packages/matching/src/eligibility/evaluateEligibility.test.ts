@@ -14,6 +14,7 @@ const base: EligibilityInput = {
   experienceGraceYears: 1,
   previouslyDismissed: false,
   alreadyApplied: false,
+  jobOpen: true,
 };
 
 describe("evaluateEligibility", () => {
@@ -101,5 +102,14 @@ describe("evaluateEligibility", () => {
     const result = evaluateEligibility({ ...base, alreadyApplied: true, previouslyDismissed: true });
     expect(result.eligible).toBe(false);
     expect(result.reason).toBe(`You applied to this job at ${base.companyName}.`);
+  });
+
+  it("excludes a job whose posting has closed, after 'already applied' but before every other rule", () => {
+    const result = evaluateEligibility({ ...base, jobOpen: false, previouslyDismissed: true });
+    expect(result.eligible).toBe(false);
+    expect(result.reason).toBe(`This ${base.companyName} posting has closed.`);
+    expect(evaluateEligibility({ ...base, jobOpen: false, alreadyApplied: true }).reason).toBe(
+      `You applied to this job at ${base.companyName}.`
+    );
   });
 });

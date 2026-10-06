@@ -1,4 +1,4 @@
-import { and, eq, isNotNull } from "drizzle-orm";
+import { and, eq, inArray, isNotNull } from "drizzle-orm";
 import Anthropic from "@anthropic-ai/sdk";
 import { schema, withUserContext, type DbClient } from "@ai-career/db";
 import { evaluateEligibility } from "../eligibility/evaluateEligibility";
@@ -20,7 +20,7 @@ import { isExplanationStale } from "../explanation/explanationStaleness";
 import { upsertMatchRow, type ExistingMatchRow } from "./upsertMatch";
 import type { FactorScores } from "../types";
 
-const { careerGoals, careerGoalConstraints, candidateProfiles, jobMatches, matchingRuns, applications } = schema;
+const { careerGoals, careerGoalConstraints, candidateProfiles, jobMatches, matchingRuns, applications, jobs } = schema;
 const MS_PER_DAY = 86_400_000;
 const num = (value: string | null): number | null => (value === null ? null : Number(value));
 
@@ -143,12 +143,11 @@ export async function runMatching(db: DbClient, opts: RunMatchingOptions): Promi
     );
     const appliedJobIds = new Set(appliedRows.map((r) => r.jobId as string));
 
-    const scored: ScoredJob[] = [];
-
-    for (const job of rows) {
-      counters.evaluated++;
-      const existing = existingByJobId.get(job.id);
-      const eligibility = evaluateEligibility({
+    const eligibilityOf = (
+      job: Pick<CandidateJobRow, "id" | "companyName" | "workMode" | "minExperienceYears" | "sponsorship">,
+      jobOpen: boolean
+    ) =>
+      evaluateEligibility({
         companyName: job.companyName,
         jobWorkMode: job.workMode,
         jobMinExperienceYears: job.minExperienceYears,
@@ -159,9 +158,40 @@ export async function runMatching(db: DbClient, opts: RunMatchingOptions): Promi
         visaSponsorshipRequired: constraints.visaSponsorshipRequired,
         candidateYearsOfExperience: candidateYears,
         experienceGraceYears: env.MATCHING_EXPERIENCE_GRACE_YEARS,
-        previouslyDismissed: existing?.userAction === "dismissed",
+        previouslyDismissed: existingByJobId.get(job.id)?.userAction === "dismissed",
         alreadyApplied: appliedJobIds.has(job.id),
+        jobOpen,
       });
+
+    // `rows` holds open jobs only, so a job that closed after it was matched would otherwise keep its old
+    // eligible row (and score) forever. Re-evaluate those rows as closed; a job that was already closed
+    // before it was ever matched still gets no row. Not counted in jobsEvaluated (open jobs scored).
+    const openJobIds = new Set(rows.map((r) => r.id));
+    const closedMatchedJobIds = existingRows.filter((r) => !openJobIds.has(r.jobId)).map((r) => r.jobId);
+    if (closedMatchedJobIds.length > 0) {
+      const closedJobs = await inUserContext((tx) =>
+        tx
+          .select({ id: jobs.id, companyName: jobs.companyName, workMode: jobs.workMode, minExperienceYears: jobs.minExperienceYears, sponsorship: jobs.sponsorship })
+          .from(jobs)
+          .where(inArray(jobs.id, closedMatchedJobIds))
+      );
+      for (const job of closedJobs) {
+        const eligibility = eligibilityOf(job, false);
+        await inUserContext((tx) =>
+          upsertMatchRow(tx, {
+            jobId: job.id, careerGoalId: goal.id, eligible: false, ineligibleReason: eligibility.reason,
+            factors: null, overallScore: null, computedAt: now(), existing: existingByJobId.get(job.id),
+          })
+        );
+      }
+    }
+
+    const scored: ScoredJob[] = [];
+
+    for (const job of rows) {
+      counters.evaluated++;
+      const existing = existingByJobId.get(job.id);
+      const eligibility = eligibilityOf(job, true);
 
       if (!eligibility.eligible) {
         await inUserContext((tx) =>

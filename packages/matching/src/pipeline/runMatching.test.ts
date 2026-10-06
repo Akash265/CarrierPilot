@@ -102,6 +102,32 @@ describe("runMatching", () => {
     expect(run.jobsEligible).toBe(2);
   });
 
+  it("marks a matched job ineligible once it closes, carrying its userAction forward", async () => {
+    await seedGoalAndProfile();
+    const jobId = await seedJob({ title: "Data Engineer" });
+    await runMatching(testDb.db, { userId: USER, anthropicClient: fakeAnthropic(), env: { ...ENV, MATCHING_EXPLAIN_TOP_N: 0 } });
+    await testDb.adminSql`UPDATE job_matches SET user_action = 'saved', user_action_at = now() WHERE job_id = ${jobId}`;
+    await testDb.adminSql`UPDATE jobs SET status = 'closed', closed_at = now() WHERE id = ${jobId}`;
+
+    await runMatching(testDb.db, { userId: USER, anthropicClient: fakeAnthropic(), env: ENV });
+
+    const [row] = await withUserContext(testDb.db, USER, (tx) => tx.select().from(schema.jobMatches));
+    expect(row.eligible).toBe(false);
+    expect(row.ineligibleReason).toBe("This Acme posting has closed.");
+    expect(row.overallScore).toBeNull();
+    expect(row.userAction).toBe("saved");
+  });
+
+  it("never creates a match row for a job that was already closed before it was ever matched", async () => {
+    await seedGoalAndProfile();
+    const jobId = await seedJob({ title: "Data Engineer" });
+    await testDb.adminSql`UPDATE jobs SET status = 'closed', closed_at = now() WHERE id = ${jobId}`;
+
+    await runMatching(testDb.db, { userId: USER, anthropicClient: fakeAnthropic(), env: ENV });
+
+    expect(await withUserContext(testDb.db, USER, (tx) => tx.select().from(schema.jobMatches))).toHaveLength(0);
+  });
+
   it("keeps a dismissed job ineligible on the next run and carries its userAction forward", async () => {
     await seedGoalAndProfile();
     const jobId = await seedJob({ title: "Data Engineer" });

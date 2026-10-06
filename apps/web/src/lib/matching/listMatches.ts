@@ -1,4 +1,4 @@
-import { count, desc, eq, sql } from "drizzle-orm";
+import { and, count, desc, eq, sql } from "drizzle-orm";
 import { z } from "zod";
 import { schema, type DbClient } from "@ai-career/db";
 import { toMatchView, type MatchView } from "./serializeMatch";
@@ -27,7 +27,9 @@ export async function listMatches(
   query: ListMatchesQuery
 ): Promise<{ matches: MatchListItem[]; page: number; pageSize: number; total: number }> {
   const eligible = query.eligible === "true";
-  const where = eq(jobMatches.eligible, eligible);
+  // A job can close between matching runs; runMatching then marks its row ineligible ("posting has closed"),
+  // but until that next run the eligible list must not offer a job that can no longer be applied to.
+  const where = eligible ? and(eq(jobMatches.eligible, true), eq(jobs.status, "open")) : eq(jobMatches.eligible, false);
 
   const rows = await tx
     .select({
@@ -66,7 +68,7 @@ export async function listMatches(
     .orderBy(eligible ? sql`${jobMatches.overallScore} DESC NULLS LAST` : desc(jobMatches.computedAt), jobMatches.id)
     .limit(PAGE_SIZE)
     .offset((query.page - 1) * PAGE_SIZE);
-  const [{ total }] = await tx.select({ total: count() }).from(jobMatches).where(where);
+  const [{ total }] = await tx.select({ total: count() }).from(jobMatches).innerJoin(jobs, eq(jobs.id, jobMatches.jobId)).where(where);
 
   return {
     matches: rows.map((row) => ({
