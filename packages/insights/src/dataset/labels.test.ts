@@ -4,8 +4,13 @@ import type { InsightEvent } from "../types";
 
 const NOW = new Date("2026-10-06T12:00:00Z");
 const OPTS = { now: NOW, undecidedDays: 30 };
-const ev = (type: InsightEvent["type"], at: string, toStatus: InsightEvent["toStatus"] = null): InsightEvent => ({
-  applicationId: "a1", type, occurredAt: new Date(at), toStatus,
+const ev = (
+  type: InsightEvent["type"],
+  at: string,
+  toStatus: InsightEvent["toStatus"] = null,
+  fromStatus: InsightEvent["fromStatus"] = "applied"
+): InsightEvent => ({
+  applicationId: "a1", type, occurredAt: new Date(at), fromStatus, toStatus,
 });
 const input = (over: Partial<LabelInput>): LabelInput => ({ status: "applied", appliedAt: "2026-10-01", events: [], ...over });
 
@@ -102,7 +107,7 @@ describe("labelOutcome", () => {
 
     const noteOnly = labelOutcome(input({
       appliedAt: "2026-08-01",
-      events: [{ applicationId: "a1", type: "note" as never, occurredAt: new Date("2026-10-05T00:00:00Z"), toStatus: null }],
+      events: [{ applicationId: "a1", type: "note" as never, occurredAt: new Date("2026-10-05T00:00:00Z"), fromStatus: null, toStatus: null }],
     }), OPTS);
     expect(noteOnly.response.label).toBe("negative");
     expect(noteOnly.lastActivityAt.toISOString()).toBe("2026-08-01T00:00:00.000Z");
@@ -116,5 +121,24 @@ describe("labelOutcome", () => {
   it("never lets an offer fall to the idle rule for the interview tier", () => {
     const r = labelOutcome(input({ status: "offer", appliedAt: "2026-06-01" }), OPTS);
     expect(r.interview.label).toBe("positive");
+  });
+
+  it("does not treat the creation status_change (fromStatus null) as activity, even when it is written today for a backdated appliedAt", () => {
+    const r = labelOutcome(input({
+      appliedAt: "2026-08-01",
+      events: [ev("status_change", "2026-10-06T08:00:00Z", "applied", null)],
+    }), OPTS);
+    expect(r.response).toEqual({ label: "negative", reason: "No response: no activity for 30 days" });
+    expect(r.interview).toEqual({ label: "negative", reason: "No interview: no activity for 30 days" });
+    expect(r.lastActivityAt.toISOString()).toBe("2026-08-01T00:00:00.000Z");
+  });
+
+  it("still treats a non-creation status_change (fromStatus set) as activity", () => {
+    const r = labelOutcome(input({
+      appliedAt: "2026-08-01",
+      events: [ev("status_change", "2026-10-01T00:00:00Z", "screening", "applied")],
+    }), OPTS);
+    expect(r.response.label).toBe("positive");
+    expect(r.lastActivityAt.toISOString()).toBe("2026-10-01T00:00:00.000Z");
   });
 });

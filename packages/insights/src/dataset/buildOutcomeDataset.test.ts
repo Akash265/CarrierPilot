@@ -25,7 +25,7 @@ describe("buildOutcomeDataset", () => {
   it("builds one record per application with labels, role family and dimensions", () => {
     const inputs: InsightInputs = {
       applications: [app({ status: "rejected" })],
-      events: [{ applicationId: "a1", type: "status_change", occurredAt: new Date("2026-10-03T00:00:00Z"), toStatus: "screening" }],
+      events: [{ applicationId: "a1", type: "status_change", occurredAt: new Date("2026-10-03T00:00:00Z"), fromStatus: "applied", toStatus: "screening" }],
       goals: [GOAL],
     };
     const [record] = buildOutcomeDataset(inputs, OPTS);
@@ -43,7 +43,7 @@ describe("buildOutcomeDataset", () => {
   it("only routes each application's own events to it", () => {
     const inputs: InsightInputs = {
       applications: [app({ id: "a1" }), app({ id: "a2" })],
-      events: [{ applicationId: "a2", type: "interview", occurredAt: new Date("2026-10-02T00:00:00Z"), toStatus: null }],
+      events: [{ applicationId: "a2", type: "interview", occurredAt: new Date("2026-10-02T00:00:00Z"), fromStatus: null, toStatus: null }],
       goals: [GOAL],
     };
     const byId = new Map(buildOutcomeDataset(inputs, OPTS).map((r) => [r.applicationId, r]));

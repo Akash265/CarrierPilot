@@ -25,7 +25,7 @@ export async function loadInsightInputs(db: DbClient, userId: string): Promise<I
       const eventRows = await tx
         .select({
           applicationId: applicationEvents.applicationId, type: applicationEvents.type, occurredAt: applicationEvents.occurredAt,
-          toStatus: applicationEvents.toStatus,
+          fromStatus: applicationEvents.fromStatus, toStatus: applicationEvents.toStatus,
         })
         .from(applicationEvents)
         .where(inArray(applicationEvents.type, ACTIVITY_TYPES))

@@ -34,6 +34,8 @@ export interface InsightEvent {
   applicationId: string;
   type: InsightEventType;
   occurredAt: Date;
+  /** Null exactly on the creation status_change (always written at `now`, even for a backdated appliedAt) -- never activity. */
+  fromStatus: ApplicationStatus | null;
   toStatus: ApplicationStatus | null;
 }
 

@@ -89,8 +89,11 @@ export function labelOutcome(input: LabelInput, opts: LabelOptions): LabelResult
   const events = input.events.filter((e) => ACTIVITY_TYPES.has(e.type));
   const scoped: LabelInput = { ...input, events };
 
+  // The creation status_change (fromStatus null) is always written at `now`, even for a backdated appliedAt
+  // (createApplication), so it is evidence (via toStatus) but never counts as activity.
+  const isActivity = (e: InsightEvent): boolean => !(e.type === "status_change" && e.fromStatus === null);
   let lastActivityMs = Date.parse(`${input.appliedAt}T00:00:00Z`);
-  for (const e of events) lastActivityMs = Math.max(lastActivityMs, e.occurredAt.getTime());
+  for (const e of events) if (isActivity(e)) lastActivityMs = Math.max(lastActivityMs, e.occurredAt.getTime());
 
   const contacts: Evidence[] = events
     .filter((e) => e.type === "recruiter_contact")
