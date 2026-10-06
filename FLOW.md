@@ -694,7 +694,9 @@ POST /api/matches/run          app/api/matches/run/route.ts
                                 → 202 {status:"queued"} (409 if a run is already queued/running)
 GET /api/matches/runs/latest   → most recent matching_runs row for the user
 GET /api/matches?eligible=     → app/lib/matching/listMatches.ts: job_matches joined to jobs,
-                                  eligible/ineligible filter, newest-scored first
+                                  eligible/ineligible filter, newest-scored first; the eligible view also
+                                  requires jobs.status='open', so a job closed by ingestion leaves the
+                                  ranked list before the next run re-scores it (D139)
 PATCH /api/matches/[jobId]     → sets job_matches.userAction ("dismissed"/"saved"/etc) + userActionAt
                                   (read back on the NEXT run via evaluateEligibility's
                                   previouslyDismissed, not applied retroactively to the current row)
@@ -717,8 +719,12 @@ BullMQ "matching" job → packages/matching/src/pipeline/runMatching.ts
  │  realistically populated jobs table); one chunk's failure only leaves ITS jobs unembedded (retried
  │  next run), never the whole batch; embedded/failed counts persisted on matching_runs, not just
  │  logged; re-fetch candidates afterward so a job embedded just now has semantic similarity in THIS run
- ├─ per open job: evaluateEligibility (company/industry exclusion, work mode, sponsorship, experience
- │  grace, previously-dismissed) → ineligible: upsertMatchRow(eligible:false, reason) and skip scoring;
+ ├─ every EXISTING job_matches row whose job is no longer open (closed since it was matched):
+ │  evaluateEligibility(..., jobOpen:false) → upsertMatchRow(eligible:false, "This {company} posting has
+ │  closed." -- or the "already applied" reason, which wins) with userAction/explanation carried forward;
+ │  a job closed before it was ever matched gets no row; not counted in jobsEvaluated (D139)
+ ├─ per open job: evaluateEligibility (already-applied, company/industry exclusion, work mode, sponsorship,
+ │  experience grace, previously-dismissed; jobOpen:true) → ineligible: upsertMatchRow(eligible:false, reason) and skip scoring;
  │  eligible: score 9 factors (skills, experience, location, sponsorship, role, salary, industry,
  │  freshness, semantic) → computeOverallScore → upsertMatchRow(eligible:true, factors, score)
  │  (scoreSkills falls back to lexical-only when semanticSimilarity is null, per the embedding degrade)
@@ -1145,7 +1151,7 @@ drives three separate actions from the same page:
 `runMatching` (`packages/matching/src/pipeline/runMatching.ts`) now also loads every `applications.job_id`
 for the user in one query up front, and passes `alreadyApplied: appliedJobIds.has(job.id)` into
 `evaluateEligibility` (`packages/matching/src/eligibility/evaluateEligibility.ts`) for each job -- checked
-first, before "previously dismissed" (D118). An applied job's `job_matches` row is overwritten with
+first, before "posting closed" (D139) and "previously dismissed" (D118). An applied job's `job_matches` row is overwritten with
 `eligible=false` and the reason `"You applied to this job at {company}."` on the next run. `GET
 /api/matches/[jobId]` (`apps/web/src/app/api/matches/[jobId]/route.ts`) additionally looks up the
 application for that job and returns `applicationId` (or null); `MatchDetailClient.tsx` uses
