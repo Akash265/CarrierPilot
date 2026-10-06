@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import type { ResponsePrediction } from "@ai-career/insights";
 import { ApplicationPanel } from "./ApplicationPanel";
 import { AutofillPanel } from "./AutofillPanel";
 import { ResumeOptimizationPanel } from "./ResumeOptimizationPanel";
@@ -9,6 +10,7 @@ import { PitchPanel } from "./PitchPanel";
 import { CoverLetterPanel } from "./CoverLetterPanel";
 import { InterviewPrepPanel } from "./InterviewPrepPanel";
 import { DocumentsList } from "./DocumentsList";
+import { formatFactorPushes, formatLikelyResponse } from "../../../lib/insights/formatPersonal";
 
 interface JobView {
   id: string;
@@ -25,6 +27,8 @@ interface MatchView {
   factors: Record<string, number | null> | null;
   explanation: { strongMatches: string[]; partialMatches: string[]; gaps: string[]; summary: string } | null;
   userAction: "none" | "saved" | "dismissed";
+  /** Phase 10b: present only when the personal response model is active and the match is eligible. */
+  personal?: ResponsePrediction | null;
 }
 
 type Outcome = { kind: "missing" } | { kind: "error" } | { kind: "ready"; job: JobView; match: MatchView; applicationId: string | null };
@@ -106,6 +110,17 @@ export function MatchDetailClient({ jobId }: { jobId: string }) {
               </div>
             ))}
           </dl>
+        </section>
+      )}
+
+      {match.eligible && match.personal && (
+        <section aria-labelledby="history-heading" className="flex flex-col gap-1 text-sm">
+          <h2 id="history-heading" className="font-medium">Your history</h2>
+          <p>{`Your history: ${formatLikelyResponse(match.personal)}`}</p>
+          {formatFactorPushes(match.personal) && <p>{formatFactorPushes(match.personal)}</p>}
+          <p className="text-xs text-gray-600">
+            Based on how these factors have gone with responses in your own applications — not a cause or a guarantee.
+          </p>
         </section>
       )}
 

@@ -43,6 +43,25 @@ function mockFetch(matchBody: unknown, matchStatus = 200) {
 beforeEach(() => vi.unstubAllGlobals());
 
 describe("MatchDetailClient", () => {
+  it("shows the personal response prediction and the factors behind it when present", async () => {
+    mockFetch({
+      job, applicationId: null,
+      match: { ...match, personal: { probability: 0.62, low: 0.41, high: 0.79, raises: ["Skills", "Role"], lowers: ["Freshness"] } },
+    });
+    render(<MatchDetailClient jobId="j1" />);
+    const section = await screen.findByRole("region", { name: "Your history" });
+    expect(section).toHaveTextContent("Your history: likely response 62% (41–79%)");
+    expect(section).toHaveTextContent("Raises: Skills, Role · Lowers: Freshness");
+    expect(section).toHaveTextContent("not a cause or a guarantee");
+  });
+
+  it("shows no history section without a prediction", async () => {
+    mockFetch({ job, applicationId: null, match: { ...match, personal: null } });
+    render(<MatchDetailClient jobId="j1" />);
+    await screen.findByRole("heading", { name: "Data Engineer" });
+    expect(screen.queryByRole("region", { name: "Your history" })).not.toBeInTheDocument();
+  });
+
   it("shows the job, score, and the strong/partial/gap breakdown", async () => {
     mockFetch({ job, match });
     render(<MatchDetailClient jobId="j1" />);

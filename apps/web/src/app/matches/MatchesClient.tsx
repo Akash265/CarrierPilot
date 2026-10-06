@@ -1,7 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
+import type { ModelSummary } from "@ai-career/insights";
 import type { MatchListItem } from "../../lib/matching/listMatches";
+import { modelUnavailableReason } from "../../lib/insights/formatPersonal";
+import {
+  readRankPreference, serverRankPreference, subscribeRankPreference, writeRankPreference,
+} from "../../lib/insights/rankPreference";
 import { MatchRow } from "./MatchRow";
 
 const POLL_INTERVAL_MS = 3000;
@@ -12,6 +17,9 @@ interface Result {
   page: number;
   pageSize: number;
   total: number;
+  /** Phase 10b: the order the server actually used, and the response model's status. */
+  ranking?: "default" | "personal";
+  model?: ModelSummary;
 }
 
 interface RunStatus {
@@ -28,21 +36,29 @@ export function MatchesClient() {
   const [error, setError] = useState<string | null>(null);
   const [runFailure, setRunFailure] = useState<string | null>(null);
   const [pollUntil, setPollUntil] = useState(0);
+  // Phase 10b: per-browser preference; false on the server, the stored choice after hydration.
+  const rankWithHistory = useSyncExternalStore(subscribeRankPreference, readRankPreference, serverRankPreference);
 
-  const load = useCallback(
-    () =>
-      fetch(`/api/matches?eligible=${!showIneligible}&page=1`)
-        .then((res) => {
-          if (!res.ok) throw new Error("load failed");
-          return res.json();
-        })
-        .then((body: Result) => {
-          setResult(body);
-          setLoadFailed(false);
-        })
-        .catch(() => setLoadFailed(true)),
-    [showIneligible]
-  );
+  // Only the latest request may update the list: switching filters or the ranking (or the stored ranking choice
+  // applying right after hydration) starts a new request while an older one can still be in flight, and a slower
+  // older response must not overwrite the newer one.
+  const latestRequest = useRef(0);
+  const load = useCallback(() => {
+    const request = ++latestRequest.current;
+    return fetch(`/api/matches?eligible=${!showIneligible}&page=1${rankWithHistory && !showIneligible ? "&rank=personal" : ""}`)
+      .then((res) => {
+        if (!res.ok) throw new Error("load failed");
+        return res.json();
+      })
+      .then((body: Result) => {
+        if (request !== latestRequest.current) return;
+        setResult(body);
+        setLoadFailed(false);
+      })
+      .catch(() => {
+        if (request === latestRequest.current) setLoadFailed(true);
+      });
+  }, [showIneligible, rankWithHistory]);
 
   // A queued run finishes on the worker, out of band from this request. Enqueuing only proves the job was
   // accepted, not that it succeeded — so this checks the run's outcome (GET /api/matches/runs/latest) on
@@ -130,6 +146,9 @@ export function MatchesClient() {
     }
   }
 
+  const modelActive = result?.model?.status === "active";
+  const unavailableReason = result?.model ? modelUnavailableReason(result.model) : null;
+
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-wrap items-center gap-4">
@@ -140,7 +159,20 @@ export function MatchesClient() {
           <input type="checkbox" checked={showIneligible} onChange={(e) => setShowIneligible(e.target.checked)} />
           Show excluded jobs
         </label>
+        <label className="flex items-center gap-2 text-sm">
+          <input
+            type="checkbox"
+            checked={rankWithHistory && modelActive}
+            disabled={!modelActive}
+            onChange={(e) => writeRankPreference(e.target.checked)}
+          />
+          Rank with my history
+        </label>
       </div>
+      {unavailableReason && <p className="text-xs text-gray-600">{unavailableReason}</p>}
+      {result?.ranking === "personal" && result.model?.blendWeight != null && (
+        <p className="text-xs text-gray-600">{`Ranked with your history (weight ${Math.round(result.model.blendWeight * 100)}%)`}</p>
+      )}
 
       {notice && <p role="status" className="text-sm text-green-700">{notice}</p>}
       {error && <p role="alert" className="text-sm text-red-600">{error}</p>}
