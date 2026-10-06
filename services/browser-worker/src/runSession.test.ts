@@ -167,6 +167,24 @@ describe("runSession endings", () => {
     await released.closeAll();
   });
 
+  it("needs manual work when a client-side redirect leaves the allowed host after the form loads, without filling", async () => {
+    const { id, result } = await start("/greenhouse/delayed-redirect");
+    // Let the first field actually get filled, so the off-host navigation (released now, not on a guessed
+    // delay) lands mid-fill-loop and exercises the per-action host re-check rather than the earlier one.
+    const deadline = Date.now() + 10_000;
+    for (;;) {
+      if (handle && (await handle.page.inputValue("#first_name").catch(() => "")) === "Jane") break;
+      if (Date.now() > deadline) throw new Error("timed out waiting for first_name to be filled");
+      await new Promise((r) => setTimeout(r, 25));
+    }
+    server.releaseDelayedRedirect();
+    expect(await result).toBe("needs_manual");
+    const row = await getSession(t.db, USER, id);
+    expect(row).toMatchObject({ errorCode: "off_host_redirect" });
+    expect((row!.fieldAudit as FieldAuditEntry[]).some((a) => a.action === "filled")).toBe(false);
+    await released.closeAll();
+  });
+
   it("refuses a stored form URL outside the allowed hosts before launching", async () => {
     const { id, result } = await start("https://evil.example/apply");
     expect(await result).toBe("needs_manual");

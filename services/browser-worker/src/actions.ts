@@ -29,7 +29,15 @@ type Allowed = "text" | "select" | "choice" | "file";
  * performs as a click on the input itself) is therefore only ever applied to a radio or checkbox input.
  */
 async function assertTarget(loc: Locator, allowed: Allowed): Promise<void> {
-  const { tag, type } = await loc.evaluate((el) => ({ tag: el.tagName.toLowerCase(), type: (el.getAttribute("type") ?? "text").toLowerCase() }));
+  // An explicit timeout matters here as much as on the mutation that follows: without one, Playwright's
+  // locator resolution falls back to its 30s default, so a target that goes missing mid-navigation (e.g. the
+  // off-host redirect runSession checks for before every action) would otherwise hang this call for 30s
+  // before the guard even gets to run, instead of failing fast into the next loop iteration's host check.
+  const { tag, type } = await loc.evaluate(
+    (el) => ({ tag: el.tagName.toLowerCase(), type: (el.getAttribute("type") ?? "text").toLowerCase() }),
+    undefined,
+    { timeout: ACTION_TIMEOUT_MS }
+  );
   if (tag === "button" || tag === "a" || (tag === "input" && FORBIDDEN_INPUT_TYPES.has(type))) throw new GuardViolation();
   const ok =
     allowed === "select" ? tag === "select"

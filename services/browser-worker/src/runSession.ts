@@ -129,8 +129,16 @@ export async function runSession(deps: RunSessionDeps, data: BrowserJobData): Pr
       return await releaseUnlessCancelled("needs_manual", { errorCode: "off_host_redirect" }, deps.timeoutMs);
     }
     await page.waitForSelector(adapter.snapshotConfig.formSelector, { state: "attached", timeout: FORM_WAIT_MS }).catch(() => undefined);
+    // Re-check: a client-side redirect can leave the allowed host after the form loads but before anything
+    // is read from the page.
+    if (!hostAllowed(page.url(), adapter, extra)) {
+      return await releaseUnlessCancelled("needs_manual", { errorCode: "off_host_redirect" }, deps.timeoutMs);
+    }
 
     const snapshot = await takeSnapshot(page, adapter);
+    if (!snapshot) {
+      return await releaseUnlessCancelled("needs_manual", { errorCode: "health_check_failed", fieldAudit: [] }, deps.timeoutMs);
+    }
     const values = buildAutofillValues({
       profile: ctx.profile, goal: ctx.goal, attachments: { resume: Boolean(paths.resume), coverLetter: Boolean(paths.cover_letter) },
     });
@@ -142,6 +150,11 @@ export async function runSession(deps: RunSessionDeps, data: BrowserJobData): Pr
 
     for (const action of plan.actions) {
       if (await isCancelRequested(db, userId, sessionId)) return await end("abandoned", { errorCode: "cancelled", fieldAudit: audit });
+      // Re-check before every page mutation: a redirect mid-fill means the page we're about to act on is no
+      // longer the application form, so nothing further is filled and whatever was filled is not reported.
+      if (!hostAllowed(page.url(), adapter, extra)) {
+        return await releaseUnlessCancelled("needs_manual", { errorCode: "off_host_redirect", fieldAudit: [] }, deps.timeoutMs);
+      }
       const entry = audit.find((a) => a.key === action.fieldKey)!;
       try {
         await performAction(page, action, paths);
