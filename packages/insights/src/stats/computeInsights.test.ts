@@ -41,7 +41,7 @@ describe("computeInsights headlines", () => {
     expect(insights.totals).toEqual({ applications: 0, external: 0 });
     expect(insights.tiers.interview).toEqual({ decided: 0, positives: 0, negatives: 0, undecided: 0, excluded: 0, rate: null, interval: null });
     expect(insights.breakdowns.response.every((d) => d.buckets.length === 0 && d.unknownCount === 0)).toBe(true);
-    expect(insights.patterns).toEqual({ tier: "response", missedTerms: [], highCoverage: null });
+    expect(insights.patterns).toEqual({ tier: "response", missedTerms: [], highCoverage: null, negativesWithData: 0, positivesWithData: 0 });
   });
 });
 
@@ -145,6 +145,14 @@ describe("computeInsights rejection patterns", () => {
       { term: "Tableau", missedInNegatives: 3, missedInPositives: 1, negativesWithData: 3, positivesWithData: 2 },
       { term: "dbt", missedInNegatives: 2, missedInPositives: 0, negativesWithData: 3, positivesWithData: 2 },
     ]);
+    expect(patterns.negativesWithData).toBe(3);
+    expect(patterns.positivesWithData).toBe(2);
+  });
+
+  it("reports zero with-data counts when no record has missedRequiredTerms data", () => {
+    const records = times(3, () => record("negative", "negative", { missedRequiredTerms: null }));
+    const { patterns } = computeInsights(records, { minBucket: 2 });
+    expect(patterns).toMatchObject({ missedTerms: [], negativesWithData: 0, positivesWithData: 0 });
   });
 
   it("keeps at most 20 terms", () => {

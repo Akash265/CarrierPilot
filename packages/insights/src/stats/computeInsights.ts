@@ -56,6 +56,9 @@ export interface Patterns {
   tier: Tier;
   missedTerms: MissedTermPattern[];
   highCoverage: HighCoveragePattern | null;
+  /** Decided (positive/negative) records with missedRequiredTerms data, regardless of whether any term recurred. */
+  negativesWithData: number;
+  positivesWithData: number;
 }
 
 export interface Insights {
@@ -188,7 +191,7 @@ function patterns(records: readonly OutcomeRecord[], tiers: Record<Tier, Headlin
         })()
       : null;
 
-  return { tier, missedTerms, highCoverage };
+  return { tier, missedTerms, highCoverage, negativesWithData, positivesWithData };
 }
 
 /** Spec §5. Pure and deterministic: the same records always give the same insights. */
