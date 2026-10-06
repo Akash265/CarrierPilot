@@ -1,0 +1,244 @@
+diff --git a/packages/insights/src/index.ts b/packages/insights/src/index.ts
+index fb9f323..591e4ac 100644
+--- a/packages/insights/src/index.ts
++++ b/packages/insights/src/index.ts
+@@ -13,3 +13,13 @@ export {
+   type Headline, type Bucket, type Dimension, type MissedTermPattern, type HighCoveragePattern, type Patterns, type Insights,
+ } from "./stats/computeInsights";
+ export { loadInsightInputs } from "./load/loadInsightInputs";
++export { fitLogistic, sigmoid, type LogisticFit } from "./model/fitLogistic";
++export { fitScaling, standardize, type FeatureScaling } from "./model/prepareFeatures";
++export {
++  trainResponseModel, trainingRows, blendWeight, fitModel, modelProbability, RIDGE_LAMBDA,
++  type ModelSettings, type ModelStatus, type ModelResult, type ResponseModel, type TrainingRow,
++} from "./model/trainResponseModel";
++export {
++  predictResponse, blendedScore, describeFactors, summarizeModel, FACTOR_LABELS,
++  type ResponsePrediction, type FactorEffect, type ModelSummary,
++} from "./model/predictResponse";
+diff --git a/packages/insights/src/model/predictResponse.ts b/packages/insights/src/model/predictResponse.ts
+new file mode 100644
+index 0000000..0cf1d0d
+--- /dev/null
++++ b/packages/insights/src/model/predictResponse.ts
+@@ -0,0 +1,92 @@
++import type { FactorKey, FactorVector } from "../types";
++import { sigmoid } from "./fitLogistic";
++import { standardize } from "./prepareFeatures";
++import type { ModelResult, ResponseModel } from "./trainResponseModel";
++
++/** Spec §4.5: a factor is named as raising/lowering only beyond this many logit units. */
++export const CONTRIBUTION_THRESHOLD = 0.1;
++/** At most this many factors are named on each side. */
++export const MAX_NAMED_FACTORS = 2;
++const Z_95 = 1.96;
++
++/** Display labels, matching the factor chips on /matches ("semantic" is shown as "Fit"). */
++export const FACTOR_LABELS: Record<FactorKey, string> = {
++  skillsScore: "Skills", experienceScore: "Experience", locationScore: "Location", sponsorshipScore: "Sponsorship",
++  roleScore: "Role", salaryScore: "Salary", industryScore: "Industry", freshnessScore: "Freshness", semanticScore: "Fit",
++};
++
++export interface ResponsePrediction {
++  probability: number;
++  /** 95% range from the Laplace approximation (spec §4.5). */
++  low: number;
++  high: number;
++  /** Display labels of the factors pushing the probability up / down for this match, strongest first. */
++  raises: string[];
++  lowers: string[];
++}
++
++/** Spec §4.5. Probability, its 95% range, and the factors that raise or lower it for this match. */
++export function predictResponse(model: ResponseModel, factors: FactorVector): ResponsePrediction {
++  const z = standardize(model.scaling, factors);
++  const x = [1, ...z];
++  const logit = model.intercept + z.reduce((sum, value, j) => sum + value * model.coefficients[j], 0);
++  const variance = x.reduce((sum, xa, a) => sum + xa * x.reduce((inner, xb, b) => inner + model.covariance[a][b] * xb, 0), 0);
++  const spread = Z_95 * Math.sqrt(Math.max(0, variance));
++
++  const contributions = model.scaling.keys.map((key, j) => ({ label: FACTOR_LABELS[key], value: model.coefficients[j] * z[j] }));
++  const named = (side: 1 | -1) =>
++    contributions
++      .filter((c) => side * c.value > CONTRIBUTION_THRESHOLD)
++      .sort((a, b) => Math.abs(b.value) - Math.abs(a.value))
++      .slice(0, MAX_NAMED_FACTORS)
++      .map((c) => c.label);
++
++  return {
++    probability: sigmoid(logit),
++    low: sigmoid(logit - spread),
++    high: sigmoid(logit + spread),
++    raises: named(1),
++    lowers: named(-1),
++  };
++}
++
++/** Spec §4.6: (1 - w) x match score + w x 100 x probability, one decimal. */
++export function blendedScore(overallScore: number, probability: number, weight: number): number {
++  return Math.round(((1 - weight) * overallScore + weight * 100 * probability) * 10) / 10;
++}
++
++export interface FactorEffect {
++  key: FactorKey;
++  label: string;
++  direction: "higher" | "lower";
++  /** e^|beta|: the change in response odds per one standard step of the factor. */
++  oddsRatio: number;
++}
++
++/** Spec §5 (/api/insights): each kept factor's direction and strength, strongest first. */
++export function describeFactors(model: ResponseModel): FactorEffect[] {
++  return model.scaling.keys
++    .map((key, j) => ({ key, beta: model.coefficients[j] }))
++    .sort((a, b) => Math.abs(b.beta) - Math.abs(a.beta))
++    .map(({ key, beta }) => ({
++      key, label: FACTOR_LABELS[key], direction: beta >= 0 ? ("higher" as const) : ("lower" as const), oddsRatio: Math.exp(Math.abs(beta)),
++    }));
++}
++
++/** The model status fields every API response carries (spec §5 ModelSummary). */
++export interface ModelSummary {
++  status: ModelResult["status"];
++  decided: number;
++  responses: number;
++  nonResponses: number;
++  minDecided: number;
++  minPerClass: number;
++  blendWeight: number | null;
++}
++
++export function summarizeModel(result: ModelResult): ModelSummary {
++  return {
++    status: result.status, decided: result.decided, responses: result.responses, nonResponses: result.nonResponses,
++    minDecided: result.minDecided, minPerClass: result.minPerClass, blendWeight: result.blendWeight,
++  };
++}
+diff --git a/packages/insights/src/model/trainResponseModel.ts b/packages/insights/src/model/trainResponseModel.ts
+new file mode 100644
+index 0000000..d18688b
+--- /dev/null
++++ b/packages/insights/src/model/trainResponseModel.ts
+@@ -0,0 +1,122 @@
++import type { FactorVector, OutcomeRecord } from "../types";
++import { fitLogistic, sigmoid } from "./fitLogistic";
++import { fitScaling, standardize, type FeatureScaling } from "./prepareFeatures";
++
++/** Spec §4.2: ridge strength on the standardized coefficients. */
++export const RIDGE_LAMBDA = 1;
++/** Spec §4.3: probabilities are clamped before log-loss so a confident miss is finite. */
++export const LOG_LOSS_EPSILON = 1e-6;
++
++export interface ModelSettings {
++  /** OUTCOME_MODEL_MIN_DECIDED */
++  minDecided: number;
++  /** OUTCOME_MODEL_MIN_PER_CLASS */
++  minPerClass: number;
++}
++
++export type ModelStatus = "insufficient_data" | "no_pattern" | "active";
++
++export interface ResponseModel {
++  scaling: FeatureScaling;
++  intercept: number;
++  /** Aligned with scaling.keys. */
++  coefficients: number[];
++  /** (k+1) x (k+1), index 0 = intercept. */
++  covariance: number[][];
++}
++
++export interface ModelResult {
++  status: ModelStatus;
++  /** Training rows: decided response labels with eligible-match factor scores. */
++  decided: number;
++  responses: number;
++  nonResponses: number;
++  minDecided: number;
++  minPerClass: number;
++  /** Mean leave-one-out log-loss of the model and of the base-rate baseline; null when not evaluated. */
++  looLogLoss: number | null;
++  baselineLogLoss: number | null;
++  /** Spec §4.4; null unless active. */
++  blendWeight: number | null;
++  /** Null unless active. */
++  model: ResponseModel | null;
++}
++
++export interface TrainingRow {
++  factors: FactorVector;
++  y: 0 | 1;
++}
++
++/** Spec §3: non-external records with a decided response label and an eligible match's factor scores. */
++export function trainingRows(records: readonly OutcomeRecord[]): TrainingRow[] {
++  const rows: TrainingRow[] = [];
++  for (const r of records) {
++    if (r.external || r.factors === null) continue;
++    if (r.response.label === "positive") rows.push({ factors: r.factors, y: 1 });
++    else if (r.response.label === "negative") rows.push({ factors: r.factors, y: 0 });
++  }
++  return rows;
++}
++
++/** Spec §4.4: grows with the data, never above one half. */
++export function blendWeight(decided: number): number {
++  return Math.min(0.5, decided / 200);
++}
++
++/** Fit scaling + ridge logistic regression on these rows; null when no factor varies or the fit fails. */
++export function fitModel(rows: readonly TrainingRow[]): ResponseModel | null {
++  const scaling = fitScaling(rows.map((r) => r.factors));
++  if (scaling.keys.length === 0) return null;
++  const fit = fitLogistic(rows.map((r) => standardize(scaling, r.factors)), rows.map((r) => r.y), RIDGE_LAMBDA);
++  if (fit === null) return null;
++  return { scaling, intercept: fit.intercept, coefficients: fit.coefficients, covariance: fit.covariance };
++}
++
++/** The model's response probability for one factor vector. */
++export function modelProbability(model: ResponseModel, factors: FactorVector): number {
++  const z = standardize(model.scaling, factors);
++  return sigmoid(model.intercept + z.reduce((sum, value, j) => sum + value * model.coefficients[j], 0));
++}
++
++function logLoss(y: 0 | 1, p: number): number {
++  const q = Math.min(1 - LOG_LOSS_EPSILON, Math.max(LOG_LOSS_EPSILON, p));
++  return -(y * Math.log(q) + (1 - y) * Math.log(1 - q));
++}
++
++/**
++ * Spec §4.3. Gates in order: enough data; then a leave-one-out check that the model predicts held-out
++ * applications better (lower mean log-loss) than simply predicting the rest's response rate; else active.
++ * A fold whose fit fails predicts the baseline for its held-out row (it cannot help the model pass).
++ */
++export function trainResponseModel(records: readonly OutcomeRecord[], settings: ModelSettings): ModelResult {
++  const rows = trainingRows(records);
++  const responses = rows.filter((r) => r.y === 1).length;
++  const base = {
++    decided: rows.length, responses, nonResponses: rows.length - responses,
++    minDecided: settings.minDecided, minPerClass: settings.minPerClass,
++  };
++  const insufficient: ModelResult = {
++    ...base, status: "insufficient_data", looLogLoss: null, baselineLogLoss: null, blendWeight: null, model: null,
++  };
++  if (rows.length < settings.minDecided || responses < settings.minPerClass || base.nonResponses < settings.minPerClass) {
++    return insufficient;
++  }
++  const model = fitModel(rows);
++  if (model === null) return insufficient;
++
++  let modelLoss = 0;
++  let baselineLoss = 0;
++  for (let i = 0; i < rows.length; i++) {
++    const rest = rows.filter((_, j) => j !== i);
++    const baseRate = rest.reduce((sum, r) => sum + r.y, 0) / rest.length;
++    const foldModel = fitModel(rest);
++    baselineLoss += logLoss(rows[i].y, baseRate);
++    modelLoss += logLoss(rows[i].y, foldModel === null ? baseRate : modelProbability(foldModel, rows[i].factors));
++  }
++  const looLogLoss = modelLoss / rows.length;
++  const baselineLogLoss = baselineLoss / rows.length;
++  if (!(looLogLoss < baselineLogLoss)) {
++    return { ...base, status: "no_pattern", looLogLoss, baselineLogLoss, blendWeight: null, model: null };
++  }
++  return { ...base, status: "active", looLogLoss, baselineLogLoss, blendWeight: blendWeight(rows.length), model };
++}

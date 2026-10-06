@@ -1,0 +1,286 @@
+diff --git a/apps/web/src/app/api/matches/[jobId]/route.ts b/apps/web/src/app/api/matches/[jobId]/route.ts
+index 18d00e7..7889826 100644
+--- a/apps/web/src/app/api/matches/[jobId]/route.ts
++++ b/apps/web/src/app/api/matches/[jobId]/route.ts
+@@ -2,8 +2,10 @@ import { NextResponse } from "next/server";
+ import { eq } from "drizzle-orm";
+ import { loadEnv } from "@ai-career/config";
+ import { closeDbClient, createDbClient, schema, withUserContext } from "@ai-career/db";
++import { predictResponse } from "@ai-career/insights";
+ import { getJobDetail } from "../../../../lib/jobs/getJobDetail";
+-import { toMatchView } from "../../../../lib/matching/serializeMatch";
++import { factorVectorOf, toMatchView } from "../../../../lib/matching/serializeMatch";
++import { loadResponseModel } from "../../../../lib/insights/responseModel";
+ import { formatValidationError } from "../../../../lib/formatValidationError";
+ import { readJsonBody } from "../../../../lib/readJsonBody";
+ import { MatchActionSchema } from "../../../../lib/matching/matchActionSchema";
+@@ -17,6 +19,7 @@ export async function GET(_request: Request, { params }: { params: Promise<{ job
+   const env = loadEnv();
+   const db = createDbClient(env);
+   try {
++    const { result: model, summary } = await loadResponseModel(db, env);
+     return await withUserContext(db, env.DEFAULT_USER_ID, async (tx) => {
+       const [matchRow] = await tx.select().from(schema.jobMatches).where(eq(schema.jobMatches.jobId, jobId)).limit(1);
+       if (!matchRow) return NextResponse.json({ error: "Match not found" }, { status: 404 });
+@@ -27,7 +30,8 @@ export async function GET(_request: Request, { params }: { params: Promise<{ job
+         .from(schema.applications)
+         .where(eq(schema.applications.jobId, jobId))
+         .limit(1);
+-      return NextResponse.json({ job, match: toMatchView(matchRow), applicationId: application?.id ?? null });
++      const personal = model.model !== null && matchRow.eligible ? predictResponse(model.model, factorVectorOf(matchRow)) : null;
++      return NextResponse.json({ job, match: toMatchView(matchRow, personal), applicationId: application?.id ?? null, model: summary });
+     });
+   } finally {
+     await closeDbClient(db);
+diff --git a/apps/web/src/app/api/matches/route.ts b/apps/web/src/app/api/matches/route.ts
+index 20f7bdd..67d1e94 100644
+--- a/apps/web/src/app/api/matches/route.ts
++++ b/apps/web/src/app/api/matches/route.ts
+@@ -3,6 +3,7 @@ import { loadEnv } from "@ai-career/config";
+ import { closeDbClient, createDbClient, withUserContext } from "@ai-career/db";
+ import { formatValidationError } from "../../../lib/formatValidationError";
+ import { ListMatchesQuerySchema, listMatches } from "../../../lib/matching/listMatches";
++import { loadResponseModel } from "../../../lib/insights/responseModel";
+ 
+ export async function GET(request: Request) {
+   const env = loadEnv();
+@@ -13,8 +14,12 @@ export async function GET(request: Request) {
+ 
+   const db = createDbClient(env);
+   try {
+-    const result = await withUserContext(db, env.DEFAULT_USER_ID, (tx) => listMatches(tx, parsed.data));
+-    return NextResponse.json(result);
++    // Phase 10b: predictions (and, on request, the personal ranking) come from the response model trained on read.
++    const { result: model, summary } = await loadResponseModel(db, env);
++    const result = await withUserContext(db, env.DEFAULT_USER_ID, (tx) =>
++      listMatches(tx, parsed.data, { model: model.model, weight: model.blendWeight })
++    );
++    return NextResponse.json({ ...result, model: summary });
+   } finally {
+     await closeDbClient(db);
+   }
+diff --git a/apps/web/src/lib/matching/listMatches.ts b/apps/web/src/lib/matching/listMatches.ts
+index 5272811..4abe205 100644
+--- a/apps/web/src/lib/matching/listMatches.ts
++++ b/apps/web/src/lib/matching/listMatches.ts
+@@ -1,7 +1,8 @@
+ import { and, count, desc, eq, sql } from "drizzle-orm";
+ import { z } from "zod";
+ import { schema, type DbClient } from "@ai-career/db";
+-import { toMatchView, type MatchView } from "./serializeMatch";
++import { blendedScore, predictResponse, type ResponseModel, type ResponsePrediction } from "@ai-career/insights";
++import { factorVectorOf, toMatchView, type MatchView } from "./serializeMatch";
+ 
+ const { jobMatches, jobs } = schema;
+ 
+@@ -10,6 +11,8 @@ export const PAGE_SIZE = 25;
+ export const ListMatchesQuerySchema = z.object({
+   eligible: z.enum(["true", "false"]).default("true"),
+   page: z.coerce.number().int().min(1).max(1000).default(1),
++  /** Phase 10b: "personal" re-sorts the eligible list by the blended score when the response model is active. */
++  rank: z.enum(["default", "personal"]).default("default"),
+ });
+ export type ListMatchesQuery = z.infer<typeof ListMatchesQuerySchema>;
+ 
+@@ -22,65 +25,111 @@ export interface MatchListItem {
+   match: MatchView;
+ }
+ 
++/** The active response model (or null) and its blend weight, from loadResponseModel. */
++export interface PersonalRanking {
++  model: ResponseModel | null;
++  weight: number | null;
++}
++
++export interface MatchListResult {
++  matches: MatchListItem[];
++  page: number;
++  pageSize: number;
++  total: number;
++  /** The order actually used -- "personal" only when it was requested, the list is eligible and the model is active. */
++  ranking: "default" | "personal";
++}
++
+ export async function listMatches(
+   tx: DbClient,
+-  query: ListMatchesQuery
+-): Promise<{ matches: MatchListItem[]; page: number; pageSize: number; total: number }> {
++  query: ListMatchesQuery,
++  personal: PersonalRanking = { model: null, weight: null }
++): Promise<MatchListResult> {
+   const eligible = query.eligible === "true";
+   // A job can close between matching runs; runMatching then marks its row ineligible ("posting has closed"),
+   // but until that next run the eligible list must not offer a job that can no longer be applied to.
+   const where = eligible ? and(eq(jobMatches.eligible, true), eq(jobs.status, "open")) : eq(jobMatches.eligible, false);
+ 
+-  const rows = await tx
+-    .select({
+-      id: jobMatches.id,
+-      jobId: jobMatches.jobId,
+-      eligible: jobMatches.eligible,
+-      ineligibleReason: jobMatches.ineligibleReason,
+-      skillsScore: jobMatches.skillsScore,
+-      experienceScore: jobMatches.experienceScore,
+-      locationScore: jobMatches.locationScore,
+-      sponsorshipScore: jobMatches.sponsorshipScore,
+-      roleScore: jobMatches.roleScore,
+-      salaryScore: jobMatches.salaryScore,
+-      industryScore: jobMatches.industryScore,
+-      freshnessScore: jobMatches.freshnessScore,
+-      semanticScore: jobMatches.semanticScore,
+-      overallScore: jobMatches.overallScore,
+-      explanation: jobMatches.explanation,
+-      explanationModel: jobMatches.explanationModel,
+-      explanationDescriptionHash: jobMatches.explanationDescriptionHash,
+-      explanationGeneratedAt: jobMatches.explanationGeneratedAt,
+-      userAction: jobMatches.userAction,
+-      userActionAt: jobMatches.userActionAt,
+-      computedAt: jobMatches.computedAt,
+-      createdAt: jobMatches.createdAt,
+-      userId: jobMatches.userId,
+-      careerGoalId: jobMatches.careerGoalId,
+-      jobTitle: jobs.title,
+-      companyName: jobs.companyName,
+-      locationRaw: jobs.locationRaw,
+-      workMode: jobs.workMode,
+-    })
+-    .from(jobMatches)
+-    .innerJoin(jobs, eq(jobs.id, jobMatches.jobId))
+-    .where(where)
++  const baseQuery = () =>
++    tx
++      .select({
++        id: jobMatches.id,
++        jobId: jobMatches.jobId,
++        eligible: jobMatches.eligible,
++        ineligibleReason: jobMatches.ineligibleReason,
++        skillsScore: jobMatches.skillsScore,
++        experienceScore: jobMatches.experienceScore,
++        locationScore: jobMatches.locationScore,
++        sponsorshipScore: jobMatches.sponsorshipScore,
++        roleScore: jobMatches.roleScore,
++        salaryScore: jobMatches.salaryScore,
++        industryScore: jobMatches.industryScore,
++        freshnessScore: jobMatches.freshnessScore,
++        semanticScore: jobMatches.semanticScore,
++        overallScore: jobMatches.overallScore,
++        explanation: jobMatches.explanation,
++        explanationModel: jobMatches.explanationModel,
++        explanationDescriptionHash: jobMatches.explanationDescriptionHash,
++        explanationGeneratedAt: jobMatches.explanationGeneratedAt,
++        userAction: jobMatches.userAction,
++        userActionAt: jobMatches.userActionAt,
++        computedAt: jobMatches.computedAt,
++        createdAt: jobMatches.createdAt,
++        userId: jobMatches.userId,
++        careerGoalId: jobMatches.careerGoalId,
++        jobTitle: jobs.title,
++        companyName: jobs.companyName,
++        locationRaw: jobs.locationRaw,
++        workMode: jobs.workMode,
++      })
++      .from(jobMatches)
++      .innerJoin(jobs, eq(jobs.id, jobMatches.jobId))
++      .where(where);
++  type Row = Awaited<ReturnType<typeof baseQuery>>[number];
++
++  const { model, weight } = personal;
++  const predict = (row: Row): ResponsePrediction | null =>
++    model !== null && row.eligible ? predictResponse(model, factorVectorOf(row)) : null;
++  const toItem = (row: Row, prediction: ResponsePrediction | null): MatchListItem => ({
++    jobId: row.jobId,
++    jobTitle: row.jobTitle,
++    companyName: row.companyName,
++    locationRaw: row.locationRaw,
++    workMode: row.workMode,
++    match: toMatchView(row, prediction),
++  });
++
++  if (eligible && query.rank === "personal" && model !== null && weight !== null) {
++    // Phase 10b spec §4.6: blended score desc, then overall score desc, then job id; paged in code.
++    const rows = await baseQuery();
++    const ranked = rows
++      .map((row) => {
++        const prediction = predict(row)!;
++        const overall = Number(row.overallScore ?? 0);
++        return { row, prediction, overall, blended: blendedScore(overall, prediction.probability, weight) };
++      })
++      .sort((a, b) => b.blended - a.blended || b.overall - a.overall || a.row.jobId.localeCompare(b.row.jobId));
++    const start = (query.page - 1) * PAGE_SIZE;
++    return {
++      matches: ranked.slice(start, start + PAGE_SIZE).map((r) => toItem(r.row, r.prediction)),
++      page: query.page,
++      pageSize: PAGE_SIZE,
++      total: rows.length,
++      ranking: "personal",
++    };
++  }
++
++  const rows = await baseQuery()
+     .orderBy(eligible ? sql`${jobMatches.overallScore} DESC NULLS LAST` : desc(jobMatches.computedAt), jobMatches.id)
+     .limit(PAGE_SIZE)
+     .offset((query.page - 1) * PAGE_SIZE);
+   const [{ total }] = await tx.select({ total: count() }).from(jobMatches).innerJoin(jobs, eq(jobs.id, jobMatches.jobId)).where(where);
+ 
+   return {
+-    matches: rows.map((row) => ({
+-      jobId: row.jobId,
+-      jobTitle: row.jobTitle,
+-      companyName: row.companyName,
+-      locationRaw: row.locationRaw,
+-      workMode: row.workMode,
+-      match: toMatchView(row),
+-    })),
++    matches: rows.map((row) => toItem(row, predict(row))),
+     page: query.page,
+     pageSize: PAGE_SIZE,
+     total,
++    ranking: "default",
+   };
+ }
+diff --git a/apps/web/src/lib/matching/serializeMatch.ts b/apps/web/src/lib/matching/serializeMatch.ts
+index 5d76b70..8259e13 100644
+--- a/apps/web/src/lib/matching/serializeMatch.ts
++++ b/apps/web/src/lib/matching/serializeMatch.ts
+@@ -1,4 +1,5 @@
+ import { schema } from "@ai-career/db";
++import type { FactorVector, ResponsePrediction } from "@ai-career/insights";
+ 
+ type MatchRow = typeof schema.jobMatches.$inferSelect;
+ 
+@@ -32,11 +33,13 @@ export interface MatchView {
+   explanation: MatchExplanationView | null;
+   userAction: "none" | "saved" | "dismissed";
+   computedAt: string;
++  /** Phase 10b: the personal response prediction; null unless the model is active and the match is eligible. */
++  personal: ResponsePrediction | null;
+ }
+ 
+ const pct = (value: string | null): number | null => (value === null ? null : Math.round(Number(value) * 100));
+ 
+-export function toMatchView(row: MatchRow): MatchView {
++export function toMatchView(row: MatchRow, personal: ResponsePrediction | null = null): MatchView {
+   return {
+     matchId: row.id,
+     eligible: row.eligible,
+@@ -58,5 +61,20 @@ export function toMatchView(row: MatchRow): MatchView {
+     explanation: row.eligible ? ((row.explanation as MatchExplanationView | null) ?? null) : null,
+     userAction: row.userAction,
+     computedAt: row.computedAt.toISOString(),
++    personal: row.eligible ? personal : null,
++  };
++}
++
++const score = (value: string | null): number | null => (value === null ? null : Number(value));
++
++/** The stored 0-1 factor scores of a match (numeric columns arrive as strings) as the model's input. */
++export function factorVectorOf(
++  row: Pick<MatchRow, "skillsScore" | "experienceScore" | "locationScore" | "sponsorshipScore" | "roleScore" | "salaryScore"
++    | "industryScore" | "freshnessScore" | "semanticScore">
++): FactorVector {
++  return {
++    skillsScore: score(row.skillsScore), experienceScore: score(row.experienceScore), locationScore: score(row.locationScore),
++    sponsorshipScore: score(row.sponsorshipScore), roleScore: score(row.roleScore), salaryScore: score(row.salaryScore),
++    industryScore: score(row.industryScore), freshnessScore: score(row.freshnessScore), semanticScore: score(row.semanticScore),
+   };
+ }

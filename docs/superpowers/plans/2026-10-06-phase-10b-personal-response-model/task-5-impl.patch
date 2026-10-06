@@ -1,0 +1,89 @@
+diff --git a/.env.example b/.env.example
+index 6552e51..ab4ca8b 100644
+--- a/.env.example
++++ b/.env.example
+@@ -65,6 +65,10 @@ VOYAGE_EMBEDDING_MODEL=voyage-3.5
+ # OUTCOME_UNDECIDED_DAYS=30
+ # Minimum decided applications in a group before the Insights page shows a rate for it (at least 2).
+ # INSIGHTS_MIN_BUCKET=5
++# Phase 10b personal response model. Decided applications (with match scores) needed before the model is tried
++# (at least 10), and the minimum number with and without a response (at least 3).
++# OUTCOME_MODEL_MIN_DECIDED=30
++# OUTCOME_MODEL_MIN_PER_CLASS=8
+ 
+ # Phase 8 browser autofill (services/browser-worker, run on the host, not in Docker).
+ # Override the Chrome binary the worker launches; omitted, it uses Playwright's "chrome" channel.
+diff --git a/apps/web/src/lib/insights/responseModel.ts b/apps/web/src/lib/insights/responseModel.ts
+new file mode 100644
+index 0000000..79b8f06
+--- /dev/null
++++ b/apps/web/src/lib/insights/responseModel.ts
+@@ -0,0 +1,53 @@
++import type { DbClient } from "@ai-career/db";
++import {
++  buildOutcomeDataset, loadInsightInputs, summarizeModel, trainResponseModel,
++  type ModelResult, type ModelSummary, type OutcomeRecord,
++} from "@ai-career/insights";
++
++/** The env fields the response model needs (Phase 10b spec §8, plus 10a's cutoff for the labels). */
++export interface ResponseModelEnv {
++  DEFAULT_USER_ID: string;
++  OUTCOME_UNDECIDED_DAYS: number;
++  OUTCOME_MODEL_MIN_DECIDED: number;
++  OUTCOME_MODEL_MIN_PER_CLASS: number;
++}
++
++export interface LoadedResponseModel {
++  result: ModelResult;
++  summary: ModelSummary;
++}
++
++const degraded = (env: ResponseModelEnv): ModelResult => ({
++  status: "no_pattern", decided: 0, responses: 0, nonResponses: 0,
++  minDecided: env.OUTCOME_MODEL_MIN_DECIDED, minPerClass: env.OUTCOME_MODEL_MIN_PER_CLASS,
++  looLogLoss: null, baselineLogLoss: null, blendWeight: null, model: null,
++});
++
++/**
++ * Phase 10b spec §5: the model must never make a request fail. Any error while training is logged by class name
++ * only (CLAUDE.md §9 -- no application content) and reported as `no_pattern`, which keeps the default ranking.
++ */
++export function trainResponseModelSafely(records: readonly OutcomeRecord[], env: ResponseModelEnv): LoadedResponseModel {
++  let result: ModelResult;
++  try {
++    result = trainResponseModel(records, { minDecided: env.OUTCOME_MODEL_MIN_DECIDED, minPerClass: env.OUTCOME_MODEL_MIN_PER_CLASS });
++  } catch (error) {
++    console.error(JSON.stringify({ event: "response_model_failed", error: error instanceof Error ? error.name : "unknown" }));
++    result = degraded(env);
++  }
++  return { result, summary: summarizeModel(result) };
++}
++
++/** Loads the user's outcome dataset and trains the response model, degrading to `no_pattern` on any error. */
++export async function loadResponseModel(db: DbClient, env: ResponseModelEnv, now: Date = new Date()): Promise<LoadedResponseModel> {
++  let records: OutcomeRecord[];
++  try {
++    const inputs = await loadInsightInputs(db, env.DEFAULT_USER_ID);
++    records = buildOutcomeDataset(inputs, { now, undecidedDays: env.OUTCOME_UNDECIDED_DAYS });
++  } catch (error) {
++    console.error(JSON.stringify({ event: "response_model_failed", error: error instanceof Error ? error.name : "unknown" }));
++    const result = degraded(env);
++    return { result, summary: summarizeModel(result) };
++  }
++  return trainResponseModelSafely(records, env);
++}
+diff --git a/packages/config/src/env.ts b/packages/config/src/env.ts
+index 2a79ca5..b99a985 100644
+--- a/packages/config/src/env.ts
++++ b/packages/config/src/env.ts
+@@ -46,6 +46,10 @@ const envSchema = z
+     OUTCOME_UNDECIDED_DAYS: z.coerce.number().int().min(1).default(30),
+     // Phase 10a insights. Fewer decided applications than this in a bucket shows counts only, never a rate.
+     INSIGHTS_MIN_BUCKET: z.coerce.number().int().min(2).default(5),
++    // Phase 10b personal response model gate (spec §4.3): decided applications with eligible-match factor scores
++    // needed before the model is evaluated at all, and the minimum of each class (responses / non-responses).
++    OUTCOME_MODEL_MIN_DECIDED: z.coerce.number().int().min(10).default(30),
++    OUTCOME_MODEL_MIN_PER_CLASS: z.coerce.number().int().min(3).default(8),
+     // Phase 8 browser automation (services/browser-worker only). Chrome is found via Playwright's
+     // channel "chrome" unless an explicit executable path is given. Headless is for tests: the whole
+     // point of a session is a visible window the user finishes and submits.

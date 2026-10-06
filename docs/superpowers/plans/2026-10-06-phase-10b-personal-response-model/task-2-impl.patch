@@ -1,0 +1,70 @@
+diff --git a/packages/insights/src/dataset/buildOutcomeDataset.ts b/packages/insights/src/dataset/buildOutcomeDataset.ts
+index 1bcaaaf..34f52f7 100644
+--- a/packages/insights/src/dataset/buildOutcomeDataset.ts
++++ b/packages/insights/src/dataset/buildOutcomeDataset.ts
+@@ -55,6 +55,7 @@ export function buildOutcomeDataset(inputs: InsightInputs, opts: { now: Date; un
+       postingAgeDays: snapshot.postingAgeDays,
+       documents: snapshot.documents,
+       missedRequiredTerms: snapshot.missedRequiredTerms,
++      factors: snapshot.factors,
+     };
+   });
+ }
+diff --git a/packages/insights/src/dataset/parseSnapshot.ts b/packages/insights/src/dataset/parseSnapshot.ts
+index 2ce7906..793c03d 100644
+--- a/packages/insights/src/dataset/parseSnapshot.ts
++++ b/packages/insights/src/dataset/parseSnapshot.ts
+@@ -1,4 +1,5 @@
+-import type { DocumentsSent } from "../types";
++import { FACTOR_KEYS } from "@ai-career/matching/scoring";
++import type { DocumentsSent, FactorVector } from "../types";
+ 
+ /** The parts of a feature snapshot (v1 or v2, packages/applications/src/snapshot.ts) the dataset uses. */
+ export interface ParsedSnapshot {
+@@ -17,6 +18,8 @@ export interface ParsedSnapshot {
+   /** v2 only; null for v1 snapshots and for applications sent without an optimized resume. */
+   missedRequiredTerms: string[] | null;
+   documents: DocumentsSent | null;
++  /** Phase 10b: the 9 factor scores (0-1) of an eligible match; null when there is no eligible match. */
++  factors: FactorVector | null;
+ }
+ 
+ type Obj = Record<string, unknown>;
+@@ -63,5 +66,8 @@ export function parseSnapshot(raw: unknown): ParsedSnapshot {
+           edited: [documents.pitch, documents.coverLetter].some((d) => obj(d)?.origin === "user_edited"),
+         }
+       : null,
++    factors: match && match.eligible === true
++      ? (Object.fromEntries(FACTOR_KEYS.map((key) => [key, num(match[key])])) as FactorVector)
++      : null,
+   };
+ }
+diff --git a/packages/insights/src/types.ts b/packages/insights/src/types.ts
+index 456dcc8..de60802 100644
+--- a/packages/insights/src/types.ts
++++ b/packages/insights/src/types.ts
+@@ -1,4 +1,5 @@
+ import type { schema } from "@ai-career/db";
++import type { FactorScores } from "@ai-career/matching/scoring";
+ 
+ /** Single source of truth: the Postgres enum's values (same as packages/applications). */
+ export type ApplicationStatus = (typeof schema.applicationStatusEnum.enumValues)[number];
+@@ -60,6 +61,11 @@ export interface Interval {
+   high: number;
+ }
+ 
++/** One of matching's 9 factor names (skillsScore ... semanticScore). */
++export type FactorKey = keyof FactorScores;
++/** The 9 factor scores (0-1) of a match; null where the score is unknown (e.g. no comparable salary). */
++export type FactorVector = Record<FactorKey, number | null>;
++
+ export interface DocumentsSent {
+   resume: boolean;
+   pitch: boolean;
+@@ -89,4 +95,6 @@ export interface OutcomeRecord {
+   postingAgeDays: number | null;
+   documents: DocumentsSent | null;
+   missedRequiredTerms: string[] | null;
++  /** Phase 10b: the eligible match's 9 factor scores at apply time; null without an eligible match. */
++  factors: FactorVector | null;
+ }

@@ -1,0 +1,184 @@
+diff --git a/apps/web/src/lib/insights/loadResponseModel.test.ts b/apps/web/src/lib/insights/loadResponseModel.test.ts
+new file mode 100644
+index 0000000..2743ac6
+--- /dev/null
++++ b/apps/web/src/lib/insights/loadResponseModel.test.ts
+@@ -0,0 +1,40 @@
++import { describe, it, expect, beforeAll, beforeEach, afterAll } from "vitest";
++import type postgres from "postgres";
++import { closeDbClient, createDbClient, type DbClient } from "@ai-career/db";
++import { openAdminDb, wipeMatchingData, insertModelHistory } from "../../test/jobsDb";
++import { loadResponseModel } from "./responseModel";
++
++const USER = "00000000-0000-0000-0000-000000000a07";
++const ENV = { DEFAULT_USER_ID: USER, OUTCOME_UNDECIDED_DAYS: 30, OUTCOME_MODEL_MIN_DECIDED: 30, OUTCOME_MODEL_MIN_PER_CLASS: 8 };
++let admin: postgres.Sql;
++let db: DbClient;
++
++beforeAll(async () => {
++  admin = await openAdminDb();
++  db = createDbClient({
++    DATABASE_URL: process.env.TEST_APP_DATABASE_URL ?? "postgres://career_intel_app:career_intel_app@localhost:5432/career_intel_test",
++  });
++});
++beforeEach(() => wipeMatchingData(admin, USER));
++afterAll(async () => {
++  await wipeMatchingData(admin, USER);
++  await closeDbClient(db);
++  await admin.end();
++});
++
++describe("loadResponseModel", () => {
++  it("is insufficient_data for a user with no history", async () => {
++    const { summary } = await loadResponseModel(db, ENV);
++    expect(summary).toMatchObject({ status: "insufficient_data", decided: 0 });
++  });
++
++  it("trains an active model from the user's stored applications", async () => {
++    await insertModelHistory(admin, USER, 40);
++    const { result, summary } = await loadResponseModel(db, ENV, new Date("2026-10-06T12:00:00Z"));
++    expect(summary).toEqual({
++      status: "active", decided: 40, responses: 20, nonResponses: 20, minDecided: 30, minPerClass: 8, blendWeight: 0.2,
++    });
++    expect(result.model!.scaling.keys).toContain("skillsScore");
++    expect(result.model!.scaling.keys).not.toContain("salaryScore");
++  });
++});
+diff --git a/apps/web/src/lib/insights/responseModel.test.ts b/apps/web/src/lib/insights/responseModel.test.ts
+new file mode 100644
+index 0000000..1c56d89
+--- /dev/null
++++ b/apps/web/src/lib/insights/responseModel.test.ts
+@@ -0,0 +1,35 @@
++import { describe, it, expect, vi, afterEach } from "vitest";
++
++vi.mock("@ai-career/insights", async (importOriginal) => {
++  const actual = await importOriginal<typeof import("@ai-career/insights")>();
++  return { ...actual, trainResponseModel: vi.fn(actual.trainResponseModel) };
++});
++
++import { trainResponseModel } from "@ai-career/insights";
++import { trainResponseModelSafely } from "./responseModel";
++
++const ENV = { DEFAULT_USER_ID: "u", OUTCOME_UNDECIDED_DAYS: 30, OUTCOME_MODEL_MIN_DECIDED: 30, OUTCOME_MODEL_MIN_PER_CLASS: 8 };
++
++afterEach(() => vi.restoreAllMocks());
++
++describe("trainResponseModelSafely", () => {
++  it("passes the env gate settings through and summarizes the result", () => {
++    const { result, summary } = trainResponseModelSafely([], ENV);
++    expect(result.status).toBe("insufficient_data");
++    expect(summary).toEqual({
++      status: "insufficient_data", decided: 0, responses: 0, nonResponses: 0, minDecided: 30, minPerClass: 8, blendWeight: null,
++    });
++  });
++
++  it("degrades to no_pattern when training throws, logging only the error class", () => {
++    vi.mocked(trainResponseModel).mockImplementationOnce(() => {
++      throw new RangeError("secret application text");
++    });
++    const log = vi.spyOn(console, "error").mockImplementation(() => undefined);
++    const { result, summary } = trainResponseModelSafely([], ENV);
++    expect(result).toMatchObject({ status: "no_pattern", model: null, blendWeight: null });
++    expect(summary.status).toBe("no_pattern");
++    expect(log).toHaveBeenCalledWith(JSON.stringify({ event: "response_model_failed", error: "RangeError" }));
++    expect(log.mock.calls.flat().join(" ")).not.toContain("secret");
++  });
++});
+diff --git a/apps/web/src/test/jobsDb.ts b/apps/web/src/test/jobsDb.ts
+index acd5760..0cdd63d 100644
+--- a/apps/web/src/test/jobsDb.ts
++++ b/apps/web/src/test/jobsDb.ts
+@@ -59,6 +59,11 @@ export async function insertCareerGoal(
+   return row.id as string;
+ }
+ 
++/** The 9 match factor names (job_matches columns / feature snapshot match fields). */
++export type ModelFactorKey =
++  | "skillsScore" | "experienceScore" | "locationScore" | "sponsorshipScore" | "roleScore" | "salaryScore" | "industryScore"
++  | "freshnessScore" | "semanticScore";
++
+ export async function insertMatch(
+   adminSql: postgres.Sql,
+   userId: string,
+@@ -71,14 +76,20 @@ export async function insertMatch(
+     skillsScore?: number | null;
+     explanation?: object | null;
+     userAction?: "none" | "saved" | "dismissed";
++    /** Phase 10b: the other eight factor scores (0-1); omitted ones stay null. */
++    factors?: Partial<Record<Exclude<ModelFactorKey, "skillsScore">, number>>;
+   } = {}
+ ): Promise<string> {
+   const eligible = opts.eligible ?? true;
++  const f = eligible ? (opts.factors ?? {}) : {};
+   const [row] = await adminSql`
+     INSERT INTO job_matches (user_id, job_id, career_goal_id, eligible, ineligible_reason, overall_score, skills_score,
+-                              explanation, user_action, computed_at)
++                              experience_score, location_score, sponsorship_score, role_score, salary_score, industry_score,
++                              freshness_score, semantic_score, explanation, user_action, computed_at)
+     VALUES (${userId}, ${jobId}, ${careerGoalId}, ${eligible}, ${opts.ineligibleReason ?? null},
+             ${eligible ? (opts.overallScore ?? 75) : null}, ${eligible ? (opts.skillsScore ?? 0.8) : null},
++            ${f.experienceScore ?? null}, ${f.locationScore ?? null}, ${f.sponsorshipScore ?? null}, ${f.roleScore ?? null},
++            ${f.salaryScore ?? null}, ${f.industryScore ?? null}, ${f.freshnessScore ?? null}, ${f.semanticScore ?? null},
+             ${opts.explanation ? JSON.stringify(opts.explanation) : null}::jsonb, ${opts.userAction ?? "none"}, now())
+     RETURNING id`;
+   return row.id as string;
+@@ -296,3 +307,35 @@ export async function insertAutomationSession(
+     RETURNING id`;
+   return row.id as string;
+ }
++
++/**
++ * Phase 10b: `n` decided ingested applications (no job row; snapshot v2 with an eligible match) whose response follows
++ * the skills factor -- skills above 0.5 reached screening, the rest were rejected. The other varying factors are fixed
++ * permutations, so the history is deterministic and the response model trained on it is active (>= 30 decided,
++ * >= 8 per class, beats the base rate on leave-one-out).
++ */
++export async function insertModelHistory(adminSql: postgres.Sql, userId: string, n = 40): Promise<void> {
++  const step = (k: number, i: number) => (((i * k) % n) + 0.5) / n;
++  for (let i = 0; i < n; i++) {
++    const skills = (i + 0.5) / n;
++    const responded = skills > 0.5;
++    const status = responded ? "screening" : "rejected";
++    const snapshot = {
++      snapshotVersion: 2, external: false, job: {}, ats: null, documents: null,
++      match: {
++        careerGoalId: null, eligible: true, overallScore: 70, computedAt: "2026-09-01T00:00:00.000Z",
++        skillsScore: skills, experienceScore: step(7, i), locationScore: step(11, i), sponsorshipScore: step(13, i),
++        roleScore: step(17, i), salaryScore: null, industryScore: step(19, i), freshnessScore: step(23, i), semanticScore: step(29, i),
++      },
++    };
++    const [row] = await adminSql`
++      INSERT INTO applications (user_id, job_id, company_name, job_title, status, status_changed_at, applied_at, feature_snapshot, terminal_at)
++      VALUES (${userId}, null, 'Acme', 'Data Engineer', ${status}, now(), '2026-09-01', ${JSON.stringify(snapshot)}::jsonb,
++              ${responded ? null : new Date().toISOString()}::timestamptz)
++      RETURNING id`;
++    await adminSql`
++      INSERT INTO application_events (user_id, application_id, type, occurred_at, from_status, to_status) VALUES
++        (${userId}, ${row.id}, 'status_change', '2026-09-01T09:00:00Z', null, 'applied'),
++        (${userId}, ${row.id}, 'status_change', '2026-09-03T09:00:00Z', 'applied', ${status})`;
++  }
++}
+diff --git a/packages/config/src/env.test.ts b/packages/config/src/env.test.ts
+index 36a4de9..c00b365 100644
+--- a/packages/config/src/env.test.ts
++++ b/packages/config/src/env.test.ts
+@@ -144,4 +144,18 @@ describe("loadEnv", () => {
+     expect(() => loadEnv({ ...validSource, INSIGHTS_MIN_BUCKET: "1" })).toThrow(/INSIGHTS_MIN_BUCKET/);
+     expect(() => loadEnv({ ...validSource, INSIGHTS_MIN_BUCKET: "2.5" })).toThrow(/INSIGHTS_MIN_BUCKET/);
+   });
++
++  it("defaults the Phase 10b response-model gate", () => {
++    const env = loadEnv(validSource);
++    expect(env.OUTCOME_MODEL_MIN_DECIDED).toBe(30);
++    expect(env.OUTCOME_MODEL_MIN_PER_CLASS).toBe(8);
++  });
++
++  it("parses and bounds the Phase 10b response-model gate", () => {
++    const env = loadEnv({ ...validSource, OUTCOME_MODEL_MIN_DECIDED: "50", OUTCOME_MODEL_MIN_PER_CLASS: "12" });
++    expect(env.OUTCOME_MODEL_MIN_DECIDED).toBe(50);
++    expect(env.OUTCOME_MODEL_MIN_PER_CLASS).toBe(12);
++    expect(() => loadEnv({ ...validSource, OUTCOME_MODEL_MIN_DECIDED: "9" })).toThrow(/OUTCOME_MODEL_MIN_DECIDED/);
++    expect(() => loadEnv({ ...validSource, OUTCOME_MODEL_MIN_PER_CLASS: "2" })).toThrow(/OUTCOME_MODEL_MIN_PER_CLASS/);
++  });
+ });

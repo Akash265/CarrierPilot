@@ -1,0 +1,290 @@
+diff --git a/apps/web/src/app/insights/InsightsClient.test.tsx b/apps/web/src/app/insights/InsightsClient.test.tsx
+index 4c768e6..90e7ddf 100644
+--- a/apps/web/src/app/insights/InsightsClient.test.tsx
++++ b/apps/web/src/app/insights/InsightsClient.test.tsx
+@@ -14,6 +14,11 @@ const bucket = (over: Partial<Bucket>): Bucket => ({
+ });
+ const dimension = (key: Dimension["key"], title: string, buckets: Bucket[], unknownCount = 0): Dimension => ({ key, title, buckets, unknownCount });
+ 
++const MODEL_OFF: InsightsResponse["model"] = {
++  status: "insufficient_data", decided: 12, responses: 3, nonResponses: 9, minDecided: 30, minPerClass: 8, blendWeight: null,
++  looLogLoss: null, baselineLogLoss: null, factors: [],
++};
++
+ function payload(over: Partial<InsightsResponse> = {}): InsightsResponse {
+   return {
+     settings: { undecidedDays: 30, minBucket: 5 },
+@@ -39,6 +44,7 @@ function payload(over: Partial<InsightsResponse> = {}): InsightsResponse {
+       negativesWithData: 20,
+       positivesWithData: 3,
+     },
++    model: MODEL_OFF,
+     ...over,
+   };
+ }
+@@ -156,4 +162,45 @@ describe("InsightsClient", () => {
+     render(<InsightsClient />);
+     expect(await screen.findByRole("alert")).toHaveTextContent("Could not load insights. Try again.");
+   });
++
++  it("shows the response model's progress toward its minimum", async () => {
++    mockFetch(payload());
++    render(<InsightsClient />);
++    const section = await screen.findByRole("region", { name: "Your response model" });
++    expect(section).toHaveTextContent(
++      "The model needs 30 decided applications with match scores, including at least 8 with a response and 8 without. You have 12 (3 with a response, 9 without)."
++    );
++    expect(section).toHaveTextContent("It is not a cause or a guarantee.");
++  });
++
++  it("explains an active model: the honesty check, the blend weight and each factor's direction", async () => {
++    mockFetch(payload({
++      model: {
++        status: "active", decided: 40, responses: 20, nonResponses: 20, minDecided: 30, minPerClass: 8, blendWeight: 0.2,
++        looLogLoss: 0.412, baselineLogLoss: 0.693,
++        factors: [
++          { key: "skillsScore", label: "Skills", direction: "higher", oddsRatio: 3.41 },
++          { key: "freshnessScore", label: "Freshness", direction: "lower", oddsRatio: 1.24 },
++          { key: "roleScore", label: "Role", direction: "lower", oddsRatio: 1.03 },
++          { key: "experienceScore", label: "Experience", direction: "higher", oddsRatio: 1.01 },
++        ],
++      },
++    }));
++    render(<InsightsClient />);
++    const section = await screen.findByRole("region", { name: "Your response model" });
++    expect(section).toHaveTextContent("Predicts responses better than your average: yes (error 0.412 vs 0.693 for your average; lower is better).");
++    expect(section).toHaveTextContent('Turning on "Rank with my history" on Matches blends this model in at 20% of the ranking.');
++    expect(within(section).getByText("Skills: a higher score has gone with more responses (odds ×3.4 per typical step).")).toBeInTheDocument();
++    expect(within(section).getByText("Freshness: a higher score has gone with fewer responses (odds ÷1.2 per typical step).")).toBeInTheDocument();
++    expect(within(section).getByText("Little or no link so far: Role, Experience.")).toBeInTheDocument();
++    expect(section).not.toHaveTextContent("Role: a higher score");
++  });
++
++  it("says when the history shows no pattern", async () => {
++    mockFetch(payload({ model: { ...MODEL_OFF, status: "no_pattern", decided: 40, responses: 20, nonResponses: 20, looLogLoss: 0.71, baselineLogLoss: 0.693 } }));
++    render(<InsightsClient />);
++    const section = await screen.findByRole("region", { name: "Your response model" });
++    expect(section).toHaveTextContent("Predicts responses better than your average: no (error 0.710 vs 0.693 for your average; lower is better).");
++    expect(section).toHaveTextContent("Your history doesn't show a pattern that beats your average yet, so ranking stays as it is.");
++  });
+ });
+diff --git a/apps/web/src/app/matches/MatchesClient.test.tsx b/apps/web/src/app/matches/MatchesClient.test.tsx
+index 89ce386..5e7991b 100644
+--- a/apps/web/src/app/matches/MatchesClient.test.tsx
++++ b/apps/web/src/app/matches/MatchesClient.test.tsx
+@@ -1,7 +1,8 @@
+ // @vitest-environment jsdom
+ import { describe, it, expect, vi, beforeEach } from "vitest";
+-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
++import { render, screen, fireEvent, waitFor, act } from "@testing-library/react";
+ import { MatchesClient } from "./MatchesClient";
++import { resetRankPreferenceForTests, writeRankPreference } from "../../lib/insights/rankPreference";
+ 
+ const matchItem = (over: Record<string, unknown> = {}) => ({
+   jobId: "j1", jobTitle: "Data Engineer", companyName: "Acme", locationRaw: "Berlin", workMode: "remote",
+@@ -26,7 +27,15 @@ function mockFetch(handlers: Record<string, Handler>) {
+   return fn;
+ }
+ 
+-beforeEach(() => vi.unstubAllGlobals());
++beforeEach(() => {
++  vi.unstubAllGlobals();
++  window.localStorage.clear();
++  resetRankPreferenceForTests();
++});
++
++const MODEL_OFF = { status: "insufficient_data", decided: 12, responses: 3, nonResponses: 9, minDecided: 30, minPerClass: 8, blendWeight: null };
++const MODEL_ON = { status: "active", decided: 40, responses: 20, nonResponses: 20, minDecided: 30, minPerClass: 8, blendWeight: 0.2 };
++const PERSONAL = { probability: 0.354, low: 0.221, high: 0.498, raises: ["Skills"], lowers: [] };
+ 
+ describe("MatchesClient", () => {
+   it("shows a helpful empty state", async () => {
+@@ -155,4 +164,78 @@ describe("MatchesClient", () => {
+     expect(await screen.findByText("You dismissed this job.")).toBeInTheDocument();
+     expect(screen.queryByText("A strong overall match.")).not.toBeInTheDocument();
+   });
++
++  it("disables Rank with my history and says why while the model is not active", async () => {
++    mockFetch({
++      "GET /api/matches?eligible=true&page=1": () => ({ body: { matches: [matchItem()], page: 1, pageSize: 25, total: 1, ranking: "default", model: MODEL_OFF } }),
++      "GET /api/matches/runs/latest": () => ({ body: { run: null } }),
++    });
++    render(<MatchesClient />);
++    expect(await screen.findByText("Needs 30 decided applications with at least 8 responses and 8 without. You have 12 (3 with a response)."))
++      .toBeInTheDocument();
++    expect(screen.getByRole("checkbox", { name: "Rank with my history" })).toBeDisabled();
++  });
++
++  it("shows each match's likely response and ranks with history when turned on, remembering the choice", async () => {
++    const fetchMock = mockFetch({
++      "GET /api/matches?eligible=true&page=1": () => ({
++        body: { matches: [matchItem({ personal: PERSONAL })], page: 1, pageSize: 25, total: 1, ranking: "default", model: MODEL_ON },
++      }),
++      "GET /api/matches?eligible=true&page=1&rank=personal": () => ({
++        body: { matches: [matchItem({ personal: PERSONAL })], page: 1, pageSize: 25, total: 1, ranking: "personal", model: MODEL_ON },
++      }),
++      "GET /api/matches/runs/latest": () => ({ body: { run: null } }),
++    });
++    render(<MatchesClient />);
++    expect(await screen.findByText("Your history: likely response 35% (22–50%)")).toBeInTheDocument();
++    const toggle = screen.getByRole("checkbox", { name: "Rank with my history" });
++    expect(toggle).toBeEnabled();
++    expect(toggle).not.toBeChecked();
++
++    fireEvent.click(toggle);
++    expect(await screen.findByText("Ranked with your history (weight 20%)")).toBeInTheDocument();
++    expect(fetchMock).toHaveBeenCalledWith("/api/matches?eligible=true&page=1&rank=personal");
++    expect(window.localStorage.getItem("careerpilot.rankWithHistory")).toBe("1");
++  });
++
++  it("requests the personal ranking from the start when it was turned on before", async () => {
++    window.localStorage.setItem("careerpilot.rankWithHistory", "1");
++    mockFetch({
++      "GET /api/matches?eligible=true&page=1&rank=personal": () => ({
++        body: { matches: [matchItem({ personal: PERSONAL })], page: 1, pageSize: 25, total: 1, ranking: "personal", model: MODEL_ON },
++      }),
++      "GET /api/matches/runs/latest": () => ({ body: { run: null } }),
++    });
++    render(<MatchesClient />);
++    expect(await screen.findByText("Ranked with your history (weight 20%)")).toBeInTheDocument();
++    expect(screen.getByRole("checkbox", { name: "Rank with my history" })).toBeChecked();
++  });
++
++  it("ignores a slower, older response: only the latest request may update the list", async () => {
++    let releaseDefault: () => void = () => undefined;
++    const defaultBody = { matches: [matchItem({ personal: PERSONAL })], page: 1, pageSize: 25, total: 1, ranking: "default", model: MODEL_ON };
++    const personalBody = { ...defaultBody, ranking: "personal" };
++    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
++      if (url === "/api/matches/runs/latest") return { ok: true, status: 200, json: async () => ({ run: null }) } as Response;
++      if (url === "/api/matches?eligible=true&page=1") {
++        await new Promise<void>((resolve) => {
++          releaseDefault = resolve;
++        });
++        return { ok: true, status: 200, json: async () => defaultBody } as Response;
++      }
++      return { ok: true, status: 200, json: async () => personalBody } as Response;
++    }));
++
++    render(<MatchesClient />);
++    await waitFor(() => expect(screen.getByRole("checkbox", { name: "Rank with my history" })).toBeInTheDocument());
++    // The default request is still in flight; the user's choice issues a newer personal request.
++    act(() => writeRankPreference(true));
++    expect(await screen.findByText("Ranked with your history (weight 20%)")).toBeInTheDocument();
++
++    await act(async () => {
++      releaseDefault();
++      await new Promise((resolve) => setTimeout(resolve, 0));
++    });
++    expect(screen.getByText("Ranked with your history (weight 20%)")).toBeInTheDocument();
++  });
+ });
+diff --git a/apps/web/src/app/matches/[jobId]/MatchDetailClient.test.tsx b/apps/web/src/app/matches/[jobId]/MatchDetailClient.test.tsx
+index 6d61ec9..0cec308 100644
+--- a/apps/web/src/app/matches/[jobId]/MatchDetailClient.test.tsx
++++ b/apps/web/src/app/matches/[jobId]/MatchDetailClient.test.tsx
+@@ -43,6 +43,25 @@ function mockFetch(matchBody: unknown, matchStatus = 200) {
+ beforeEach(() => vi.unstubAllGlobals());
+ 
+ describe("MatchDetailClient", () => {
++  it("shows the personal response prediction and the factors behind it when present", async () => {
++    mockFetch({
++      job, applicationId: null,
++      match: { ...match, personal: { probability: 0.62, low: 0.41, high: 0.79, raises: ["Skills", "Role"], lowers: ["Freshness"] } },
++    });
++    render(<MatchDetailClient jobId="j1" />);
++    const section = await screen.findByRole("region", { name: "Your history" });
++    expect(section).toHaveTextContent("Your history: likely response 62% (41–79%)");
++    expect(section).toHaveTextContent("Raises: Skills, Role · Lowers: Freshness");
++    expect(section).toHaveTextContent("not a cause or a guarantee");
++  });
++
++  it("shows no history section without a prediction", async () => {
++    mockFetch({ job, applicationId: null, match: { ...match, personal: null } });
++    render(<MatchDetailClient jobId="j1" />);
++    await screen.findByRole("heading", { name: "Data Engineer" });
++    expect(screen.queryByRole("region", { name: "Your history" })).not.toBeInTheDocument();
++  });
++
+   it("shows the job, score, and the strong/partial/gap breakdown", async () => {
+     mockFetch({ job, match });
+     render(<MatchDetailClient jobId="j1" />);
+diff --git a/apps/web/src/lib/insights/formatPersonal.test.ts b/apps/web/src/lib/insights/formatPersonal.test.ts
+new file mode 100644
+index 0000000..e741c94
+--- /dev/null
++++ b/apps/web/src/lib/insights/formatPersonal.test.ts
+@@ -0,0 +1,25 @@
++import { describe, it, expect } from "vitest";
++import { formatFactorPushes, formatLikelyResponse, modelUnavailableReason } from "./formatPersonal";
++
++const P = { probability: 0.354, low: 0.221, high: 0.498, raises: ["Skills", "Role"], lowers: ["Freshness"] };
++
++describe("formatPersonal", () => {
++  it("states the likely response with its range", () => {
++    expect(formatLikelyResponse(P)).toBe("likely response 35% (22–50%)");
++  });
++
++  it("lists the factors that raise and lower it, omitting an empty side", () => {
++    expect(formatFactorPushes(P)).toBe("Raises: Skills, Role · Lowers: Freshness");
++    expect(formatFactorPushes({ ...P, raises: [] })).toBe("Lowers: Freshness");
++    expect(formatFactorPushes({ ...P, raises: [], lowers: [] })).toBe("");
++  });
++
++  it("explains why the model is unavailable", () => {
++    const base = { decided: 12, responses: 3, minDecided: 30, minPerClass: 8 };
++    expect(modelUnavailableReason({ ...base, status: "insufficient_data" })).toBe(
++      "Needs 30 decided applications with at least 8 responses and 8 without. You have 12 (3 with a response)."
++    );
++    expect(modelUnavailableReason({ ...base, status: "no_pattern" })).toBe("Your history doesn't show a pattern that beats your average yet.");
++    expect(modelUnavailableReason({ ...base, status: "active" })).toBeNull();
++  });
++});
+diff --git a/apps/web/src/lib/insights/rankPreference.test.ts b/apps/web/src/lib/insights/rankPreference.test.ts
+new file mode 100644
+index 0000000..b8bd09d
+--- /dev/null
++++ b/apps/web/src/lib/insights/rankPreference.test.ts
+@@ -0,0 +1,43 @@
++// @vitest-environment jsdom
++import { describe, it, expect, vi, beforeEach } from "vitest";
++import {
++  RANK_PREFERENCE_KEY, readRankPreference, resetRankPreferenceForTests, subscribeRankPreference, writeRankPreference,
++} from "./rankPreference";
++
++beforeEach(() => {
++  window.localStorage.clear();
++  resetRankPreferenceForTests();
++  vi.restoreAllMocks();
++});
++
++describe("rank preference", () => {
++  it("is off by default and remembers a choice in localStorage", () => {
++    expect(readRankPreference()).toBe(false);
++    writeRankPreference(true);
++    expect(window.localStorage.getItem(RANK_PREFERENCE_KEY)).toBe("1");
++    resetRankPreferenceForTests();
++    expect(readRankPreference()).toBe(true);
++  });
++
++  it("notifies subscribers on write and stops after unsubscribe", () => {
++    const listener = vi.fn();
++    const unsubscribe = subscribeRankPreference(listener);
++    writeRankPreference(true);
++    expect(listener).toHaveBeenCalledTimes(1);
++    unsubscribe();
++    writeRankPreference(false);
++    expect(listener).toHaveBeenCalledTimes(1);
++  });
++
++  it("still works for the page when storage throws", () => {
++    vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
++      throw new Error("blocked");
++    });
++    vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
++      throw new Error("blocked");
++    });
++    expect(readRankPreference()).toBe(false);
++    writeRankPreference(true);
++    expect(readRankPreference()).toBe(true);
++  });
++});

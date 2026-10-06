@@ -1,0 +1,341 @@
+diff --git a/apps/web/src/app/insights/InsightsClient.tsx b/apps/web/src/app/insights/InsightsClient.tsx
+index c797429..9a131ef 100644
+--- a/apps/web/src/app/insights/InsightsClient.tsx
++++ b/apps/web/src/app/insights/InsightsClient.tsx
+@@ -2,8 +2,13 @@
+ 
+ import { useEffect, useState } from "react";
+ import type { Bucket, Dimension, Headline, Insights, Patterns, Tier } from "@ai-career/insights";
++import type { ModelInsightsView } from "../../lib/insights/responseModel";
+ 
+-export type InsightsResponse = Insights & { settings: { undecidedDays: number; minBucket: number } };
++export type InsightsResponse = Insights & {
++  settings: { undecidedDays: number; minBucket: number };
++  /** Phase 10b: the personal response model. */
++  model: ModelInsightsView;
++};
+ type State = { kind: "loading" } | { kind: "error" } | { kind: "ready"; data: InsightsResponse };
+ 
+ const TIER_TITLE: Record<Tier, string> = { response: "Got a response", interview: "Got an interview" };
+@@ -120,6 +125,47 @@ function PatternsSection({ patterns }: { patterns: Patterns }) {
+   );
+ }
+ 
++/** Below this odds ratio per typical step a factor is listed as having little or no link (no direction claimed). */
++const WEAK_ODDS_RATIO = 1.1;
++
++/** Phase 10b spec §6: the personal response model -- progress to the gate, the honesty check, the learned factors. */
++function ModelSection({ model }: { model: ModelInsightsView }) {
++  const strong = model.factors.filter((f) => f.oddsRatio >= WEAK_ODDS_RATIO);
++  const weak = model.factors.filter((f) => f.oddsRatio < WEAK_ODDS_RATIO);
++  return (
++    <section aria-labelledby="model-heading" className="flex flex-col gap-2 rounded border p-4 text-sm">
++      <h2 id="model-heading" className="text-lg font-medium">Your response model</h2>
++      {model.status === "insufficient_data" && (
++        <p>
++          {`The model needs ${model.minDecided} decided applications with match scores, including at least ${model.minPerClass} with a response and ${model.minPerClass} without. You have ${model.decided} (${model.responses} with a response, ${model.nonResponses} without).`}
++        </p>
++      )}
++      {model.looLogLoss !== null && model.baselineLogLoss !== null && (
++        <p>
++          {`Predicts responses better than your average: ${model.status === "active" ? "yes" : "no"} (error ${model.looLogLoss.toFixed(3)} vs ${model.baselineLogLoss.toFixed(3)} for your average; lower is better).`}
++        </p>
++      )}
++      {model.status === "no_pattern" && <p>Your history doesn&apos;t show a pattern that beats your average yet, so ranking stays as it is.</p>}
++      {model.status === "active" && (
++        <>
++          {model.blendWeight !== null && (
++            <p>{`Turning on "Rank with my history" on Matches blends this model in at ${Math.round(model.blendWeight * 100)}% of the ranking.`}</p>
++          )}
++          <ul className="list-disc pl-5">
++            {strong.map((f) => (
++              <li key={f.key}>
++                {`${f.label}: a higher score has gone with ${f.direction === "higher" ? "more" : "fewer"} responses (odds ${f.direction === "higher" ? "×" : "÷"}${f.oddsRatio.toFixed(1)} per typical step).`}
++              </li>
++            ))}
++          </ul>
++          {weak.length > 0 && <p>{`Little or no link so far: ${weak.map((f) => f.label).join(", ")}.`}</p>}
++        </>
++      )}
++      <p className="text-xs text-gray-600">This describes your own past applications. It is not a cause or a guarantee.</p>
++    </section>
++  );
++}
++
+ function HowCalculated({ settings }: { settings: InsightsResponse["settings"] }) {
+   return (
+     <details className="rounded border p-3 text-sm">
+@@ -178,6 +224,8 @@ export function InsightsClient() {
+         <HeadlineCard tier="interview" headline={data.tiers.interview} />
+       </div>
+ 
++      <ModelSection model={data.model} />
++
+       <section aria-labelledby="breakdowns-heading" className="flex flex-col gap-3">
+         <h2 id="breakdowns-heading" className="text-lg font-medium">Breakdowns</h2>
+         <div role="group" aria-label="Outcome" className="flex gap-2">
+diff --git a/apps/web/src/app/matches/MatchRow.tsx b/apps/web/src/app/matches/MatchRow.tsx
+index 69f5e9c..061574a 100644
+--- a/apps/web/src/app/matches/MatchRow.tsx
++++ b/apps/web/src/app/matches/MatchRow.tsx
+@@ -1,5 +1,6 @@
+ import Link from "next/link";
+ import type { MatchListItem } from "../../lib/matching/listMatches";
++import { formatLikelyResponse } from "../../lib/insights/formatPersonal";
+ 
+ const FACTOR_LABELS: [key: keyof NonNullable<MatchListItem["match"]["factors"]>, label: string][] = [
+   ["skills", "Skills"], ["experience", "Experience"], ["location", "Location"], ["sponsorship", "Sponsorship"],
+@@ -46,6 +47,10 @@ export function MatchRow({
+ 
+       {match.eligible && match.explanation?.summary && <p className="text-sm">{match.explanation.summary}</p>}
+ 
++      {match.eligible && match.personal && (
++        <p className="text-sm text-gray-700">{`Your history: ${formatLikelyResponse(match.personal)}`}</p>
++      )}
++
+       {match.eligible && (
+         <div className="flex gap-2">
+           <button type="button" disabled={busy} onClick={onSave} className="rounded border px-3 py-1 text-sm disabled:opacity-50">
+diff --git a/apps/web/src/app/matches/MatchesClient.tsx b/apps/web/src/app/matches/MatchesClient.tsx
+index 47f9f81..ac8d216 100644
+--- a/apps/web/src/app/matches/MatchesClient.tsx
++++ b/apps/web/src/app/matches/MatchesClient.tsx
+@@ -1,7 +1,12 @@
+ "use client";
+ 
+-import { useCallback, useEffect, useState } from "react";
++import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
++import type { ModelSummary } from "@ai-career/insights";
+ import type { MatchListItem } from "../../lib/matching/listMatches";
++import { modelUnavailableReason } from "../../lib/insights/formatPersonal";
++import {
++  readRankPreference, serverRankPreference, subscribeRankPreference, writeRankPreference,
++} from "../../lib/insights/rankPreference";
+ import { MatchRow } from "./MatchRow";
+ 
+ const POLL_INTERVAL_MS = 3000;
+@@ -12,6 +17,9 @@ interface Result {
+   page: number;
+   pageSize: number;
+   total: number;
++  /** Phase 10b: the order the server actually used, and the response model's status. */
++  ranking?: "default" | "personal";
++  model?: ModelSummary;
+ }
+ 
+ interface RunStatus {
+@@ -28,21 +36,29 @@ export function MatchesClient() {
+   const [error, setError] = useState<string | null>(null);
+   const [runFailure, setRunFailure] = useState<string | null>(null);
+   const [pollUntil, setPollUntil] = useState(0);
++  // Phase 10b: per-browser preference; false on the server, the stored choice after hydration.
++  const rankWithHistory = useSyncExternalStore(subscribeRankPreference, readRankPreference, serverRankPreference);
+ 
+-  const load = useCallback(
+-    () =>
+-      fetch(`/api/matches?eligible=${!showIneligible}&page=1`)
+-        .then((res) => {
+-          if (!res.ok) throw new Error("load failed");
+-          return res.json();
+-        })
+-        .then((body: Result) => {
+-          setResult(body);
+-          setLoadFailed(false);
+-        })
+-        .catch(() => setLoadFailed(true)),
+-    [showIneligible]
+-  );
++  // Only the latest request may update the list: switching filters or the ranking (or the stored ranking choice
++  // applying right after hydration) starts a new request while an older one can still be in flight, and a slower
++  // older response must not overwrite the newer one.
++  const latestRequest = useRef(0);
++  const load = useCallback(() => {
++    const request = ++latestRequest.current;
++    return fetch(`/api/matches?eligible=${!showIneligible}&page=1${rankWithHistory && !showIneligible ? "&rank=personal" : ""}`)
++      .then((res) => {
++        if (!res.ok) throw new Error("load failed");
++        return res.json();
++      })
++      .then((body: Result) => {
++        if (request !== latestRequest.current) return;
++        setResult(body);
++        setLoadFailed(false);
++      })
++      .catch(() => {
++        if (request === latestRequest.current) setLoadFailed(true);
++      });
++  }, [showIneligible, rankWithHistory]);
+ 
+   // A queued run finishes on the worker, out of band from this request. Enqueuing only proves the job was
+   // accepted, not that it succeeded — so this checks the run's outcome (GET /api/matches/runs/latest) on
+@@ -130,6 +146,9 @@ export function MatchesClient() {
+     }
+   }
+ 
++  const modelActive = result?.model?.status === "active";
++  const unavailableReason = result?.model ? modelUnavailableReason(result.model) : null;
++
+   return (
+     <div className="flex flex-col gap-4">
+       <div className="flex flex-wrap items-center gap-4">
+@@ -140,7 +159,20 @@ export function MatchesClient() {
+           <input type="checkbox" checked={showIneligible} onChange={(e) => setShowIneligible(e.target.checked)} />
+           Show excluded jobs
+         </label>
++        <label className="flex items-center gap-2 text-sm">
++          <input
++            type="checkbox"
++            checked={rankWithHistory && modelActive}
++            disabled={!modelActive}
++            onChange={(e) => writeRankPreference(e.target.checked)}
++          />
++          Rank with my history
++        </label>
+       </div>
++      {unavailableReason && <p className="text-xs text-gray-600">{unavailableReason}</p>}
++      {result?.ranking === "personal" && result.model?.blendWeight != null && (
++        <p className="text-xs text-gray-600">{`Ranked with your history (weight ${Math.round(result.model.blendWeight * 100)}%)`}</p>
++      )}
+ 
+       {notice && <p role="status" className="text-sm text-green-700">{notice}</p>}
+       {error && <p role="alert" className="text-sm text-red-600">{error}</p>}
+diff --git a/apps/web/src/app/matches/[jobId]/MatchDetailClient.tsx b/apps/web/src/app/matches/[jobId]/MatchDetailClient.tsx
+index 22506a3..d2fc761 100644
+--- a/apps/web/src/app/matches/[jobId]/MatchDetailClient.tsx
++++ b/apps/web/src/app/matches/[jobId]/MatchDetailClient.tsx
+@@ -2,6 +2,7 @@
+ 
+ import { useEffect, useState } from "react";
+ import Link from "next/link";
++import type { ResponsePrediction } from "@ai-career/insights";
+ import { ApplicationPanel } from "./ApplicationPanel";
+ import { AutofillPanel } from "./AutofillPanel";
+ import { ResumeOptimizationPanel } from "./ResumeOptimizationPanel";
+@@ -9,6 +10,7 @@ import { PitchPanel } from "./PitchPanel";
+ import { CoverLetterPanel } from "./CoverLetterPanel";
+ import { InterviewPrepPanel } from "./InterviewPrepPanel";
+ import { DocumentsList } from "./DocumentsList";
++import { formatFactorPushes, formatLikelyResponse } from "../../../lib/insights/formatPersonal";
+ 
+ interface JobView {
+   id: string;
+@@ -25,6 +27,8 @@ interface MatchView {
+   factors: Record<string, number | null> | null;
+   explanation: { strongMatches: string[]; partialMatches: string[]; gaps: string[]; summary: string } | null;
+   userAction: "none" | "saved" | "dismissed";
++  /** Phase 10b: present only when the personal response model is active and the match is eligible. */
++  personal?: ResponsePrediction | null;
+ }
+ 
+ type Outcome = { kind: "missing" } | { kind: "error" } | { kind: "ready"; job: JobView; match: MatchView; applicationId: string | null };
+@@ -109,6 +113,17 @@ export function MatchDetailClient({ jobId }: { jobId: string }) {
+         </section>
+       )}
+ 
++      {match.eligible && match.personal && (
++        <section aria-labelledby="history-heading" className="flex flex-col gap-1 text-sm">
++          <h2 id="history-heading" className="font-medium">Your history</h2>
++          <p>{`Your history: ${formatLikelyResponse(match.personal)}`}</p>
++          {formatFactorPushes(match.personal) && <p>{formatFactorPushes(match.personal)}</p>}
++          <p className="text-xs text-gray-600">
++            Based on how these factors have gone with responses in your own applications — not a cause or a guarantee.
++          </p>
++        </section>
++      )}
++
+       {match.eligible && match.explanation && (
+         <section aria-labelledby="explanation-heading">
+           <h2 id="explanation-heading" className="mb-2 font-medium">Why this match</h2>
+diff --git a/apps/web/src/lib/insights/formatPersonal.ts b/apps/web/src/lib/insights/formatPersonal.ts
+new file mode 100644
+index 0000000..419446a
+--- /dev/null
++++ b/apps/web/src/lib/insights/formatPersonal.ts
+@@ -0,0 +1,29 @@
++import type { ResponsePrediction } from "@ai-career/insights";
++
++const pct = (value: number): string => `${Math.round(value * 100)}%`;
++
++/** "likely response 35% (22–50%)" -- Phase 10b spec §6 wording: always "likely", always with the range. */
++export function formatLikelyResponse(p: ResponsePrediction): string {
++  return `likely response ${pct(p.probability)} (${Math.round(p.low * 100)}–${pct(p.high)})`;
++}
++
++/** "Raises: Skills, Role · Lowers: Freshness", omitting an empty side; "" when nothing stands out. */
++export function formatFactorPushes(p: ResponsePrediction): string {
++  const parts: string[] = [];
++  if (p.raises.length > 0) parts.push(`Raises: ${p.raises.join(", ")}`);
++  if (p.lowers.length > 0) parts.push(`Lowers: ${p.lowers.join(", ")}`);
++  return parts.join(" · ");
++}
++
++/** Why the "Rank with my history" toggle is unavailable, or null when the model is active. */
++export function modelUnavailableReason(model: {
++  status: "insufficient_data" | "no_pattern" | "active";
++  decided: number;
++  responses: number;
++  minDecided: number;
++  minPerClass: number;
++}): string | null {
++  if (model.status === "active") return null;
++  if (model.status === "no_pattern") return "Your history doesn't show a pattern that beats your average yet.";
++  return `Needs ${model.minDecided} decided applications with at least ${model.minPerClass} responses and ${model.minPerClass} without. You have ${model.decided} (${model.responses} with a response).`;
++}
+diff --git a/apps/web/src/lib/insights/rankPreference.ts b/apps/web/src/lib/insights/rankPreference.ts
+new file mode 100644
+index 0000000..891d660
+--- /dev/null
++++ b/apps/web/src/lib/insights/rankPreference.ts
+@@ -0,0 +1,52 @@
++/**
++ * Phase 10b spec §6: "Rank with my history" is a per-browser preference, stored in localStorage. Exposed as a tiny
++ * external store for React's useSyncExternalStore, so the server render (no window) and the first client render agree
++ * (getServerSnapshot = false) and the stored choice applies right after hydration. If storage is unavailable (private
++ * mode, blocked site data) the choice still works for the life of the page via the in-memory value.
++ */
++export const RANK_PREFERENCE_KEY = "careerpilot.rankWithHistory";
++
++let memory: boolean | null = null;
++const listeners = new Set<() => void>();
++
++export function readRankPreference(): boolean {
++  if (memory !== null) return memory;
++  try {
++    return window.localStorage.getItem(RANK_PREFERENCE_KEY) === "1";
++  } catch {
++    return false;
++  }
++}
++
++export function writeRankPreference(value: boolean): void {
++  memory = value;
++  try {
++    window.localStorage.setItem(RANK_PREFERENCE_KEY, value ? "1" : "0");
++  } catch {
++    // Storage unavailable: the in-memory value above still applies until the page is reloaded.
++  }
++  for (const listener of listeners) listener();
++}
++
++export function subscribeRankPreference(listener: () => void): () => void {
++  listeners.add(listener);
++  const onStorage = (event: StorageEvent) => {
++    if (event.key === RANK_PREFERENCE_KEY) {
++      memory = null;
++      listener();
++    }
++  };
++  window.addEventListener("storage", onStorage);
++  return () => {
++    listeners.delete(listener);
++    window.removeEventListener("storage", onStorage);
++  };
++}
++
++/** The server never knows the browser's preference. */
++export const serverRankPreference = (): boolean => false;
++
++/** Tests only: forget the in-memory value. */
++export function resetRankPreferenceForTests(): void {
++  memory = null;
++}

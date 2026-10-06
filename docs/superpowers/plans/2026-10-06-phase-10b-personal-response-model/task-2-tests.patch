@@ -1,0 +1,102 @@
+diff --git a/packages/insights/src/dataset/buildOutcomeDataset.test.ts b/packages/insights/src/dataset/buildOutcomeDataset.test.ts
+index 6caf319..41afa60 100644
+--- a/packages/insights/src/dataset/buildOutcomeDataset.test.ts
++++ b/packages/insights/src/dataset/buildOutcomeDataset.test.ts
+@@ -12,7 +12,7 @@ const GOAL: InsightGoal = {
+ const SNAPSHOT = {
+   snapshotVersion: 2, external: false,
+   job: { workMode: "hybrid", countryCode: "DE", salaryMin: 70000, salaryMax: 75000, salaryCurrency: "EUR", postingAgeDays: 3 },
+-  match: { careerGoalId: "g1", eligible: true, overallScore: 72 },
++  match: { careerGoalId: "g1", eligible: true, overallScore: 72, skillsScore: 0.8 },
+   ats: { overallScore: 88, requiredKeywordCoverage: 0.5, missedRequiredTerms: ["Tableau"] },
+   documents: { resume: { origin: null }, pitch: null, coverLetter: null },
+ };
+@@ -37,6 +37,10 @@ describe("buildOutcomeDataset", () => {
+       company: { key: "acme", label: "Acme" },
+       workMode: "hybrid", countryCode: "DE", salaryVsFloor: "below", matchScore: 72, atsScore: 88, requiredKeywordCoverage: 0.5,
+       postingAgeDays: 3, documents: { resume: true, pitch: false, coverLetter: false, edited: false }, missedRequiredTerms: ["Tableau"],
++      factors: {
++        skillsScore: 0.8, experienceScore: null, locationScore: null, sponsorshipScore: null, roleScore: null, salaryScore: null,
++        industryScore: null, freshnessScore: null, semanticScore: null,
++      },
+     });
+   });
+ 
+@@ -75,7 +79,7 @@ describe("buildOutcomeDataset", () => {
+     expect(record).toMatchObject({
+       external: true, roleFamily: { key: "analytics engineer", label: "Analytics Engineer" }, company: { key: "acme" },
+       workMode: null, countryCode: null, salaryVsFloor: null, matchScore: null, atsScore: null, requiredKeywordCoverage: null,
+-      postingAgeDays: null, documents: null, missedRequiredTerms: null,
++      postingAgeDays: null, documents: null, missedRequiredTerms: null, factors: null,
+     });
+   });
+ 
+diff --git a/packages/insights/src/dataset/parseSnapshot.test.ts b/packages/insights/src/dataset/parseSnapshot.test.ts
+index ca29c82..1cdb7ac 100644
+--- a/packages/insights/src/dataset/parseSnapshot.test.ts
++++ b/packages/insights/src/dataset/parseSnapshot.test.ts
+@@ -6,7 +6,10 @@ const V2 = {
+   external: false,
+   job: { title: "Data Engineer", companyName: "Acme", workMode: "remote", countryCode: "de", salaryMin: 70000, salaryMax: 90000,
+     salaryCurrency: "EUR", postingAgeDays: 4 },
+-  match: { careerGoalId: "g1", eligible: true, overallScore: 78 },
++  match: {
++    careerGoalId: "g1", eligible: true, overallScore: 78, skillsScore: 0.8, experienceScore: 1, locationScore: 0.9, sponsorshipScore: 1,
++    roleScore: 0.7, salaryScore: null, industryScore: 0.5, freshnessScore: 0.6, semanticScore: 0.66,
++  },
+   ats: { overallScore: 82, requiredKeywordCoverage: 0.9, preferredKeywordCoverage: 0.5, semanticSimilarity: null,
+     missedRequiredTerms: ["Tableau", " ", 7] },
+   documents: {
+@@ -22,6 +25,10 @@ describe("parseSnapshot", () => {
+       external: false, careerGoalId: "g1", matchScore: 78, workMode: "remote", countryCode: "DE",
+       salaryMin: 70000, salaryMax: 90000, salaryCurrency: "EUR", postingAgeDays: 4, atsScore: 82, requiredKeywordCoverage: 0.9,
+       missedRequiredTerms: ["Tableau"], documents: { resume: true, pitch: true, coverLetter: false, edited: true },
++      factors: {
++        skillsScore: 0.8, experienceScore: 1, locationScore: 0.9, sponsorshipScore: 1, roleScore: 0.7, salaryScore: null,
++        industryScore: 0.5, freshnessScore: 0.6, semanticScore: 0.66,
++      },
+     });
+   });
+ 
+@@ -34,6 +41,7 @@ describe("parseSnapshot", () => {
+   it("drops the match score of an ineligible match, and an unknown work mode", () => {
+     const parsed = parseSnapshot({ ...V2, match: { ...V2.match, eligible: false }, job: { ...V2.job, workMode: "unknown" } });
+     expect(parsed.matchScore).toBeNull();
++    expect(parsed.factors).toBeNull();
+     expect(parsed.careerGoalId).toBe("g1");
+     expect(parsed.workMode).toBeNull();
+   });
+@@ -44,6 +52,7 @@ describe("parseSnapshot", () => {
+     })).toEqual({
+       external: true, careerGoalId: null, matchScore: null, workMode: null, countryCode: null, salaryMin: null, salaryMax: null,
+       salaryCurrency: null, postingAgeDays: null, atsScore: null, requiredKeywordCoverage: null, missedRequiredTerms: null, documents: null,
++      factors: null,
+     });
+   });
+ 
+@@ -52,6 +61,12 @@ describe("parseSnapshot", () => {
+     expect(parsed.external).toBe(false);
+     expect(parsed.matchScore).toBeNull();
+     expect(parsed.documents).toBeNull();
++    expect(parsed.factors).toBeNull();
++  });
++
++  it("reads each factor score tolerantly: a missing or non-number score is null, the others are kept", () => {
++    const parsed = parseSnapshot({ ...V2, match: { ...V2.match, roleScore: "0.7", industryScore: undefined } });
++    expect(parsed.factors).toMatchObject({ skillsScore: 0.8, roleScore: null, industryScore: null, salaryScore: null });
+   });
+ 
+   it("rejects non-finite numbers", () => {
+diff --git a/packages/insights/src/stats/computeInsights.test.ts b/packages/insights/src/stats/computeInsights.test.ts
+index 387e88a..b0a6ef0 100644
+--- a/packages/insights/src/stats/computeInsights.test.ts
++++ b/packages/insights/src/stats/computeInsights.test.ts
+@@ -10,7 +10,7 @@ function record(response: OutcomeLabel, interview: OutcomeLabel, over: Partial<O
+     response: { label: response, reason: "" }, interview: { label: interview, reason: "" },
+     roleFamily: { key: "data engineer", label: "Data Engineer" }, company: { key: "acme", label: "Acme" },
+     workMode: "remote", countryCode: "DE", salaryVsFloor: null, matchScore: 72, atsScore: 88, requiredKeywordCoverage: 0.9,
+-    postingAgeDays: 3, documents: { resume: true, pitch: false, coverLetter: false, edited: false }, missedRequiredTerms: null,
++    postingAgeDays: 3, documents: { resume: true, pitch: false, coverLetter: false, edited: false }, missedRequiredTerms: null, factors: null,
+     ...over,
+   };
+ }

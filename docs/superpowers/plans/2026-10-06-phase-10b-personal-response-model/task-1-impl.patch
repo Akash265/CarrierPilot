@@ -1,0 +1,56 @@
+diff --git a/packages/insights/src/dataset/roleFamily.ts b/packages/insights/src/dataset/roleFamily.ts
+index 70cb708..b85ba4d 100644
+--- a/packages/insights/src/dataset/roleFamily.ts
++++ b/packages/insights/src/dataset/roleFamily.ts
+@@ -1,4 +1,4 @@
+-import { scoreRole } from "@ai-career/matching";
++import { scoreRole } from "@ai-career/matching/scoring";
+ import type { InsightGoal } from "../types";
+ 
+ export const OTHER_FAMILY = { key: "__other__", label: "Other" } as const;
+diff --git a/packages/matching/package.json b/packages/matching/package.json
+index a839357..63e77e6 100644
+--- a/packages/matching/package.json
++++ b/packages/matching/package.json
+@@ -7,6 +7,7 @@
+   "types": "src/index.ts",
+   "exports": {
+     ".": "./src/index.ts",
++    "./scoring": "./src/scoring/index.ts",
+     "./testing": "./src/testing/index.ts"
+   },
+   "scripts": {
+diff --git a/packages/matching/src/scoring/index.ts b/packages/matching/src/scoring/index.ts
+new file mode 100644
+index 0000000..0788db7
+--- /dev/null
++++ b/packages/matching/src/scoring/index.ts
+@@ -0,0 +1,17 @@
++/**
++ * Phase 10b spec §7: the dependency-light entry point `@ai-career/matching/scoring`. Only the pure scoring
++ * functions and the factor types/constants -- nothing that reaches the Anthropic SDK, @ai-career/ai, the database
++ * or BullMQ -- so packages such as @ai-career/insights can reuse matching's scoring rules without its pipeline.
++ * index.test.ts enforces that every module reachable from here imports only relative paths.
++ */
++export { FACTOR_KEYS, FACTOR_WEIGHTS, type FactorScores, type WorkMode, type WorkModePreference, type Sponsorship } from "../types";
++export { computeOverallScore } from "./computeOverallScore";
++export { scoreExperience } from "./scoreExperience";
++export { scoreFreshness } from "./scoreFreshness";
++export { scoreIndustry } from "./scoreIndustry";
++export { scoreLocation } from "./scoreLocation";
++export { scoreRole } from "./scoreRole";
++export { scoreSalary, type SalaryComparisonInput } from "./scoreSalary";
++export { scoreSemantic } from "./scoreSemantic";
++export { scoreSkills, type SkillMatchDetail, type SkillsScoreResult } from "./scoreSkills";
++export { scoreSponsorship } from "./scoreSponsorship";
+diff --git a/packages/matching/src/types.ts b/packages/matching/src/types.ts
+index f0789bb..4ad9a10 100644
+--- a/packages/matching/src/types.ts
++++ b/packages/matching/src/types.ts
+@@ -33,3 +33,6 @@ export const FACTOR_WEIGHTS: Record<keyof FactorScores, number> = {
+   freshnessScore: 0.05,
+   semanticScore: 0.05,
+ };
++
++/** The 9 factors in FACTOR_WEIGHTS order -- the feature order of Phase 10b's personal response model. */
++export const FACTOR_KEYS = Object.keys(FACTOR_WEIGHTS) as (keyof FactorScores)[];

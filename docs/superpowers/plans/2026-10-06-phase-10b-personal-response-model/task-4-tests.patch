@@ -1,0 +1,289 @@
+diff --git a/packages/insights/src/model/evaluation.test.ts b/packages/insights/src/model/evaluation.test.ts
+new file mode 100644
+index 0000000..dfa4775
+--- /dev/null
++++ b/packages/insights/src/model/evaluation.test.ts
+@@ -0,0 +1,54 @@
++import { describe, it, expect } from "vitest";
++import { trainResponseModel } from "./trainResponseModel";
++import { describeFactors } from "./predictResponse";
++import { syntheticHistory } from "./testing";
++import type { FactorVector } from "../types";
++
++/**
++ * Spec §9 evaluation dataset (CLAUDE.md §10 "AI evaluation"): synthetic histories with a known truth. The model
++ * must find a planted signal (accuracy), say "no pattern" for noise and "insufficient data" for a tiny history
++ * (honesty), and give identical results on every run (consistency).
++ */
++const SETTINGS = { minDecided: 30, minPerClass: 8 };
++const v = (f: FactorVector, key: keyof FactorVector) => f[key] ?? 0;
++
++const CASES: {
++  name: string;
++  n: number;
++  seed: number;
++  respond: (f: FactorVector, random: () => number) => boolean;
++  status: "insufficient_data" | "no_pattern" | "active";
++  topFactors?: string[];
++}[] = [
++  { name: "signal in skills", n: 40, seed: 7, respond: (f) => v(f, "skillsScore") > 0.5, status: "active", topFactors: ["skillsScore"] },
++  {
++    name: "signal in skills and role", n: 60, seed: 3, respond: (f) => v(f, "skillsScore") + v(f, "roleScore") > 1,
++    status: "active", topFactors: ["roleScore", "skillsScore"],
++  },
++  { name: "lower freshness responds (negative signal)", n: 40, seed: 5, respond: (f) => v(f, "freshnessScore") < 0.5, status: "active", topFactors: ["freshnessScore"] },
++  { name: "pure noise", n: 40, seed: 11, respond: (_f, random) => random() < 0.5, status: "no_pattern" },
++  { name: "tiny history", n: 12, seed: 7, respond: (f) => v(f, "skillsScore") > 0.5, status: "insufficient_data" },
++];
++
++describe("response model evaluation", () => {
++  it.each(CASES)("$name -> $status", ({ n, seed, respond, status, topFactors }) => {
++    const result = trainResponseModel(syntheticHistory(n, seed, respond), SETTINGS);
++    expect(result.status).toBe(status);
++    if (topFactors) {
++      const top = describeFactors(result.model!).slice(0, topFactors.length).map((f) => f.key).sort();
++      expect(top).toEqual([...topFactors].sort());
++    }
++  });
++
++  it("finds the direction of a negative signal", () => {
++    const result = trainResponseModel(syntheticHistory(40, 5, (f) => v(f, "freshnessScore") < 0.5), SETTINGS);
++    expect(describeFactors(result.model!)[0]).toMatchObject({ key: "freshnessScore", direction: "lower" });
++  });
++
++  it("is consistent: every case gives identical results across runs", () => {
++    for (const { n, seed, respond } of CASES) {
++      expect(trainResponseModel(syntheticHistory(n, seed, respond), SETTINGS))
++        .toEqual(trainResponseModel(syntheticHistory(n, seed, respond), SETTINGS));
++    }
++  });
++});
+diff --git a/packages/insights/src/model/predictResponse.test.ts b/packages/insights/src/model/predictResponse.test.ts
+new file mode 100644
+index 0000000..5cb4a4f
+--- /dev/null
++++ b/packages/insights/src/model/predictResponse.test.ts
+@@ -0,0 +1,91 @@
++import { describe, it, expect } from "vitest";
++import { blendedScore, describeFactors, predictResponse, summarizeModel, FACTOR_LABELS } from "./predictResponse";
++import { trainResponseModel, type ResponseModel } from "./trainResponseModel";
++import { randomFactors, syntheticHistory } from "./testing";
++import type { FactorVector } from "../types";
++
++const SETTINGS = { minDecided: 30, minPerClass: 8 };
++const middle = (over: Partial<FactorVector> = {}): FactorVector => randomFactors(() => 0.5, over);
++
++/** A hand-built model: two kept factors (skills, freshness), identity-ish covariance for checkable ranges. */
++const MODEL: ResponseModel = {
++  scaling: { keys: ["skillsScore", "freshnessScore"], means: [0.5, 0.5], sds: [0.25, 0.25] },
++  intercept: 0,
++  coefficients: [1, -0.5],
++  covariance: [[0.04, 0, 0], [0, 0.04, 0], [0, 0, 0.04]],
++};
++
++describe("predictResponse", () => {
++  it("is the logistic of the standardized linear predictor, with a 95% Laplace range around it", () => {
++    const p = predictResponse(MODEL, middle({ skillsScore: 0.75 })); // z = (1, 0) -> logit 1
++    expect(p.probability).toBeCloseTo(1 / (1 + Math.exp(-1)), 12);
++    const spread = 1.96 * Math.sqrt(0.04 + 0.04); // x = (1, 1, 0)
++    expect(p.low).toBeCloseTo(1 / (1 + Math.exp(-(1 - spread))), 12);
++    expect(p.high).toBeCloseTo(1 / (1 + Math.exp(-(1 + spread))), 12);
++    expect(p.low).toBeLessThan(p.probability);
++    expect(p.high).toBeGreaterThan(p.probability);
++  });
++
++  it("names factors beyond 0.1 logit units as raising or lowering, strongest first", () => {
++    const p = predictResponse(MODEL, middle({ skillsScore: 0.75, freshnessScore: 0.75 })); // skills +1, freshness -0.5
++    expect(p.raises).toEqual(["Skills"]);
++    expect(p.lowers).toEqual(["Freshness"]);
++    const quiet = predictResponse(MODEL, middle({ skillsScore: 0.52 })); // contribution 0.08
++    expect(quiet.raises).toEqual([]);
++  });
++
++  it("names at most two factors per side", () => {
++    const model: ResponseModel = {
++      scaling: { keys: ["skillsScore", "roleScore", "experienceScore"], means: [0.5, 0.5, 0.5], sds: [0.25, 0.25, 0.25] },
++      intercept: 0, coefficients: [1, 2, 0.5], covariance: [[0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]],
++    };
++    expect(predictResponse(model, middle({ skillsScore: 1, roleScore: 1, experienceScore: 1 })).raises).toEqual(["Role", "Skills"]);
++  });
++
++  it("treats a missing factor as the training mean (no contribution)", () => {
++    const p = predictResponse(MODEL, middle({ skillsScore: null, freshnessScore: null }));
++    expect(p.probability).toBeCloseTo(0.5, 12);
++    expect(p.raises).toEqual([]);
++    expect(p.lowers).toEqual([]);
++  });
++
++  it("gives narrower ranges with more data", () => {
++    const respond = (f: FactorVector) => (f.skillsScore ?? 0) > 0.5;
++    const small = trainResponseModel(syntheticHistory(40, 7, respond), SETTINGS).model!;
++    const large = trainResponseModel(syntheticHistory(160, 7, respond), SETTINGS).model!;
++    const at = middle({ skillsScore: 0.7 });
++    const width = (m: ResponseModel) => predictResponse(m, at).high - predictResponse(m, at).low;
++    expect(width(large)).toBeLessThan(width(small));
++  });
++});
++
++describe("blendedScore", () => {
++  it("blends the match score with 100 x probability and rounds to one decimal", () => {
++    expect(blendedScore(80, 0.3, 0.15)).toBe(72.5);
++    expect(blendedScore(80, 0.3, 0)).toBe(80);
++    expect(blendedScore(60, 0.9, 0.5)).toBe(75);
++  });
++});
++
++describe("describeFactors", () => {
++  it("lists each kept factor's direction and odds ratio per standard step, strongest first", () => {
++    expect(describeFactors(MODEL)).toEqual([
++      { key: "skillsScore", label: "Skills", direction: "higher", oddsRatio: Math.exp(1) },
++      { key: "freshnessScore", label: "Freshness", direction: "lower", oddsRatio: Math.exp(0.5) },
++    ]);
++  });
++
++  it("labels every factor the way /matches does", () => {
++    expect(FACTOR_LABELS.semanticScore).toBe("Fit");
++    expect(Object.keys(FACTOR_LABELS)).toHaveLength(9);
++  });
++});
++
++describe("summarizeModel", () => {
++  it("keeps only the status fields an API response needs", () => {
++    const result = trainResponseModel(syntheticHistory(10, 7, () => true), SETTINGS);
++    expect(summarizeModel(result)).toEqual({
++      status: "insufficient_data", decided: 10, responses: 10, nonResponses: 0, minDecided: 30, minPerClass: 8, blendWeight: null,
++    });
++  });
++});
+diff --git a/packages/insights/src/model/testing.ts b/packages/insights/src/model/testing.ts
+new file mode 100644
+index 0000000..0b95ef4
+--- /dev/null
++++ b/packages/insights/src/model/testing.ts
+@@ -0,0 +1,48 @@
++import { FACTOR_KEYS } from "@ai-career/matching/scoring";
++import type { FactorVector, OutcomeLabel, OutcomeRecord } from "../types";
++
++/** Deterministic PRNG (mulberry32) so synthetic histories are identical on every run. */
++export function seededRandom(seed: number): () => number {
++  let a = seed >>> 0;
++  return () => {
++    a = (a + 0x6d2b79f5) >>> 0;
++    let t = a;
++    t = Math.imul(t ^ (t >>> 15), t | 1);
++    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
++    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
++  };
++}
++
++/** A factor vector with every factor drawn uniformly from [0, 1), then `over` applied. */
++export function randomFactors(random: () => number, over: Partial<FactorVector> = {}): FactorVector {
++  return { ...(Object.fromEntries(FACTOR_KEYS.map((k) => [k, random()])) as FactorVector), ...over };
++}
++
++let sequence = 0;
++/** A minimal OutcomeRecord for model tests: only `external`, `response` and `factors` matter to the model. */
++export function modelRecord(response: OutcomeLabel, factors: FactorVector | null, over: Partial<OutcomeRecord> = {}): OutcomeRecord {
++  sequence += 1;
++  return {
++    applicationId: `m${sequence}`, external: false, appliedAt: "2026-09-01",
++    response: { label: response, reason: "" }, interview: { label: "undecided", reason: "" },
++    roleFamily: { key: "__other__", label: "Other" }, company: { key: "acme", label: "Acme" }, workMode: null, countryCode: null,
++    salaryVsFloor: null, matchScore: null, atsScore: null, requiredKeywordCoverage: null, postingAgeDays: null, documents: null,
++    missedRequiredTerms: null, factors, ...over,
++  };
++}
++
++/**
++ * A synthetic history of `n` applications. Each gets random factor scores; `respond(factors, random)` decides
++ * whether it got a response. Deterministic for a given seed.
++ */
++export function syntheticHistory(
++  n: number,
++  seed: number,
++  respond: (factors: FactorVector, random: () => number) => boolean
++): OutcomeRecord[] {
++  const random = seededRandom(seed);
++  return Array.from({ length: n }, () => {
++    const factors = randomFactors(random);
++    return modelRecord(respond(factors, random) ? "positive" : "negative", factors);
++  });
++}
+diff --git a/packages/insights/src/model/trainResponseModel.test.ts b/packages/insights/src/model/trainResponseModel.test.ts
+new file mode 100644
+index 0000000..ff12bf9
+--- /dev/null
++++ b/packages/insights/src/model/trainResponseModel.test.ts
+@@ -0,0 +1,72 @@
++import { describe, it, expect } from "vitest";
++import { blendWeight, trainResponseModel, trainingRows } from "./trainResponseModel";
++import { modelRecord, randomFactors, seededRandom, syntheticHistory } from "./testing";
++
++const SETTINGS = { minDecided: 30, minPerClass: 8 };
++/** Responses follow the skills factor: above 0.5 responds. */
++const skillsDriven = () => syntheticHistory(40, 7, (f) => (f.skillsScore ?? 0) > 0.5);
++
++describe("trainingRows", () => {
++  it("keeps decided, non-external records that have factor scores", () => {
++    const random = seededRandom(1);
++    const rows = trainingRows([
++      modelRecord("positive", randomFactors(random)),
++      modelRecord("negative", randomFactors(random)),
++      modelRecord("undecided", randomFactors(random)),
++      modelRecord("excluded", randomFactors(random)),
++      modelRecord("positive", null),
++      modelRecord("positive", randomFactors(random), { external: true }),
++    ]);
++    expect(rows.map((r) => r.y)).toEqual([1, 0]);
++  });
++});
++
++describe("blendWeight", () => {
++  it("is decided / 200, capped at one half", () => {
++    expect(blendWeight(30)).toBeCloseTo(0.15, 12);
++    expect(blendWeight(100)).toBe(0.5);
++    expect(blendWeight(500)).toBe(0.5);
++  });
++});
++
++describe("trainResponseModel gates", () => {
++  it("is insufficient_data below the decided minimum, without evaluating", () => {
++    const result = trainResponseModel(syntheticHistory(29, 7, (f) => (f.skillsScore ?? 0) > 0.5), SETTINGS);
++    expect(result).toMatchObject({ status: "insufficient_data", decided: 29, looLogLoss: null, baselineLogLoss: null, model: null, blendWeight: null });
++  });
++
++  it("is insufficient_data when either class has fewer than the per-class minimum", () => {
++    const fewResponses = syntheticHistory(40, 7, (f) => (f.skillsScore ?? 0) > 0.85);
++    const result = trainResponseModel(fewResponses, SETTINGS);
++    expect(result.responses).toBeLessThan(8);
++    expect(result.status).toBe("insufficient_data");
++  });
++
++  it("is insufficient_data when no factor varies", () => {
++    const flat = Array.from({ length: 40 }, (_, i) =>
++      modelRecord(i % 2 === 0 ? "positive" : "negative", randomFactors(() => 0.5)));
++    expect(trainResponseModel(flat, SETTINGS).status).toBe("insufficient_data");
++  });
++
++  it("is active when the history has a real pattern, with counts, both losses and the blend weight", () => {
++    const result = trainResponseModel(skillsDriven(), SETTINGS);
++    expect(result.status).toBe("active");
++    expect(result.decided).toBe(40);
++    expect(result.responses + result.nonResponses).toBe(40);
++    expect(result.looLogLoss!).toBeLessThan(result.baselineLogLoss!);
++    expect(result.blendWeight).toBeCloseTo(0.2, 12);
++    expect(result.model!.scaling.keys).toHaveLength(9);
++  });
++
++  it("is no_pattern when responses are unrelated to the factors", () => {
++    const result = trainResponseModel(syntheticHistory(40, 11, (_f, random) => random() < 0.5), SETTINGS);
++    expect(result.status).toBe("no_pattern");
++    expect(result.looLogLoss!).toBeGreaterThanOrEqual(result.baselineLogLoss!);
++    expect(result.model).toBeNull();
++    expect(result.blendWeight).toBeNull();
++  });
++
++  it("is deterministic", () => {
++    expect(trainResponseModel(skillsDriven(), SETTINGS)).toEqual(trainResponseModel(skillsDriven(), SETTINGS));
++  });
++});

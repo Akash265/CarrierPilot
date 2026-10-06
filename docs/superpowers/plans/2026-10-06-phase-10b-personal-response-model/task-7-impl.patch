@@ -1,0 +1,60 @@
+diff --git a/apps/web/src/app/api/insights/route.ts b/apps/web/src/app/api/insights/route.ts
+index 1bd112e..05e9393 100644
+--- a/apps/web/src/app/api/insights/route.ts
++++ b/apps/web/src/app/api/insights/route.ts
+@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
+ import { loadEnv } from "@ai-career/config";
+ import { closeDbClient, createDbClient } from "@ai-career/db";
+ import { buildOutcomeDataset, computeInsights, loadInsightInputs } from "@ai-career/insights";
++import { toModelInsightsView, trainResponseModelSafely } from "../../../lib/insights/responseModel";
+ 
+ /**
+  * Phase 10a spec §7.1. Computed on every request from the stored applications (no cache, no table): at a
+@@ -15,9 +16,12 @@ export async function GET() {
+     const inputs = await loadInsightInputs(db, env.DEFAULT_USER_ID);
+     const records = buildOutcomeDataset(inputs, { now: new Date(), undecidedDays: env.OUTCOME_UNDECIDED_DAYS });
+     const insights = computeInsights(records, { minBucket: env.INSIGHTS_MIN_BUCKET });
++    // Phase 10b: the personal response model, trained on the same records (never fails the request).
++    const model = toModelInsightsView(trainResponseModelSafely(records, env));
+     return NextResponse.json({
+       settings: { undecidedDays: env.OUTCOME_UNDECIDED_DAYS, minBucket: env.INSIGHTS_MIN_BUCKET },
+       ...insights,
++      model,
+     });
+   } finally {
+     await closeDbClient(db);
+diff --git a/apps/web/src/lib/insights/responseModel.ts b/apps/web/src/lib/insights/responseModel.ts
+index 79b8f06..7543a46 100644
+--- a/apps/web/src/lib/insights/responseModel.ts
++++ b/apps/web/src/lib/insights/responseModel.ts
+@@ -1,7 +1,7 @@
+ import type { DbClient } from "@ai-career/db";
+ import {
+-  buildOutcomeDataset, loadInsightInputs, summarizeModel, trainResponseModel,
+-  type ModelResult, type ModelSummary, type OutcomeRecord,
++  buildOutcomeDataset, describeFactors, loadInsightInputs, summarizeModel, trainResponseModel,
++  type FactorEffect, type ModelResult, type ModelSummary, type OutcomeRecord,
+ } from "@ai-career/insights";
+ 
+ /** The env fields the response model needs (Phase 10b spec §8, plus 10a's cutoff for the labels). */
+@@ -51,3 +51,20 @@ export async function loadResponseModel(db: DbClient, env: ResponseModelEnv, now
+   }
+   return trainResponseModelSafely(records, env);
+ }
++
++/** The "Your response model" block of GET /api/insights (Phase 10b spec §5). */
++export interface ModelInsightsView extends ModelSummary {
++  looLogLoss: number | null;
++  baselineLogLoss: number | null;
++  /** Each kept factor's direction and strength, strongest first; empty unless the model is active. */
++  factors: FactorEffect[];
++}
++
++export function toModelInsightsView({ result, summary }: LoadedResponseModel): ModelInsightsView {
++  return {
++    ...summary,
++    looLogLoss: result.looLogLoss,
++    baselineLogLoss: result.baselineLogLoss,
++    factors: result.model ? describeFactors(result.model) : [],
++  };
++}
