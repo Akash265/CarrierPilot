@@ -28,6 +28,9 @@ export default function Home() {
         <Link href="/applications" className="underline">
           6. Applications — track what you&apos;ve applied to
         </Link>
+        <Link href="/insights" className="underline">
+          7. Insights — see which applications get responses
+        </Link>
       </nav>
     </main>
   );
