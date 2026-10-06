@@ -141,4 +141,4 @@ DECISIONS.md from D146 (model/target/gates, blend, fit-on-read, subpath export, 
 - **`GET /api/insights`'s `model.factors` is always present.** It is `[]` whenever the model is not active, rather than being omitted from the response; callers do not need to check for its absence, only whether it is empty.
 - **Helper file name differs from §5.** §5 names the shared server helper `apps/web/src/lib/insights/loadResponseModel.ts`. As built, it is `apps/web/src/lib/insights/responseModel.ts`, exporting `loadResponseModel`, `trainResponseModelSafely` and `toModelInsightsView`.
 - **Insights factor wording differs from §6's example.** §6's example sentence was "Higher skills match has gone with more responses (×1.4 per typical step)." As built, the Insights factor lines read, e.g., `Skills: a higher score has gone with more responses (odds ×1.4 per typical step).` for a positive direction, and the equivalent with "fewer" and "÷" for a negative one.
-- Decisions: D146–D151 (DECISIONS.md).
+- Decisions: D146–D152 (DECISIONS.md).
