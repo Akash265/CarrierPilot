@@ -15,6 +15,11 @@ export function formatFactorPushes(p: ResponsePrediction): string {
   return parts.join(" · ");
 }
 
+/** "Based on 40 decided applications (20 with a response)." -- spec §6: a prediction always comes with its sample size. */
+export function formatSampleSize(model: { decided: number; responses: number }): string {
+  return `Based on ${model.decided} decided applications (${model.responses} with a response).`;
+}
+
 /** Why the "Rank with my history" toggle is unavailable, or null when the model is active. */
 export function modelUnavailableReason(model: {
   status: "insufficient_data" | "no_pattern" | "active";

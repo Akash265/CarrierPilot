@@ -47,11 +47,13 @@ describe("MatchDetailClient", () => {
     mockFetch({
       job, applicationId: null,
       match: { ...match, personal: { probability: 0.62, low: 0.41, high: 0.79, raises: ["Skills", "Role"], lowers: ["Freshness"] } },
+      model: { status: "active", decided: 40, responses: 20, nonResponses: 20, minDecided: 30, minPerClass: 8, blendWeight: 0.2 },
     });
     render(<MatchDetailClient jobId="j1" />);
     const section = await screen.findByRole("region", { name: "Your history" });
     expect(section).toHaveTextContent("Your history: likely response 62% (41–79%)");
     expect(section).toHaveTextContent("Raises: Skills, Role · Lowers: Freshness");
+    expect(section).toHaveTextContent("Based on 40 decided applications (20 with a response).");
     expect(section).toHaveTextContent("not a cause or a guarantee");
   });
 

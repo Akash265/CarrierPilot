@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { formatFactorPushes, formatLikelyResponse, modelUnavailableReason } from "./formatPersonal";
+import { formatFactorPushes, formatLikelyResponse, formatSampleSize, modelUnavailableReason } from "./formatPersonal";
 
 const P = { probability: 0.354, low: 0.221, high: 0.498, raises: ["Skills", "Role"], lowers: ["Freshness"] };
 
@@ -21,5 +21,9 @@ describe("formatPersonal", () => {
     );
     expect(modelUnavailableReason({ ...base, status: "no_pattern" })).toBe("Your history doesn't show a pattern that beats your average yet.");
     expect(modelUnavailableReason({ ...base, status: "active" })).toBeNull();
+  });
+
+  it("states the sample size behind the model", () => {
+    expect(formatSampleSize({ decided: 40, responses: 20 })).toBe("Based on 40 decided applications (20 with a response).");
   });
 });

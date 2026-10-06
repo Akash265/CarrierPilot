@@ -189,6 +189,7 @@ describe("InsightsClient", () => {
     render(<InsightsClient />);
     const section = await screen.findByRole("region", { name: "Your response model" });
     expect(section).toHaveTextContent("Predicts responses better than your average: yes (error 0.412 vs 0.693 for your average; lower is better).");
+    expect(section).toHaveTextContent("Based on 40 decided applications (20 with a response).");
     expect(section).toHaveTextContent('Turning on "Rank with my history" on Matches blends this model in at 20% of the ranking.');
     expect(within(section).getByText("Skills: a higher score has gone with more responses (odds ×3.4 per typical step).")).toBeInTheDocument();
     expect(within(section).getByText("Freshness: a higher score has gone with fewer responses (odds ÷1.2 per typical step).")).toBeInTheDocument();

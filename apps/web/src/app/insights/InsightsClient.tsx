@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import type { Bucket, Dimension, Headline, Insights, Patterns, Tier } from "@ai-career/insights";
 import type { ModelInsightsView } from "../../lib/insights/responseModel";
+import { formatSampleSize } from "../../lib/insights/formatPersonal";
 
 export type InsightsResponse = Insights & {
   settings: { undecidedDays: number; minBucket: number };
@@ -148,6 +149,7 @@ function ModelSection({ model }: { model: ModelInsightsView }) {
       {model.status === "no_pattern" && <p>Your history doesn&apos;t show a pattern that beats your average yet, so ranking stays as it is.</p>}
       {model.status === "active" && (
         <>
+          <p>{formatSampleSize(model)}</p>
           {model.blendWeight !== null && (
             <p>{`Turning on "Rank with my history" on Matches blends this model in at ${Math.round(model.blendWeight * 100)}% of the ranking.`}</p>
           )}

@@ -10,7 +10,7 @@ import { PitchPanel } from "./PitchPanel";
 import { CoverLetterPanel } from "./CoverLetterPanel";
 import { InterviewPrepPanel } from "./InterviewPrepPanel";
 import { DocumentsList } from "./DocumentsList";
-import { formatFactorPushes, formatLikelyResponse } from "../../../lib/insights/formatPersonal";
+import { formatFactorPushes, formatLikelyResponse, formatSampleSize } from "../../../lib/insights/formatPersonal";
 
 interface JobView {
   id: string;
@@ -31,7 +31,16 @@ interface MatchView {
   personal?: ResponsePrediction | null;
 }
 
-type Outcome = { kind: "missing" } | { kind: "error" } | { kind: "ready"; job: JobView; match: MatchView; applicationId: string | null };
+/** Phase 10b: the sample behind the personal prediction (from the response's `model` summary). */
+interface ModelSample {
+  decided: number;
+  responses: number;
+}
+
+type Outcome =
+  | { kind: "missing" }
+  | { kind: "error" }
+  | { kind: "ready"; job: JobView; match: MatchView; applicationId: string | null; model: ModelSample | null };
 type State = { kind: "loading" } | Outcome;
 
 const FACTOR_LABELS: [string, string][] = [
@@ -61,6 +70,9 @@ export function MatchDetailClient({ jobId }: { jobId: string }) {
             job: body.job,
             match: body.match,
             applicationId: typeof body.applicationId === "string" ? body.applicationId : null,
+            model: typeof body.model?.decided === "number" && typeof body.model?.responses === "number"
+              ? { decided: body.model.decided, responses: body.model.responses }
+              : null,
           });
         } else {
           finish({ kind: "error" });
@@ -118,6 +130,7 @@ export function MatchDetailClient({ jobId }: { jobId: string }) {
           <h2 id="history-heading" className="font-medium">Your history</h2>
           <p>{`Your history: ${formatLikelyResponse(match.personal)}`}</p>
           {formatFactorPushes(match.personal) && <p>{formatFactorPushes(match.personal)}</p>}
+          {state.model && <p>{formatSampleSize(state.model)}</p>}
           <p className="text-xs text-gray-600">
             Based on how these factors have gone with responses in your own applications — not a cause or a guarantee.
           </p>
