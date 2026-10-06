@@ -1,4 +1,5 @@
 import { schema } from "@ai-career/db";
+import type { FactorVector, ResponsePrediction } from "@ai-career/insights";
 
 type MatchRow = typeof schema.jobMatches.$inferSelect;
 
@@ -32,11 +33,13 @@ export interface MatchView {
   explanation: MatchExplanationView | null;
   userAction: "none" | "saved" | "dismissed";
   computedAt: string;
+  /** Phase 10b: the personal response prediction; null unless the model is active and the match is eligible. */
+  personal: ResponsePrediction | null;
 }
 
 const pct = (value: string | null): number | null => (value === null ? null : Math.round(Number(value) * 100));
 
-export function toMatchView(row: MatchRow): MatchView {
+export function toMatchView(row: MatchRow, personal: ResponsePrediction | null = null): MatchView {
   return {
     matchId: row.id,
     eligible: row.eligible,
@@ -58,5 +61,20 @@ export function toMatchView(row: MatchRow): MatchView {
     explanation: row.eligible ? ((row.explanation as MatchExplanationView | null) ?? null) : null,
     userAction: row.userAction,
     computedAt: row.computedAt.toISOString(),
+    personal: row.eligible ? personal : null,
+  };
+}
+
+const score = (value: string | null): number | null => (value === null ? null : Number(value));
+
+/** The stored 0-1 factor scores of a match (numeric columns arrive as strings) as the model's input. */
+export function factorVectorOf(
+  row: Pick<MatchRow, "skillsScore" | "experienceScore" | "locationScore" | "sponsorshipScore" | "roleScore" | "salaryScore"
+    | "industryScore" | "freshnessScore" | "semanticScore">
+): FactorVector {
+  return {
+    skillsScore: score(row.skillsScore), experienceScore: score(row.experienceScore), locationScore: score(row.locationScore),
+    sponsorshipScore: score(row.sponsorshipScore), roleScore: score(row.roleScore), salaryScore: score(row.salaryScore),
+    industryScore: score(row.industryScore), freshnessScore: score(row.freshnessScore), semanticScore: score(row.semanticScore),
   };
 }

@@ -2,8 +2,10 @@ import { NextResponse } from "next/server";
 import { eq } from "drizzle-orm";
 import { loadEnv } from "@ai-career/config";
 import { closeDbClient, createDbClient, schema, withUserContext } from "@ai-career/db";
+import { predictResponse } from "@ai-career/insights";
 import { getJobDetail } from "../../../../lib/jobs/getJobDetail";
-import { toMatchView } from "../../../../lib/matching/serializeMatch";
+import { factorVectorOf, toMatchView } from "../../../../lib/matching/serializeMatch";
+import { loadResponseModel } from "../../../../lib/insights/responseModel";
 import { formatValidationError } from "../../../../lib/formatValidationError";
 import { readJsonBody } from "../../../../lib/readJsonBody";
 import { MatchActionSchema } from "../../../../lib/matching/matchActionSchema";
@@ -17,6 +19,7 @@ export async function GET(_request: Request, { params }: { params: Promise<{ job
   const env = loadEnv();
   const db = createDbClient(env);
   try {
+    const { result: model, summary } = await loadResponseModel(db, env);
     return await withUserContext(db, env.DEFAULT_USER_ID, async (tx) => {
       const [matchRow] = await tx.select().from(schema.jobMatches).where(eq(schema.jobMatches.jobId, jobId)).limit(1);
       if (!matchRow) return NextResponse.json({ error: "Match not found" }, { status: 404 });
@@ -27,7 +30,8 @@ export async function GET(_request: Request, { params }: { params: Promise<{ job
         .from(schema.applications)
         .where(eq(schema.applications.jobId, jobId))
         .limit(1);
-      return NextResponse.json({ job, match: toMatchView(matchRow), applicationId: application?.id ?? null });
+      const personal = model.model !== null && matchRow.eligible ? predictResponse(model.model, factorVectorOf(matchRow)) : null;
+      return NextResponse.json({ job, match: toMatchView(matchRow, personal), applicationId: application?.id ?? null, model: summary });
     });
   } finally {
     await closeDbClient(db);

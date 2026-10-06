@@ -2,12 +2,15 @@ import { describe, it, expect, vi, beforeAll, beforeEach, afterAll } from "vites
 import type postgres from "postgres";
 import { eq } from "drizzle-orm";
 import { schema, withUserContext, createDbClient } from "@ai-career/db";
-import { openAdminDb, wipeMatchingData, insertJob, insertCareerGoal, insertMatch, insertApplication } from "../../../../test/jobsDb";
+import { openAdminDb, wipeMatchingData, insertJob, insertCareerGoal, insertMatch, insertApplication, insertModelHistory } from "../../../../test/jobsDb";
 
 vi.mock("@ai-career/config", () => ({
   loadEnv: () => ({
     DEFAULT_USER_ID: "00000000-0000-0000-0000-0000000000c5",
     DATABASE_URL: process.env.TEST_APP_DATABASE_URL ?? "postgres://career_intel_app:career_intel_app@localhost:5432/career_intel_test",
+    OUTCOME_UNDECIDED_DAYS: 30,
+    OUTCOME_MODEL_MIN_DECIDED: 30,
+    OUTCOME_MODEL_MIN_PER_CLASS: 8,
   }),
 }));
 
@@ -29,6 +32,22 @@ const patch = (jobId: string, body: unknown) =>
   PATCH(new Request(`http://localhost/api/matches/${jobId}`, { method: "PATCH", body: JSON.stringify(body) }), { params: Promise.resolve({ jobId }) });
 
 describe("GET /api/matches/[jobId]", () => {
+  it("includes the model summary, and a personal prediction with raises/lowers once the model is active", async () => {
+    const goalId = await insertCareerGoal(admin, USER);
+    const jobId = await insertJob(admin, USER, { title: "Data Engineer" });
+    await insertMatch(admin, USER, jobId, goalId, { overallScore: 82, skillsScore: 0.95 });
+
+    const before = await (await get(jobId)).json();
+    expect(before.model.status).toBe("insufficient_data");
+    expect(before.match.personal).toBeNull();
+
+    await insertModelHistory(admin, USER, 40);
+    const after = await (await get(jobId)).json();
+    expect(after.model).toMatchObject({ status: "active", decided: 40 });
+    expect(after.match.personal.probability).toBeGreaterThan(0.5);
+    expect(after.match.personal.raises).toContain("Skills");
+  });
+
   it("returns the job detail and match fields together", async () => {
     const goalId = await insertCareerGoal(admin, USER);
     const jobId = await insertJob(admin, USER, { title: "Data Engineer" });

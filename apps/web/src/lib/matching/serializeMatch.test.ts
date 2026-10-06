@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { toMatchView } from "./serializeMatch";
+import { factorVectorOf, toMatchView } from "./serializeMatch";
 
 // toMatchView is pure (row -> view), so these are plain unit tests -- no DB needed. The row shape
 // mirrors schema.jobMatches.$inferSelect; only the fields toMatchView reads are filled in.
@@ -82,5 +82,21 @@ describe("toMatchView", () => {
     expect(view.explanation).toBeNull();
     expect(view.factors).toBeNull();
     expect(view.overallScore).toBeNull();
+  });
+
+  it("carries a personal prediction for an eligible row and drops it for an ineligible one", () => {
+    const personal = { probability: 0.35, low: 0.22, high: 0.5, raises: ["Skills"], lowers: [] };
+    expect(toMatchView(baseRow()).personal).toBeNull();
+    expect(toMatchView(baseRow(), personal).personal).toEqual(personal);
+    expect(toMatchView(baseRow({ eligible: false }), personal).personal).toBeNull();
+  });
+});
+
+describe("factorVectorOf", () => {
+  it("turns the stored numeric strings into the model's 0-1 factor vector, keeping nulls", () => {
+    expect(factorVectorOf(baseRow())).toEqual({
+      skillsScore: 0.8, experienceScore: 0.5, locationScore: 1, sponsorshipScore: 1, roleScore: 0.6, salaryScore: null,
+      industryScore: null, freshnessScore: 0.9, semanticScore: 0.7,
+    });
   });
 });
