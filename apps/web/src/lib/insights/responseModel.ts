@@ -1,7 +1,7 @@
 import type { DbClient } from "@ai-career/db";
 import {
-  buildOutcomeDataset, loadInsightInputs, summarizeModel, trainResponseModel,
-  type ModelResult, type ModelSummary, type OutcomeRecord,
+  buildOutcomeDataset, describeFactors, loadInsightInputs, summarizeModel, trainResponseModel,
+  type FactorEffect, type ModelResult, type ModelSummary, type OutcomeRecord,
 } from "@ai-career/insights";
 
 /** The env fields the response model needs (Phase 10b spec §8, plus 10a's cutoff for the labels). */
@@ -50,4 +50,21 @@ export async function loadResponseModel(db: DbClient, env: ResponseModelEnv, now
     return { result, summary: summarizeModel(result) };
   }
   return trainResponseModelSafely(records, env);
+}
+
+/** The "Your response model" block of GET /api/insights (Phase 10b spec §5). */
+export interface ModelInsightsView extends ModelSummary {
+  looLogLoss: number | null;
+  baselineLogLoss: number | null;
+  /** Each kept factor's direction and strength, strongest first; empty unless the model is active. */
+  factors: FactorEffect[];
+}
+
+export function toModelInsightsView({ result, summary }: LoadedResponseModel): ModelInsightsView {
+  return {
+    ...summary,
+    looLogLoss: result.looLogLoss,
+    baselineLogLoss: result.baselineLogLoss,
+    factors: result.model ? describeFactors(result.model) : [],
+  };
 }
