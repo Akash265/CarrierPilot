@@ -12,7 +12,7 @@ const GOAL: InsightGoal = {
 const SNAPSHOT = {
   snapshotVersion: 2, external: false,
   job: { workMode: "hybrid", countryCode: "DE", salaryMin: 70000, salaryMax: 75000, salaryCurrency: "EUR", postingAgeDays: 3 },
-  match: { careerGoalId: "g1", eligible: true, overallScore: 72 },
+  match: { careerGoalId: "g1", eligible: true, overallScore: 72, skillsScore: 0.8 },
   ats: { overallScore: 88, requiredKeywordCoverage: 0.5, missedRequiredTerms: ["Tableau"] },
   documents: { resume: { origin: null }, pitch: null, coverLetter: null },
 };
@@ -37,6 +37,10 @@ describe("buildOutcomeDataset", () => {
       company: { key: "acme", label: "Acme" },
       workMode: "hybrid", countryCode: "DE", salaryVsFloor: "below", matchScore: 72, atsScore: 88, requiredKeywordCoverage: 0.5,
       postingAgeDays: 3, documents: { resume: true, pitch: false, coverLetter: false, edited: false }, missedRequiredTerms: ["Tableau"],
+      factors: {
+        skillsScore: 0.8, experienceScore: null, locationScore: null, sponsorshipScore: null, roleScore: null, salaryScore: null,
+        industryScore: null, freshnessScore: null, semanticScore: null,
+      },
     });
   });
 
@@ -75,7 +79,7 @@ describe("buildOutcomeDataset", () => {
     expect(record).toMatchObject({
       external: true, roleFamily: { key: "analytics engineer", label: "Analytics Engineer" }, company: { key: "acme" },
       workMode: null, countryCode: null, salaryVsFloor: null, matchScore: null, atsScore: null, requiredKeywordCoverage: null,
-      postingAgeDays: null, documents: null, missedRequiredTerms: null,
+      postingAgeDays: null, documents: null, missedRequiredTerms: null, factors: null,
     });
   });
 

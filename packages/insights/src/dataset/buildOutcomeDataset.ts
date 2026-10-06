@@ -55,6 +55,7 @@ export function buildOutcomeDataset(inputs: InsightInputs, opts: { now: Date; un
       postingAgeDays: snapshot.postingAgeDays,
       documents: snapshot.documents,
       missedRequiredTerms: snapshot.missedRequiredTerms,
+      factors: snapshot.factors,
     };
   });
 }
