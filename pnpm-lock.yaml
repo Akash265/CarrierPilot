@@ -231,6 +231,9 @@ importers:
         specifier: ^3.24.0
         version: 3.25.76
     devDependencies:
+      '@ai-career/resume-optimization':
+        specifier: workspace:*
+        version: link:../resume-optimization
       '@types/node':
         specifier: ^22.10.0
         version: 22.20.1

@@ -32,12 +32,43 @@ describe("createApplication", () => {
     expect(snap.external).toBe(false);
     expect(snap.match).toMatchObject({ careerGoalId: s.goalId, overallScore: 78 });
     expect(snap.ats).toMatchObject({ overallScore: 82, requiredKeywordCoverage: 0.9 });
+    expect(snap.ats.missedRequiredTerms).toEqual([]); // the seeded job has no requirement rows
     expect(snap.documents.resume).toMatchObject({ id: s.resumeId, version: 1, sourceProfileContentHash: "profile-hash" });
     expect(snap.documents.pitch).toMatchObject({ id: s.pitchId, version: 1, origin: "generated" });
     expect(snap.job.postingAgeDays).toBe(10);
 
     const events = await t.adminSql`SELECT type, from_status, to_status FROM application_events WHERE application_id = ${row.id}`;
     expect(events).toEqual([{ type: "status_change", from_status: null, to_status: "applied" }]);
+  });
+
+  it("records the required terms the sent resume missed (snapshot v2)", async () => {
+    const s = await seedJobWithDocuments(t.adminSql, USER);
+    const bullets = JSON.stringify([
+      { sourceFactId: "f1", optimizedText: "Built SQL models in Python", changeType: "reworded", justification: "j" },
+      { sourceFactId: "f2", optimizedText: "Ran Airflow DAGs", changeType: "unchanged", justification: "j" },
+    ]);
+    await t.adminSql`UPDATE resume_optimizations SET selected_bullets = ${bullets}::jsonb WHERE id = ${s.resumeId}`;
+    // Explicit, increasing created_at values: the implementation orders requirements by (created_at, id), and rows
+    // inserted with the default now() in quick succession can tie.
+    const terms: [string, string][] = [["SQL", "required"], ["Tableau", "required"], ["python", "required"], ["dbt", "required"], ["Looker", "preferred"]];
+    for (const [i, [term, level]] of terms.entries()) {
+      await t.adminSql`
+        INSERT INTO job_requirements (user_id, job_id, term_text, term_type, requirement_level, extraction_model,
+                                      extraction_source_description_hash, created_at)
+        VALUES (${USER}, ${s.jobId}, ${term}, 'skill', ${level}, 'm', 'dh', ${new Date(Date.UTC(2026, 8, 1, 0, 0, i)).toISOString()}::timestamptz)`;
+    }
+
+    const row = await createApplication(t.db, USER, { jobId: s.jobId, resumeOptimizationId: s.resumeId }, NOW);
+
+    const snap = row.featureSnapshot as { snapshotVersion: number; ats: { missedRequiredTerms: string[] | null } };
+    expect(snap.snapshotVersion).toBe(2);
+    expect(snap.ats.missedRequiredTerms).toEqual(["Tableau", "dbt"]);
+  });
+
+  it("records no missed terms (unknown) when no optimized resume is linked", async () => {
+    const s = await seedJobWithDocuments(t.adminSql, USER);
+    const row = await createApplication(t.db, USER, { jobId: s.jobId, applicationPitchId: s.pitchId }, NOW);
+    expect((row.featureSnapshot as { ats: unknown }).ats).toBeNull();
   });
 
   it("stores no jobUrl when the ingested posting's url is not http(s) (untrusted job-source content)", async () => {

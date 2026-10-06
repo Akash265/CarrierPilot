@@ -7,8 +7,9 @@ export {
 } from "./bodies";
 export {
   buildFeatureSnapshot,
-  type BuildSnapshotInput, type FeatureSnapshotV1, type SnapshotJobInput, type SnapshotMatchInput, type SnapshotAtsInput, type SnapshotDocumentRef,
+  type BuildSnapshotInput, type FeatureSnapshot, type SnapshotJobInput, type SnapshotMatchInput, type SnapshotAtsInput, type SnapshotDocumentRef,
 } from "./snapshot";
+export { findMissedTerms, joinOptimizedText } from "./missedTerms";
 export { loadLinkedDocuments, type DocumentLinkIds, type LinkedDocuments } from "./documentLinks";
 export { createApplication } from "./createApplication";
 export {
