@@ -12,3 +12,4 @@ export {
   computeInsights, OTHERS_KEY, HIGH_COVERAGE_THRESHOLD, MIN_TERM_NEGATIVES, MAX_MISSED_TERMS,
   type Headline, type Bucket, type Dimension, type MissedTermPattern, type HighCoveragePattern, type Patterns, type Insights,
 } from "./stats/computeInsights";
+export { loadInsightInputs } from "./load/loadInsightInputs";
