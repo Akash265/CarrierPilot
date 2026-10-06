@@ -35,4 +35,27 @@ describe("classifyField", () => {
   it("returns null for a field without id/name/label matches", () => {
     expect(classifyField(field({}), leverV1)).toBeNull();
   });
+
+  it("flags a sponsorship question phrased with a polarity marker instead of filling it inverted", () => {
+    expect(classifyField(field({ label: "Are you able to work in the UK without the need for visa sponsorship?" }), greenhouseV1)).toEqual({
+      canonical: "sponsorship", flagReason: "ambiguous_wording",
+    });
+    expect(classifyField(field({ label: "Do you NOT require visa sponsorship?" }), greenhouseV1)).toEqual({
+      canonical: "sponsorship", flagReason: "ambiguous_wording",
+    });
+    expect(classifyField(field({ label: "Don't you require visa sponsorship?" }), greenhouseV1)).toEqual({
+      canonical: "sponsorship", flagReason: "ambiguous_wording",
+    });
+  });
+
+  it("still fills the plain 'will you now or in the future require sponsorship' phrasing", () => {
+    expect(classifyField(field({ label: "Will you now or in the future require sponsorship for a visa?" }), greenhouseV1)).toEqual({
+      canonical: "sponsorship", flagReason: null,
+    });
+  });
+
+  it("does not classify a 'how did you hear about us' question as linkedin", () => {
+    expect(classifyField(field({ label: "How did you hear about us? (LinkedIn, referral, job board, etc.)" }), greenhouseV1)).toBeNull();
+    expect(classifyField(field({ label: "LinkedIn Profile" }), greenhouseV1)).toEqual({ canonical: "linkedin", flagReason: null });
+  });
 });

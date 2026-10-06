@@ -139,6 +139,21 @@ describe("buildFillPlan rules", () => {
     expect(plan.audit.find((a) => a.key === "f_sal_combo")).toMatchObject({ canonical: "salary_expectation", action: "flagged", reason: "unsupported_control" });
   });
 
+  it("flags a polarity-worded sponsorship question instead of filling it inverted", () => {
+    const negated = f({ key: "f_neg", control: "radio_group", required: true, label: "Are you able to work in the UK without the need for visa sponsorship?", options: [
+      { key: "f_neg_y", label: "Yes", value: "1" }, { key: "f_neg_n", label: "No", value: "0" },
+    ] });
+    const plan = buildFillPlan(snap([...healthyGh, negated]), greenhouseV1, values);
+    expect(plan.audit.find((a) => a.key === "f_neg")).toMatchObject({ canonical: "sponsorship", action: "flagged", reason: "ambiguous_wording" });
+    expect(plan.actions.find((a) => a.fieldKey === "f_neg")).toBeUndefined();
+  });
+
+  it("regression: the Lever fixture's plain sponsorship question is still filled", () => {
+    const plan = buildFillPlan(lv, leverV1, values);
+    const sponsorship = lv.fields.find((f2) => f2.label?.startsWith("Will you now or in the future require sponsorship"))!;
+    expect(auditFor(plan.audit, lv, (f2) => f2.key === sponsorship.key)).toMatchObject({ action: "filled" });
+  });
+
   it("still skips optional unrecognized fields", () => {
     const unknown = f({ key: "f_unknown", control: "text", required: false, label: "Some random question" });
     const plan = buildFillPlan(snap([...healthyGh, unknown]), greenhouseV1, values);
