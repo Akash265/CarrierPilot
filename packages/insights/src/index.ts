@@ -13,3 +13,13 @@ export {
   type Headline, type Bucket, type Dimension, type MissedTermPattern, type HighCoveragePattern, type Patterns, type Insights,
 } from "./stats/computeInsights";
 export { loadInsightInputs } from "./load/loadInsightInputs";
+export { fitLogistic, sigmoid, type LogisticFit } from "./model/fitLogistic";
+export { fitScaling, standardize, type FeatureScaling } from "./model/prepareFeatures";
+export {
+  trainResponseModel, trainingRows, blendWeight, fitModel, modelProbability, RIDGE_LAMBDA,
+  type ModelSettings, type ModelStatus, type ModelResult, type ResponseModel, type TrainingRow,
+} from "./model/trainResponseModel";
+export {
+  predictResponse, blendedScore, describeFactors, summarizeModel, FACTOR_LABELS,
+  type ResponsePrediction, type FactorEffect, type ModelSummary,
+} from "./model/predictResponse";
