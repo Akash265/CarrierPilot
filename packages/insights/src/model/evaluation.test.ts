@@ -40,6 +40,11 @@ describe("response model evaluation", () => {
     }
   });
 
+  it("finds the direction of a positive signal", () => {
+    const result = trainResponseModel(syntheticHistory(40, 7, (f) => v(f, "skillsScore") > 0.5), SETTINGS);
+    expect(describeFactors(result.model!)[0]).toMatchObject({ key: "skillsScore", direction: "higher" });
+  });
+
   it("finds the direction of a negative signal", () => {
     const result = trainResponseModel(syntheticHistory(40, 5, (f) => v(f, "freshnessScore") < 0.5), SETTINGS);
     expect(describeFactors(result.model!)[0]).toMatchObject({ key: "freshnessScore", direction: "lower" });
