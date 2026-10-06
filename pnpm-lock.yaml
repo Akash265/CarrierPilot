@@ -444,6 +444,40 @@ importers:
         specifier: ^2.1.0
         version: 2.1.9(@types/node@22.20.1)(jsdom@25.0.1)(lightningcss@1.32.0)
 
+  packages/insights:
+    dependencies:
+      '@ai-career/db':
+        specifier: workspace:*
+        version: link:../db
+      '@ai-career/matching':
+        specifier: workspace:*
+        version: link:../matching
+      drizzle-orm:
+        specifier: ^0.36.0
+        version: 0.36.4(@types/react@19.2.18)(postgres@3.4.9)(react@19.2.8)
+    devDependencies:
+      '@ai-career/applications':
+        specifier: workspace:*
+        version: link:../applications
+      '@types/node':
+        specifier: ^22.10.0
+        version: 22.20.1
+      eslint:
+        specifier: ^9.0.0
+        version: 9.39.5(jiti@2.7.0)
+      postgres:
+        specifier: ^3.4.0
+        version: 3.4.9
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+      typescript-eslint:
+        specifier: ^8.0.0
+        version: 8.69.0(eslint@9.39.5(jiti@2.7.0))(typescript@5.9.3)
+      vitest:
+        specifier: ^2.1.0
+        version: 2.1.9(@types/node@22.20.1)(jsdom@25.0.1)(lightningcss@1.32.0)
+
   packages/matching:
     dependencies:
       '@ai-career/ai':
