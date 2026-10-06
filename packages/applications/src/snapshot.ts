@@ -52,8 +52,8 @@ export interface SnapshotDocumentRef {
 
 type Nullable<T> = { [K in keyof T]: T[K] | null };
 
-export interface FeatureSnapshotV1 {
-  snapshotVersion: 1;
+export interface FeatureSnapshot {
+  snapshotVersion: 2;
   external: boolean;
   job: { title: string; companyName: string } & Nullable<{
     seniority: string; countryCode: string; locationRaw: string; workMode: string; employmentType: string;
@@ -65,7 +65,11 @@ export interface FeatureSnapshotV1 {
     sponsorshipScore: number | null; roleScore: number | null; salaryScore: number | null; industryScore: number | null;
     freshnessScore: number | null; semanticScore: number | null;
   } | null;
-  ats: { overallScore: number; requiredKeywordCoverage: number; preferredKeywordCoverage: number; semanticSimilarity: number | null } | null;
+  ats: {
+    overallScore: number; requiredKeywordCoverage: number; preferredKeywordCoverage: number; semanticSimilarity: number | null;
+    /** v2 (Phase 10a): required job terms the sent resume text did not contain. null = unknown. */
+    missedRequiredTerms: string[] | null;
+  } | null;
   documents: { resume: SnapshotDocumentRef | null; pitch: SnapshotDocumentRef | null; coverLetter: SnapshotDocumentRef | null } | null;
 }
 
@@ -79,17 +83,20 @@ export type BuildSnapshotInput =
       documents: { resume: SnapshotDocumentRef | null; pitch: SnapshotDocumentRef | null; coverLetter: SnapshotDocumentRef | null };
       /** YYYY-MM-DD */
       appliedAt: string;
+      /** v2: required job terms the linked optimized resume missed; null when no optimization is linked. */
+      missedRequiredTerms: string[] | null;
     };
 
 /**
  * Phase 9 design §3: what was true when the user applied, for Phase 10. job_matches is overwritten on
  * every matching run and retention deletes the documents, so this is the only durable record. Missing
  * parts are null, never zero (a missing salary is not a salary of 0).
+ * v2 (Phase 10a) adds ats.missedRequiredTerms; v1 snapshots stay as written (write-once).
  */
-export function buildFeatureSnapshot(input: BuildSnapshotInput): FeatureSnapshotV1 {
+export function buildFeatureSnapshot(input: BuildSnapshotInput): FeatureSnapshot {
   if (input.kind === "external") {
     return {
-      snapshotVersion: 1,
+      snapshotVersion: 2,
       external: true,
       job: {
         title: input.jobTitle, companyName: input.companyName, seniority: null, countryCode: null, locationRaw: null, workMode: null,
@@ -107,7 +114,7 @@ export function buildFeatureSnapshot(input: BuildSnapshotInput): FeatureSnapshot
   const postingAgeDays = Math.max(0, Math.floor((appliedMs - reference.getTime()) / MS_PER_DAY));
 
   return {
-    snapshotVersion: 1,
+    snapshotVersion: 2,
     external: false,
     job: {
       title: job.title, companyName: job.companyName, seniority: job.seniority, countryCode: job.countryCode, locationRaw: job.locationRaw,
@@ -124,6 +131,7 @@ export function buildFeatureSnapshot(input: BuildSnapshotInput): FeatureSnapshot
     ats: ats && {
       overallScore: Number(ats.overallScore), requiredKeywordCoverage: Number(ats.requiredKeywordCoverage),
       preferredKeywordCoverage: Number(ats.preferredKeywordCoverage), semanticSimilarity: num(ats.semanticSimilarity),
+      missedRequiredTerms: input.missedRequiredTerms,
     },
     documents: input.documents,
   };

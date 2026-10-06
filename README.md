@@ -232,3 +232,12 @@ window and click Submit yourself — the worker has no code path that can
 submit a form.** Once you've submitted (or decided not to), "Record as
 applied?" on the panel creates the application entry with the same
 resume/cover-letter versions the session attached, in one click.
+
+Phase 10a (Outcome Analytics) complete: `/insights` shows how often your
+applications get a response and an interview, overall and by role family,
+company, work mode, match score, keyword coverage, posting age and the
+documents you sent — each with its sample size and a likely range, and only
+once a group has enough decided applications (`INSIGHTS_MIN_BUCKET`, default
+5). Applications count as "no response" after `OUTCOME_UNDECIDED_DAYS`
+(default 30) without activity. No AI calls; nothing changes your rankings
+yet (that is Phase 10b).

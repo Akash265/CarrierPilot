@@ -19,6 +19,7 @@
     "@ai-career/db": "workspace:*",
     "@ai-career/document-export": "workspace:*",
     "@ai-career/ingestion": "workspace:*",
+    "@ai-career/insights": "workspace:*",
     "@ai-career/matching": "workspace:*",
     "@ai-career/resume-optimization": "workspace:*",
     "@ai-career/storage": "workspace:*",

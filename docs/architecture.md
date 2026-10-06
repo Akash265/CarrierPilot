@@ -380,7 +380,7 @@ runMatching's eligibility        services/maintenance-worker  (daily BullMQ sche
   ingested job; `feature_snapshot jsonb` written once at creation, D116; `terminal_at` drives retention, D115)
   and `application_events` (append-only, `ON DELETE CASCADE` from `applications`, seven event types --
   migrations `0024_far_captain_universe.sql`, `0025_applications_rls.sql`). Both RLS-scoped like every other
-  user table (D2).
+  user table (D2). Since Phase 10a the snapshot is version 2 and also records ats.missedRequiredTerms (D143).
 - **Lifecycle.** Permissive: any status may move to any other; every change is logged (D114). `terminal_at`
   is set to *now* on entering a terminal status, kept across a terminal→terminal move, and cleared on reopen
   (D115) -- this is the sole retention clock. No `application_outcomes` table; the outcome is the terminal
@@ -471,3 +471,12 @@ call order and DECISIONS.md D127–D136 the rationale behind each piece.
   window immediately.
 - **Session ids reserved for this phase's tests.** `00000000-0000-0000-0000-0000000008a1`–`…8a9`,
   `…8b1`–`…8b5` (global-constraints.md), verified unused repo-wide before use.
+
+## 19. Outcome Analytics (Phase 10a)
+
+- **What it is.** `/insights` shows response and interview rates, overall and broken down by role family, company, work mode, country, salary vs floor, match score, ATS score, required keyword coverage, posting age and documents sent, each with its sample size and a 95% Wilson interval, plus spec §16 rejection patterns (recurring missed required terms; results at ≥ 80% keyword coverage). Deterministic: no LLM calls.
+- **How.** The pure package `packages/insights` computes everything on each `GET /api/insights` from `applications.feature_snapshot`, `application_events` and confirmed career goals ([D140](../DECISIONS.md)). No new tables: spec §19's `learning_features`/`application_outcomes` are the snapshot plus derived labels.
+- **Labels.** Two tiers from stage history and logged events; withdrawn is excluded; open applications count as "no" after `OUTCOME_UNDECIDED_DAYS` (default 30) without activity ([D141](../DECISIONS.md)). Role family = best-matching career-goal target role ([D142](../DECISIONS.md)).
+- **Snapshot v2.** New applications record the required terms the sent resume missed ([D143](../DECISIONS.md)); v1 snapshots show those as unknown.
+- **Honesty rules.** Below `INSIGHTS_MIN_BUCKET` (default 5) decided applications, counts only; "stands out" only when the interval clears the overall rate; non-causal wording and a chance caveat ([D144](../DECISIONS.md)).
+- **Known gaps.** Most groups say "not enough data" until there is real history. No multiple-comparison correction. Role families split if a target role is renamed (beyond case/spacing). Missed terms use the job's requirements at apply time, which follow the current description. External applications contribute only to the overall rates, role family and company. A status change made by mistake and later reverted still counts as evidence and activity -- history wins, and there is no way to retract an event. Label reasons (`TierOutcome.reason`) are computed for every application but not yet shown in the UI; only the aggregate headlines, breakdowns and patterns are displayed today. Not built (10b): a model, predictions, any ranking change.

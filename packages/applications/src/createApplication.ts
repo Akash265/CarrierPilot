@@ -1,13 +1,14 @@
-import { and, desc, eq, isNotNull } from "drizzle-orm";
+import { and, asc, desc, eq, isNotNull } from "drizzle-orm";
 import { schema, withUserContext, type DbClient } from "@ai-career/db";
 import { ApplicationError } from "./errors";
 import { todayUtc, type CreateApplicationBody } from "./bodies";
 import { buildFeatureSnapshot } from "./snapshot";
 import { loadLinkedDocuments } from "./documentLinks";
+import { findMissedTerms, joinOptimizedText } from "./missedTerms";
 import { lockLinkableSession, withSessionDocuments, type LinkableSession } from "./sessionLink";
 import type { ApplicationRow } from "./types";
 
-const { jobs, jobPostings, jobMatches, applications, applicationEvents, automationSessions } = schema;
+const { jobs, jobPostings, jobMatches, applications, applicationEvents, automationSessions, resumeOptimizations, jobRequirements } = schema;
 
 const HTTP_URL_RE = /^https?:\/\//i;
 /** Ingested posting URLs are untrusted (job-source content); only http(s) is safe to store/render as a link. */
@@ -54,6 +55,20 @@ export async function createApplication(
         if (!job) throw new ApplicationError("job_not_found");
         if (body.automationSessionId) session = await lockLinkableSession(tx, body.automationSessionId, jobId);
         const docs = await loadLinkedDocuments(tx, jobId, session ? await withSessionDocuments(tx, session, body) : body);
+        // Phase 10a snapshot v2: which required terms the resume actually sent did not contain (spec §6).
+        let missedRequiredTerms: string[] | null = null;
+        if (docs.resume) {
+          const [optimization] = await tx
+            .select({ bullets: resumeOptimizations.selectedBullets })
+            .from(resumeOptimizations)
+            .where(eq(resumeOptimizations.id, docs.resume.id));
+          const required = await tx
+            .select({ termText: jobRequirements.termText })
+            .from(jobRequirements)
+            .where(and(eq(jobRequirements.jobId, jobId), eq(jobRequirements.requirementLevel, "required")))
+            .orderBy(asc(jobRequirements.createdAt), asc(jobRequirements.id));
+          missedRequiredTerms = findMissedTerms(required.map((r) => r.termText), joinOptimizedText(optimization?.bullets));
+        }
         const [match] = await tx.select().from(jobMatches).where(eq(jobMatches.jobId, jobId)).limit(1);
         const [posting] = await tx
           .select({ url: jobPostings.url })
@@ -73,6 +88,7 @@ export async function createApplication(
             ats: docs.ats,
             documents: { resume: docs.resume, pitch: docs.pitch, coverLetter: docs.coverLetter },
             appliedAt,
+            missedRequiredTerms,
           }),
           resumeOptimizationId: docs.resume?.id ?? null,
           applicationPitchId: docs.pitch?.id ?? null,
