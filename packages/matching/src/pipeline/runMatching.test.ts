@@ -2,8 +2,7 @@ import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from "vites
 import Anthropic from "@anthropic-ai/sdk";
 import { schema, withUserContext } from "@ai-career/db";
 import { openTestDb, wipeUser, type TestDb } from "../testing/db";
-import { runMatching, MatchingError } from "./runMatching";
-import { MatchExplanationValidationError } from "../explanation/generateMatchExplanation";
+import { runMatching } from "./runMatching";
 
 vi.mock("@ai-career/ai", () => ({ embedTexts: vi.fn().mockResolvedValue([]) }));
 import { embedTexts } from "@ai-career/ai";

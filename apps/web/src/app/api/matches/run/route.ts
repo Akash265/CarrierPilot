@@ -4,7 +4,7 @@ import { loadEnv } from "@ai-career/config";
 import { closeDbClient, createDbClient, schema, withUserContext } from "@ai-career/db";
 import { enqueueMatching } from "../../../../lib/matching/enqueue";
 
-export async function POST(_request: Request) {
+export async function POST() {
   const env = loadEnv();
   const db = createDbClient(env);
   let hasActiveGoal: boolean;

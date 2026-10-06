@@ -28,7 +28,7 @@ afterAll(async () => {
 });
 
 const { POST } = await import("./route");
-const run = () => POST(new Request("http://localhost/api/matches/run", { method: "POST" }));
+const run = () => POST();
 
 describe("POST /api/matches/run", () => {
   it("queues a run when a confirmed active career goal exists and answers 202", async () => {

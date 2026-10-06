@@ -41,10 +41,13 @@ async function seed(userId: string, appliedDaysAgo: number, history: string[], n
             '{"snapshotVersion":2,"external":true,"job":{},"match":null,"ats":null,"documents":null}'::jsonb, ${notes},
             ${TERMINAL.has(status) ? new Date().toISOString() : null}::timestamptz)
     RETURNING id`;
+  // Like real data: only the creation event (the first one) has from_status null; later steps record the previous status.
   for (const [i, to] of history.entries()) {
+    const from = i === 0 ? null : history[i - 1];
     await admin`
-      INSERT INTO application_events (user_id, application_id, type, occurred_at, to_status)
-      VALUES (${userId}, ${row.id}, 'status_change', (current_date - ${appliedDaysAgo}::int)::timestamptz + ${i}::int * interval '1 hour', ${to})`;
+      INSERT INTO application_events (user_id, application_id, type, occurred_at, from_status, to_status)
+      VALUES (${userId}, ${row.id}, 'status_change', (current_date - ${appliedDaysAgo}::int)::timestamptz + ${i}::int * interval '1 hour',
+              ${from}, ${to})`;
   }
 }
 

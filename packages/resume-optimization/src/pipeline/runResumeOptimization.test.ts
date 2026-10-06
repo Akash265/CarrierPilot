@@ -3,7 +3,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { eq } from "drizzle-orm";
 import { schema, withUserContext } from "@ai-career/db";
 import { openTestDb, wipeUser, type TestDb } from "../testing/db";
-import { runResumeOptimization, ResumeOptimizationError } from "./runResumeOptimization";
+import { runResumeOptimization } from "./runResumeOptimization";
 
 // Both mocks preserve real exports (importOriginal) other than the function itself, since the
 // Anthropic.APIError-mapping tests below need the real *ValidationError classes to construct
