@@ -93,7 +93,13 @@ function PatternsSection({ patterns }: { patterns: Patterns }) {
       <h2 id="patterns-heading" className="text-lg font-medium">Rejection patterns</h2>
       <p className="text-sm text-gray-600">{`Based on whether you got ${noun}.`}</p>
       {patterns.missedTerms.length === 0 ? (
-        <p className="text-sm">{`No requirement was missed in two or more applications without ${noun}.`}</p>
+        patterns.negativesWithData === 0 ? (
+          <p className="text-sm">
+            {`Missed requirements are recorded for applications sent with an optimized resume. None of your applications without ${noun} have this data yet.`}
+          </p>
+        ) : (
+          <p className="text-sm">{`No requirement was missed in two or more applications without ${noun}.`}</p>
+        )
       ) : (
         <ul className="list-disc pl-5 text-sm">
           {patterns.missedTerms.map((t) => (
@@ -105,7 +111,7 @@ function PatternsSection({ patterns }: { patterns: Patterns }) {
       )}
       {high ? (
         <p className="text-sm">
-          {`With 80%+ required keyword coverage: ${pct(high.rate)} (${high.positives} of ${high.decided}) got ${noun}, likely between ${pct(high.interval.low)} and ${pct(high.interval.high)}${high.standsOut ? `, ${high.standsOut} than your overall rate` : ""}.`}
+          {`With 80%+ required keyword coverage: ${pct(high.rate)} (${high.positives} of ${high.decided}) got ${noun}, likely between ${pct(high.interval.low)} and ${pct(high.interval.high)}${high.standsOut ? `, ${high.standsOut === "higher" ? "higher" : "lower"} than your overall rate (n=${high.decided})` : ""}.`}
         </p>
       ) : (
         <p className="text-sm text-gray-600">Not enough applications with 80%+ required keyword coverage yet.</p>

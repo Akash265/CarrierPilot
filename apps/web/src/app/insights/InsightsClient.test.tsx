@@ -36,6 +36,8 @@ function payload(over: Partial<InsightsResponse> = {}): InsightsResponse {
       tier: "interview",
       missedTerms: [{ term: "Tableau", missedInNegatives: 4, missedInPositives: 0, negativesWithData: 20, positivesWithData: 3 }],
       highCoverage: null,
+      negativesWithData: 20,
+      positivesWithData: 3,
     },
     ...over,
   };
@@ -102,7 +104,10 @@ describe("InsightsClient", () => {
 
   it("describes a high-coverage result when there is one", async () => {
     mockFetch(payload({
-      patterns: { tier: "response", missedTerms: [], highCoverage: { decided: 10, positives: 1, rate: 0.1, interval: { low: 0.0179, high: 0.4042 }, standsOut: null } },
+      patterns: {
+        tier: "response", missedTerms: [], negativesWithData: 12, positivesWithData: 4,
+        highCoverage: { decided: 10, positives: 1, rate: 0.1, interval: { low: 0.0179, high: 0.4042 }, standsOut: null },
+      },
     }));
     render(<InsightsClient />);
     const section = await screen.findByRole("region", { name: "Rejection patterns" });
@@ -110,6 +115,32 @@ describe("InsightsClient", () => {
     expect(within(section).getByText(
       "With 80%+ required keyword coverage: 10% (1 of 10) got a response, likely between 2% and 40%."
     )).toBeInTheDocument();
+  });
+
+  it("includes the sample size in the high-coverage flag clause, matching the breakdown flag wording", async () => {
+    mockFetch(payload({
+      patterns: {
+        tier: "response", missedTerms: [], negativesWithData: 12, positivesWithData: 4,
+        highCoverage: { decided: 10, positives: 1, rate: 0.1, interval: { low: 0.0179, high: 0.4042 }, standsOut: "lower" },
+      },
+    }));
+    render(<InsightsClient />);
+    const section = await screen.findByRole("region", { name: "Rejection patterns" });
+    expect(within(section).getByText(
+      "With 80%+ required keyword coverage: 10% (1 of 10) got a response, likely between 2% and 40%, lower than your overall rate (n=10)."
+    )).toBeInTheDocument();
+  });
+
+  it("says missed-requirement data has not been recorded yet when there is none", async () => {
+    mockFetch(payload({
+      patterns: { tier: "response", missedTerms: [], negativesWithData: 0, positivesWithData: 0, highCoverage: null },
+    }));
+    render(<InsightsClient />);
+    const section = await screen.findByRole("region", { name: "Rejection patterns" });
+    expect(within(section).getByText(
+      "Missed requirements are recorded for applications sent with an optimized resume. None of your applications without a response have this data yet."
+    )).toBeInTheDocument();
+    expect(within(section).queryByText(/^No requirement was missed/)).not.toBeInTheDocument();
   });
 
   it("explains how it is calculated, using the settings", async () => {
