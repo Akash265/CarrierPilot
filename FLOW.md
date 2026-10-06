@@ -1398,11 +1398,14 @@ GET /api/insights            apps/web/src/app/api/insights/route.ts
  ├─ loadInsightInputs(db, DEFAULT_USER_ID)            packages/insights/src/load/loadInsightInputs.ts
  │    one withUserContext transaction, repeatable read:
  │    applications (id, job_id, company, title, status, applied_at, created_at, feature_snapshot -- no notes/recruiter/salary notes/url)
- │    application_events of type status_change | recruiter_contact | interview (no detail)
+ │    application_events of type status_change | recruiter_contact | interview (no detail; now also reads from_status)
  │    confirmed career_goals ⋈ career_goal_constraints (target roles, salary floor)
  ├─ buildOutcomeDataset(inputs, { now, undecidedDays: OUTCOME_UNDECIDED_DAYS })   dataset/buildOutcomeDataset.ts
  │    per application, most recently applied first:
- │    parseSnapshot (tolerant v1/v2) → labelOutcome (two tiers, D141) → pickGoal + roleFamilyKey (D142)
+ │    parseSnapshot (tolerant v1/v2) → labelOutcome (two tiers, D141; the creation status_change --
+ │      from_status null -- is skipped as activity, since createApplication always writes it at `now`
+ │      even for a backdated appliedAt, but still counts as stage evidence via to_status)
+ │      → pickGoal + roleFamilyKey (D142; a title with no word characters is always "Other")
  │    → salaryVsFloor → OutcomeRecord
  ├─ computeInsights(records, { minBucket: INSIGHTS_MIN_BUCKET })                   stats/computeInsights.ts
  │    headlines per tier → 13 DIMENSIONS breakdowns per tier (Wilson intervals, standsOut, Others cap)

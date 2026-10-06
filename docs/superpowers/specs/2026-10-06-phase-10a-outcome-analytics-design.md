@@ -73,9 +73,9 @@ Each tier gets `positive`, `negative`, `undecided` or `excluded`:
 
 `offer` without an interview event and without an `interviewing` stage still has interview evidence (offer ≥ interviewing), so rule 4 never applies to it for the interview tier.
 
-**Last activity** = the latest of `applied_at` (as midnight UTC), every `status_change` `occurred_at`, and every `recruiter_contact`/`interview` `occurred_at`. Notes and follow-up events are the user's own actions and do not count. A future-dated `interview` event (interviews may be logged ahead) counts as evidence and as activity.
+**Last activity** = the latest of `applied_at` (as midnight UTC), every `status_change` `occurred_at` except the creation event, and every `recruiter_contact`/`interview` `occurred_at`. The creation `status_change` (`from_status` null, written by `createApplication`) is excluded from activity: it is always written at the time the application record is created, even when `applied_at` is backdated, so counting it as activity made a backdated application look recently active for up to `undecidedDays` past its real idle point. It still counts as evidence through its `to_status` (always `applied`, stage 0 in practice, so this never changes a label). Notes and follow-up events are the user's own actions and do not count. A future-dated `interview` event (interviews may be logged ahead) counts as evidence and as activity.
 
-Each label carries a short **reason** for the UI, e.g. `"Interview: reached interviewing on 2026-10-12"`, `"No response: no activity for 30 days"`, `"Excluded: withdrawn"`.
+Each label carries a short **reason** for the UI, e.g. `"Interview: reached interviewing on 2026-10-12"`, `"No response: no activity for 30 days"`, `"Excluded: withdrawn"`. These reasons are computed for every label but not yet surfaced in the UI; only the aggregate headlines, breakdowns and patterns are shown today. A per-application view that explains one application's own label is future work.
 
 `undecidedDays` = `OUTCOME_UNDECIDED_DAYS` (default 30, integer ≥ 1).
 
@@ -122,7 +122,7 @@ Pure: `(records, { minBucket }) → Insights`. `minBucket` = `INSIGHTS_MIN_BUCKE
 
 ### 5.3 Breakdowns (per tier, per dimension)
 
-For each dimension: an ordered list of buckets `{ key, label, decided, positives, rate, interval, standsOut }` plus `unknownCount` (records with no value for this dimension, any label). Unknown records are not a bucket; the UI shows "N applications have no data for this".
+For each dimension: an ordered list of buckets `{ key, label, decided, positives, rate, interval, standsOut }` plus `unknownCount` (non-excluded records with no value for this dimension -- i.e. `positive`, `negative` or `undecided`; excluded records are left out entirely, matching the buckets). Unknown records are not a bucket; the UI shows "N applications have no data for this".
 
 - Below `minBucket` decided: `rate`, `interval` and `standsOut` are `null` ("not enough data").
 - `standsOut`: `"higher"` if the bucket's interval low is above the tier's overall rate; `"lower"` if its interval high is below it; else `null`. Only when both the bucket and the headline have rates.
@@ -132,7 +132,7 @@ For each dimension: an ordered list of buckets `{ key, label, decided, positives
 
 Computed on the **interview** tier when its headline has a rate, else the response tier; the payload says which tier was used.
 
-- **Recurring missed requirements.** Over records with snapshot v2 `missedRequiredTerms` (non-null): for each term (trimmed, case-insensitive key), count negatives that missed it and positives that missed it. List terms missed in ≥ 2 negatives, sorted by negative count desc, then term, max 20: `{ term, missedInNegatives, missedInPositives, negativesWithData, positivesWithData }`.
+- **Recurring missed requirements.** Over records with snapshot v2 `missedRequiredTerms` (non-null): for each term (trimmed, case-insensitive key), count negatives that missed it and positives that missed it. List terms missed in ≥ 2 negatives, sorted by negative count desc, then term, max 20: `{ term, missedInNegatives, missedInPositives, negativesWithData, positivesWithData }`. `Patterns` itself also carries the same `negativesWithData`/`positivesWithData` -- the count of decided (positive/negative) records with any `missedRequiredTerms` data at all, regardless of whether a term recurred -- so the UI can tell "no requirement recurred" apart from "no application in this group has this data yet" (the latter when `negativesWithData` is 0, shown as "Missed requirements are recorded for applications sent with an optimized resume. None of your applications without a response/an interview have this data yet.").
 - **High coverage, poor results.** Records with required coverage ≥ 0.8: `{ decided, positives, rate, interval }`, compared to the tier's overall rate with the same `standsOut` rule. Shown only when decided ≥ `minBucket`.
 
 Weak role families need no separate view: they appear as `standsOut: "lower"` in the role-family breakdown.
@@ -221,10 +221,16 @@ CI needs no change (both have defaults).
 - **The 30-day rule mislabels slow employers.** A late response after day 30 flips the label back to positive automatically (labels are computed on read).
 - **Role family depends on goal wording.** Renaming a target role between goal versions splits a family; the case/space-insensitive merge only covers cosmetic differences.
 - **Missed terms use current requirements.** If a job's description changed between optimization and apply, the recorded terms follow the new description. Rare in practice.
+- **History wins over a reverted status change.** The highest stage ever reached is the maximum over the current status and every `status_change.to_status` (§4.1). If a status change is made by mistake and then reverted (e.g. accidentally set to `interviewing`, then corrected back to `screening`), the mistaken `status_change` event still counts as evidence and as activity -- there is no way to retract an event, only to record a new one.
 
 ## 13. Post-implementation notes
 
 - Posting-age bands end at "31+ days" (the original "30+" overlapped "8–30").
 - The UI's "How this is calculated" list words the caveat as "Some differences appear by chance; flags mark things worth a look, not conclusions." so the exact caveat sentence appears once, above the tables.
 - Breakdown ordering for role family, company and country breaks decided-count ties by total applications before the label (D144).
-- Decisions: D140–D144 (design), D145 (verification).
+- Bucket intervals render as compact ranges (e.g. "13–35%") in breakdown tables; headline intervals are spelled out in words ("likely between 13% and 35%").
+- The creation `status_change` event (`from_status` null) does not count as activity, so a backdated application is not kept artificially "recently active" by the event `createApplication` writes at creation time (final review fix; §4.2).
+- `unknownCount` counts non-excluded records only, matching the breakdown buckets (final review fix; §5.3 clarified, no code change).
+- `Patterns.negativesWithData`/`positivesWithData` are exposed on the payload so the UI can distinguish "nothing recurred" from "no data recorded yet" (final review fix; §5.4).
+- A job title with no word characters (e.g. non-Latin script) is always "Other", never a role match, even though `scoreRole` scores it a neutral 0.5 (final review fix).
+- Decisions: D140–D144 (design), D145 (verification), final-review fixes appended to D141/D143/D144.
