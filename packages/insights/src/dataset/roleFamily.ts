@@ -25,7 +25,7 @@ export function pickGoal(createdAt: Date, snapshotGoalId: string | null, goals: 
 
 /** Spec §4.3 step 2: the best-scoring target role (first wins a tie) if it reaches the threshold, else Other. */
 export function roleFamilyKey(jobTitle: string, goal: InsightGoal | null): string {
-  if (goal === null) return OTHER_FAMILY.key;
+  if (goal === null || !hasWord(jobTitle)) return OTHER_FAMILY.key;
   let bestKey: string | null = null;
   let bestScore = -1;
   for (const role of goal.targetRoles) {

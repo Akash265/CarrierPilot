@@ -28,6 +28,10 @@ describe("roleFamilyKey", () => {
   it("keys roles case- and space-insensitively", () => {
     expect(roleFamilyKey("Data Engineer", goal({ targetRoles: ["  DATA   Engineer "] }))).toBe("data engineer");
   });
+
+  it("is Other for a title with no word characters, even though scoreRole treats it as a neutral 0.5", () => {
+    expect(roleFamilyKey("データエンジニア", goal({ targetRoles: ["Data Engineer"] }))).toBe(OTHER_FAMILY.key);
+  });
 });
 
 describe("pickGoal", () => {
