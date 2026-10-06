@@ -1,7 +1,7 @@
 # Phase 8 — Browser Automation (Guarded Autofill): Design
 
 Date: 2026-10-01
-Status: Implemented on branch `worktree-phase-8-browser-automation` (2026-10-01); see §12 for post-implementation notes.
+Status: Implemented and merged to main on 2026-10-06 (merge `95a75d0`); see §12 for post-implementation notes.
 Spec sources: project spec §4 (stop-before-submit invariant), §13 (Application Automation — Human-in-the-Loop), §17 (Playwright worker), §19 (`automation_sessions`), §20 (`packages/browser`, `services/browser-worker`), §21 (Phase 8); DECISIONS D4 (revised here), D112 (Phase 9 recorded applications without automation).
 
 ## 1. Scope
