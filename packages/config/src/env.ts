@@ -46,6 +46,10 @@ const envSchema = z
     OUTCOME_UNDECIDED_DAYS: z.coerce.number().int().min(1).default(30),
     // Phase 10a insights. Fewer decided applications than this in a bucket shows counts only, never a rate.
     INSIGHTS_MIN_BUCKET: z.coerce.number().int().min(2).default(5),
+    // Phase 10b personal response model gate (spec §4.3): decided applications with eligible-match factor scores
+    // needed before the model is evaluated at all, and the minimum of each class (responses / non-responses).
+    OUTCOME_MODEL_MIN_DECIDED: z.coerce.number().int().min(10).default(30),
+    OUTCOME_MODEL_MIN_PER_CLASS: z.coerce.number().int().min(3).default(8),
     // Phase 8 browser automation (services/browser-worker only). Chrome is found via Playwright's
     // channel "chrome" unless an explicit executable path is given. Headless is for tests: the whole
     // point of a session is a visible window the user finishes and submits.

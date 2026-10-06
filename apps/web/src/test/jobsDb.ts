@@ -59,6 +59,11 @@ export async function insertCareerGoal(
   return row.id as string;
 }
 
+/** The 9 match factor names (job_matches columns / feature snapshot match fields). */
+export type ModelFactorKey =
+  | "skillsScore" | "experienceScore" | "locationScore" | "sponsorshipScore" | "roleScore" | "salaryScore" | "industryScore"
+  | "freshnessScore" | "semanticScore";
+
 export async function insertMatch(
   adminSql: postgres.Sql,
   userId: string,
@@ -71,14 +76,20 @@ export async function insertMatch(
     skillsScore?: number | null;
     explanation?: object | null;
     userAction?: "none" | "saved" | "dismissed";
+    /** Phase 10b: the other eight factor scores (0-1); omitted ones stay null. */
+    factors?: Partial<Record<Exclude<ModelFactorKey, "skillsScore">, number>>;
   } = {}
 ): Promise<string> {
   const eligible = opts.eligible ?? true;
+  const f = eligible ? (opts.factors ?? {}) : {};
   const [row] = await adminSql`
     INSERT INTO job_matches (user_id, job_id, career_goal_id, eligible, ineligible_reason, overall_score, skills_score,
-                              explanation, user_action, computed_at)
+                              experience_score, location_score, sponsorship_score, role_score, salary_score, industry_score,
+                              freshness_score, semantic_score, explanation, user_action, computed_at)
     VALUES (${userId}, ${jobId}, ${careerGoalId}, ${eligible}, ${opts.ineligibleReason ?? null},
             ${eligible ? (opts.overallScore ?? 75) : null}, ${eligible ? (opts.skillsScore ?? 0.8) : null},
+            ${f.experienceScore ?? null}, ${f.locationScore ?? null}, ${f.sponsorshipScore ?? null}, ${f.roleScore ?? null},
+            ${f.salaryScore ?? null}, ${f.industryScore ?? null}, ${f.freshnessScore ?? null}, ${f.semanticScore ?? null},
             ${opts.explanation ? JSON.stringify(opts.explanation) : null}::jsonb, ${opts.userAction ?? "none"}, now())
     RETURNING id`;
   return row.id as string;
@@ -295,4 +306,36 @@ export async function insertAutomationSession(
             ${terminal ? new Date().toISOString() : null}::timestamptz, ${JSON.stringify(opts.fieldAudit ?? [])}::jsonb)
     RETURNING id`;
   return row.id as string;
+}
+
+/**
+ * Phase 10b: `n` decided ingested applications (no job row; snapshot v2 with an eligible match) whose response follows
+ * the skills factor -- skills above 0.5 reached screening, the rest were rejected. The other varying factors are fixed
+ * permutations, so the history is deterministic and the response model trained on it is active (>= 30 decided,
+ * >= 8 per class, beats the base rate on leave-one-out).
+ */
+export async function insertModelHistory(adminSql: postgres.Sql, userId: string, n = 40): Promise<void> {
+  const step = (k: number, i: number) => (((i * k) % n) + 0.5) / n;
+  for (let i = 0; i < n; i++) {
+    const skills = (i + 0.5) / n;
+    const responded = skills > 0.5;
+    const status = responded ? "screening" : "rejected";
+    const snapshot = {
+      snapshotVersion: 2, external: false, job: {}, ats: null, documents: null,
+      match: {
+        careerGoalId: null, eligible: true, overallScore: 70, computedAt: "2026-09-01T00:00:00.000Z",
+        skillsScore: skills, experienceScore: step(7, i), locationScore: step(11, i), sponsorshipScore: step(13, i),
+        roleScore: step(17, i), salaryScore: null, industryScore: step(19, i), freshnessScore: step(23, i), semanticScore: step(29, i),
+      },
+    };
+    const [row] = await adminSql`
+      INSERT INTO applications (user_id, job_id, company_name, job_title, status, status_changed_at, applied_at, feature_snapshot, terminal_at)
+      VALUES (${userId}, null, 'Acme', 'Data Engineer', ${status}, now(), '2026-09-01', ${JSON.stringify(snapshot)}::jsonb,
+              ${responded ? null : new Date().toISOString()}::timestamptz)
+      RETURNING id`;
+    await adminSql`
+      INSERT INTO application_events (user_id, application_id, type, occurred_at, from_status, to_status) VALUES
+        (${userId}, ${row.id}, 'status_change', '2026-09-01T09:00:00Z', null, 'applied'),
+        (${userId}, ${row.id}, 'status_change', '2026-09-03T09:00:00Z', 'applied', ${status})`;
+  }
 }
