@@ -3,6 +3,7 @@ import type postgres from "postgres";
 import { eq } from "drizzle-orm";
 import { schema, withUserContext, createDbClient } from "@ai-career/db";
 import { openAdminDb, wipeMatchingData, insertJob, insertCareerGoal, insertMatch, insertApplication, insertModelHistory } from "../../../../test/jobsDb";
+import { clearResponseModelCache } from "../../../../lib/insights/responseModel";
 
 vi.mock("@ai-career/config", () => ({
   loadEnv: () => ({
@@ -20,7 +21,10 @@ let admin: postgres.Sql;
 beforeAll(async () => {
   admin = await openAdminDb();
 });
-beforeEach(() => wipeMatchingData(admin, USER));
+beforeEach(() => {
+  clearResponseModelCache();
+  return wipeMatchingData(admin, USER);
+});
 afterAll(async () => {
   await wipeMatchingData(admin, USER);
   await admin.end();

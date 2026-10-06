@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, beforeEach, afterAll } from "vitest";
 import type postgres from "postgres";
 import { closeDbClient, createDbClient, type DbClient } from "@ai-career/db";
 import { openAdminDb, wipeMatchingData, insertModelHistory } from "../../test/jobsDb";
-import { loadResponseModel } from "./responseModel";
+import { clearResponseModelCache, loadResponseModel } from "./responseModel";
 
 const USER = "00000000-0000-0000-0000-000000000a07";
 const ENV = { DEFAULT_USER_ID: USER, OUTCOME_UNDECIDED_DAYS: 30, OUTCOME_MODEL_MIN_DECIDED: 30, OUTCOME_MODEL_MIN_PER_CLASS: 8 };
@@ -15,7 +15,10 @@ beforeAll(async () => {
     DATABASE_URL: process.env.TEST_APP_DATABASE_URL ?? "postgres://career_intel_app:career_intel_app@localhost:5432/career_intel_test",
   });
 });
-beforeEach(() => wipeMatchingData(admin, USER));
+beforeEach(() => {
+  clearResponseModelCache();
+  return wipeMatchingData(admin, USER);
+});
 afterAll(async () => {
   await wipeMatchingData(admin, USER);
   await closeDbClient(db);

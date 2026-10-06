@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll, beforeEach, afterAll } from "vitest";
 import type postgres from "postgres";
 import { openAdminDb, wipeMatchingData, insertJob, insertCareerGoal, insertMatch, insertModelHistory } from "../../../test/jobsDb";
+import { clearResponseModelCache } from "../../../lib/insights/responseModel";
 
 vi.mock("@ai-career/config", () => ({
   loadEnv: () => ({
@@ -20,7 +21,10 @@ let admin: postgres.Sql;
 beforeAll(async () => {
   admin = await openAdminDb();
 });
-beforeEach(() => wipeMatchingData(admin, USER));
+beforeEach(() => {
+  clearResponseModelCache();
+  return wipeMatchingData(admin, USER);
+});
 afterAll(async () => {
   await wipeMatchingData(admin, USER);
   await admin.end();
