@@ -141,6 +141,21 @@ describe("POST /api/profile/resume", () => {
     expect(dbInsertMock).not.toHaveBeenCalled();
   });
 
+  it("rejects with 400 when the body is not multipart form data", async () => {
+    const req = new Request("http://localhost/api/profile/resume", {
+      method: "POST",
+      body: JSON.stringify({ file: "resume.pdf" }),
+      headers: { "content-type": "application/json" },
+    });
+
+    const res = await POST(req);
+    const body = await res.json();
+
+    expect(res.status).toBe(400);
+    expect(body.error).toMatch(/multipart/i);
+    expect(dbInsertMock).not.toHaveBeenCalled();
+  });
+
   it("rejects with 400 when the declared Content-Length exceeds the 10MB cap, before buffering the body", async () => {
     const formData = new FormData();
     formData.append("file", new File([Buffer.from("%PDF-1.4")], "resume.pdf", { type: "application/pdf" }));

@@ -60,7 +60,13 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "File exceeds 10MB limit" }, { status: 400 });
   }
 
-  const formData = await request.formData();
+  // A non-multipart body makes formData() throw a TypeError; that is a bad request, not a server error.
+  let formData: FormData;
+  try {
+    formData = await request.formData();
+  } catch {
+    return NextResponse.json({ error: "Request must be multipart form data" }, { status: 400 });
+  }
   const file = formData.get("file");
   if (!(file instanceof File)) {
     return NextResponse.json({ error: "No file provided" }, { status: 400 });
