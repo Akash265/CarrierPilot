@@ -1,7 +1,7 @@
 # Phase 8 — Browser Automation (Guarded Autofill): Design
 
 Date: 2026-10-01
-Status: Approved in brainstorming (approach A, sections 1–3) on 2026-10-01. Written spec awaiting user review.
+Status: Implemented on branch `worktree-phase-8-browser-automation` (2026-10-01); see §12 for post-implementation notes.
 Spec sources: project spec §4 (stop-before-submit invariant), §13 (Application Automation — Human-in-the-Loop), §17 (Playwright worker), §19 (`automation_sessions`), §20 (`packages/browser`, `services/browser-worker`), §21 (Phase 8); DECISIONS D4 (revised here), D112 (Phase 9 recorded applications without automation).
 
 ## 1. Scope
@@ -49,7 +49,7 @@ Out of scope (deferred):
 | `field_audit` | jsonb not null default `[]` | array of `FieldAuditEntry` (§4.5); CHECK `jsonb_typeof = 'array'` |
 | `stopped_before_submit` | boolean not null default true | spec §19 field; the worker has no submit path, so it stays true |
 | `cancel_requested_at` | timestamptz null | set by the cancel route, polled by the worker |
-| `error_code` | text null | set only with `failed` / `needs_manual` |
+| `error_code` | text null | set with `failed` / `needs_manual`, and also with `abandoned` (`cancelled`, `timeout`, `window_closed`) |
 | `submission_detected_at` | timestamptz null | |
 | `started_at` | timestamptz null | when the worker picked the job up |
 | `ended_at` | timestamptz null | set on every terminal status |
@@ -73,8 +73,8 @@ any non-terminal ──(crash / worker restart / launch error)──▶ failed
 Terminal: `submission_detected`, `abandoned`, `needs_manual`, `failed`.
 
 - `needs_manual`: nothing is filled; the window is left open for the user and the worker stops tracking it (closed at the session timeout like any other).
-- On worker startup, every non-terminal session is swept to `failed` with `error_code = 'worker_restart'`. Orphaned windows are not reattached.
-- A queued session that never gets picked up is swept by the same startup sweep, and the POST route rejects a new session while one is active (409). The UI shows a "cancel" control for a stuck `queued` session (the cancel route moves `queued` straight to `abandoned`).
+- On worker startup, every session in `launching`, `filling` or `awaiting_user` is swept to `failed` with `error_code = 'worker_restart'` (see §11.5: a `queued` session is left alone, since no worker had claimed it). Orphaned windows are not reattached.
+- A queued session that never gets picked up is left for the worker, and the POST route rejects a new session while one is active (409). The UI shows a "cancel" control for a stuck `queued` session; the cancel route moves `queued` straight to `abandoned` (it has no worker polling `cancel_requested_at` to act on it otherwise).
 
 ### 3.2 Unchanged
 `applications`, `generated_documents`, profile and goal tables are unchanged. The link lives on `automation_sessions.application_id` (D112 anticipated this direction).
@@ -215,3 +215,33 @@ CI: the worker integration tests run headless against the Google Chrome preinsta
 - **Employer-specific custom questions** are mostly flagged; time saved is mainly on standard fields and attachments. Accepted for v1.
 - **Bot detection / CAPTCHA** on the hosted forms: the user is in the window and handles it; the worker never solves CAPTCHAs.
 - **Terms of service**: the user submits manually from a normal browser session; no automated submission. LEGAL.md gets a short note.
+
+## 11. Plan-time refinements (2026-10-01)
+
+Found while writing the implementation plan, mostly from inspecting the live Greenhouse and Lever forms:
+
+1. **Greenhouse yes/no questions are combobox widgets** (react-select, `role="combobox"`), not native selects; so are country and the EEO fields. Combobox widgets are never filled (an option needs a click), so on Greenhouse the sponsorship question is always flagged. Lever uses native radios/selects, so sponsorship is filled there.
+2. **Lever's location input is an autocomplete widget** (free text plus a hidden `selectedLocation`): the `lever-v1` adapter flags it (`autocomplete_widget`). Lever has no cover-letter file input (only a free-text "Additional information" box), so no cover letter is attached on Lever.
+3. **Health check = required canonicals:** the form root exists and each of the adapter's required canonical fields (Greenhouse: first name, last name, email, resume; Lever: full name, email, resume) is matched by exactly one field.
+4. **Never-filled fields use one rule:** flagged when required, skipped when optional (EEO keeps reason `intentionally_not_filled`).
+5. **The startup sweep only touches `launching`/`filling`/`awaiting_user`.** A `queued` session waits for the worker; the panel shows a "is the worker running?" hint after 10 s, and Cancel moves it to `abandoned`.
+6. **Released windows.** On `needs_manual` and `submission_detected` the worker leaves the window open, returns the job (so the next session is not blocked behind an open window), and closes that window at the session timeout or on worker shutdown.
+7. **Detection polls** every second (URL + first 5,000 chars of body text across the context's pages) instead of event listeners, and the session timeout, cancel flag and closed-window checks run in the same loop.
+8. **"Record as applied" is one click:** `POST /api/applications {jobId, automationSessionId}` links the documents that were actually attached (generated_documents → resume optimization / cover letter); there is no version picker on this path.
+9. **The snapshot extractor is a plain-JS string** evaluated in the page and unit-tested in jsdom against the sanitized real forms, because tsx's `keepNames` breaks functions passed to `page.evaluate`.
+10. **Attachments live as long as the window.** Chrome reads an `<input type=file>` when the form is submitted, so the downloaded PDFs share a temp root with the throwaway browser profile and are deleted together when the window closes.
+11. **E2E is live, never submitting.** The real app + worker are run headed against one live Greenhouse and one live Lever posting, stopping before Submit (window closed → `abandoned` → "Record as applied"). Confirmation detection is covered by the real-Chrome fixture integration tests, since triggering it live would need a real submission.
+
+## 12. Post-implementation notes
+
+Deviations from this spec found while implementing Tasks 1–10, and corrections to the spec text itself:
+
+1. **Migration 0027's partial index casts the enum literals, not the column.** `automation_sessions_one_active_per_user`'s predicate is `status IN ('queued'::automation_status, 'launching'::automation_status, 'filling'::automation_status, 'awaiting_user'::automation_status)`, not `status::text IN (...)` as §3's CHECK constraint uses. Postgres rejects `status::text` in an index predicate because the `::text` cast on an enum column is not `IMMUTABLE`, which a predicate requires (the CHECK constraint is allowed to use it because a CHECK is evaluated per-row, not baked into an index). See DECISIONS.md D132.
+2. **§4.3's "sponsorship"/"salary_expectation" are always flagged when unfilled, like resume — not just when required.** `buildFillPlan`'s `isAlwaysFlag` applies the same always-flag rule to all three canonicals, regardless of the field's own `required` attribute, so the user never misses a visa/salary question or a missing resume just because the site happened to mark it optional. See DECISIONS.md D129.
+3. **`ReleasedWindows.release` is idempotent.** A second `release()` call for the same handle (e.g. a timeout extension) replaces the pending close deadline rather than registering a second `context.on("close", ...)` listener, which would otherwise close the window twice.
+4. **Worker cleanup hardening beyond §5/§11.6's description**, all to make sure a crashed or killed worker never leaks a temp profile/attachment directory or silently swallows a real bug: the released-window registry has a separate "active window" slot (`setActive`) so shutdown's `closeAll()` also closes the window of a session still in progress, not only windows already handed to the user; at startup, `removeStaleSessionDirs` deletes every leftover `careerpilot-autofill-*` temp directory under the single-worker assumption; an unexpected error anywhere in `runSession` is recorded as `failed`/`unexpected_error` and then rethrown, so BullMQ marks the job failed and `main.ts` logs the error's class (never its message, which could carry a selector or URL); a session's `rootDir` is removed if anything fails before the browser launches; a cancel request is honored before any window is released to the user; a window is only handed to the released registry when its terminal DB transition actually applied (a concurrent cancel or sweep means there's nothing to release, so the handle is just closed); and the shutdown handler is guarded against running twice (e.g. a double Ctrl-C). See DECISIONS.md D132.
+5. **`AutofillPanel`'s effects are structured around the repo's `react-hooks` lint rules** (state is set from inside a plain function's own `.then`/`.catch` chain, never directly inside a `useEffect` body), the same idiom `ResumeOptimizationPanel` already uses elsewhere in this codebase. Behavior is unchanged from a naive implementation; this is purely to satisfy `eslint`.
+6. **§3.1's "every non-terminal session is swept" conflicted with §11.5's "the startup sweep only touches launching/filling/awaiting_user."** §3.1 has been corrected in place to match §11.5 — a `queued` session is never swept; it waits for the worker, and a stuck one is cancelled (moved straight to `abandoned`) through the cancel route instead. See DECISIONS.md D133.
+7. **The dev database needs migrations `0026`/`0027` applied before the worker will do anything useful.** `pnpm --filter @ai-career/db db:migrate` adds the `automation_sessions` table; this is called out as a setup step in the README's new "Browser autofill" section.
+
+No other deviations from this spec's data model, API contract, or UI behavior were found.

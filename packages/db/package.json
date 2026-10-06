@@ -17,6 +17,7 @@
     "db:generate:custom:generated-documents-rls": "dotenv -e ../../.env -- drizzle-kit generate --custom --name=generated_documents_rls",
     "db:generate:custom:cover-letter-interview-prep-rls": "dotenv -e ../../.env -- drizzle-kit generate --custom --name=cover_letter_interview_prep_rls",
     "db:generate:custom:applications-rls": "dotenv -e ../../.env -- drizzle-kit generate --custom --name=applications_rls",
+    "db:generate:custom:automation-sessions-rls": "dotenv -e ../../.env -- drizzle-kit generate --custom --name=automation_sessions_rls",
     "db:migrate": "dotenv -e ../../.env -- drizzle-kit migrate"
   },
   "dependencies": {

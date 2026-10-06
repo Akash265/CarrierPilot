@@ -51,6 +51,8 @@ export const CreateApplicationBodySchema = z
     appliedAt: AppliedAtSchema.optional(),
     followUpAt: DateOnlySchema.nullable().optional(),
     notes: optionalText(5000),
+    /** Phase 8: the autofill session this application came from. Only with jobId. */
+    automationSessionId: Uuid.optional(),
   })
   .strict()
   .superRefine((body, ctx) => {
@@ -59,6 +61,9 @@ export const CreateApplicationBodySchema = z
     }
     if (body.external && (body.resumeOptimizationId || body.applicationPitchId || body.coverLetterId)) {
       ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["external"], message: "An external application cannot link generated documents" });
+    }
+    if (body.automationSessionId && !body.jobId) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["automationSessionId"], message: "automationSessionId requires jobId" });
     }
   });
 export type CreateApplicationBody = z.infer<typeof CreateApplicationBodySchema>;

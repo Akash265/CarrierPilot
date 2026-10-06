@@ -41,6 +41,12 @@ const envSchema = z
     // Phase 9: days after an application reaches a terminal status before its job's generated documents
     // are deleted (architecture §9). 0 disables the retention sweep entirely.
     RETENTION_DAYS: z.coerce.number().int().min(0).default(30),
+    // Phase 8 browser automation (services/browser-worker only). Chrome is found via Playwright's
+    // channel "chrome" unless an explicit executable path is given. Headless is for tests: the whole
+    // point of a session is a visible window the user finishes and submits.
+    BROWSER_EXECUTABLE_PATH: z.string().min(1).optional(),
+    BROWSER_HEADLESS: z.enum(["true", "false"]).default("false").transform((v) => v === "true"),
+    BROWSER_SESSION_TIMEOUT_MIN: z.coerce.number().int().min(1).max(240).default(30),
   })
   .superRefine((val, ctx) => {
     if (val.EMBEDDING_PROVIDER === "voyage" && !val.VOYAGE_API_KEY) {

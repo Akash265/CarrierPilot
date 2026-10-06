@@ -1182,6 +1182,197 @@ concurrency 1) and calls `scheduleRetention` (`worker.ts`), which upserts a repe
 once, directly, with the same `RetentionStorage` adapter and env-derived `RETENTION_DAYS` -- the same code
 path as the scheduled job, for manual/E2E use.
 
+## 13. Phase 8 — Browser Automation (Guarded Autofill)
+
+New pure package `packages/browser` (all new; no Playwright/BullMQ/ioredis import -- it only exports the
+queue name/payload type as constants); new host-run service `services/browser-worker` (all new,
+`playwright-core` + BullMQ); new routes under `apps/web/src/app/api/automation-sessions` (all new);
+`packages/applications` gains `sessionLink.ts` (new) and `createApplication.ts` grows an optional
+`automationSessionId` path; new UI `apps/web/src/app/matches/[jobId]/AutofillPanel.tsx`, rendered
+alongside the existing Phase 6/7/9 panels on the match detail page.
+
+### 13a. Start (request-driven)
+
+`AutofillPanel.start` (`apps/web/src/app/matches/[jobId]/AutofillPanel.tsx`) -- the "Open & autofill
+application" button, disabled while an active session exists or no resume PDF has been exported for this
+job --
+  -> `POST /api/automation-sessions` (`apps/web/src/app/api/automation-sessions/route.ts`, new) ->
+     `CreateBodySchema` (`{jobId}`; invalid -> 400) -> `createSession` (`packages/browser/src/sessions/createSession.ts`,
+     new), one transaction (`withUserContext`):
+     1. Loads the `jobs` row (missing -> `job_not_found` -> 404) and confirms a `candidate_profiles` row
+        exists (missing -> `profile_missing` -> 409).
+     2. `getAutofillSupport` (`packages/browser/src/sessions/support.ts`) joins the job's `job_postings` +
+        `job_sources` and calls `resolveAutofillTarget` (`packages/browser/src/adapters/resolveAutofillTarget.ts`,
+        D128) -- picks the newest open Greenhouse/Lever posting, validates its slug/external id against
+        `SAFE_IDENTIFIER`, and calls the matching adapter's (`greenhouse.ts`/`lever.ts`) `buildFormUrl`.
+        Unsupported -> `unsupported` -> 422 (`reason` from `resolveAutofillTarget`).
+     3. Inserts the `automation_sessions` row at `status = 'queued'` with the resolved `portal`,
+        `adapterVersion`, `formUrl`. A concurrent second insert hitting
+        `automation_sessions_one_active_per_user` (migration `0027`, D132) is caught and re-thrown as
+        `session_active` -> 409.
+  -> `enqueueAutofill` (`apps/web/src/lib/browser-automation/enqueue.ts`, new, mirrors
+     `lib/matching/enqueue.ts`'s fail-fast producer settings) puts `{sessionId, userId}` on the
+     `browser-automation` BullMQ queue (`packages/browser/src/queue.ts`'s `BROWSER_QUEUE_NAME`/
+     `BROWSER_JOB_NAME`/`BROWSER_JOB_OPTIONS`, job id `autofill-{sessionId}`, `attempts: 1`). On failure
+     (Redis down) -> `failSession(db, userId, sessionId, "enqueue_failed")` moves the row straight to
+     `failed`, and the route returns 503.
+  -> Route returns 201 `{session}` (`toSessionView`, `apps/web/src/lib/browser-automation/serializeSession.ts`,
+     new); `AutofillPanel` re-fetches the overview (13c) rather than using the response directly.
+
+### 13b. Worker run (queue-driven)
+
+`services/browser-worker/src/main.ts` (new) on boot: `removeStaleSessionDirs()` (`browser.ts`) deletes any
+leftover `careerpilot-autofill-*` temp directories from a previous crashed process (D132), then
+`sweepInterruptedSessions` (`packages/browser/src/sessions/transitions.ts`, D133) fails every session still
+in `launching`/`filling`/`awaiting_user` to `failed`/`worker_restart` (`queued` sessions are left for the
+worker), then `createBrowserWorker` (`worker.ts`) starts a BullMQ `Worker` at `concurrency: 1` on
+`browser-automation`.
+
+Each job -> `runSession` (`services/browser-worker/src/runSession.ts`, design §5):
+  1. `transitionSession(..., ["queued"], "launching", {startedAt})` claims the row (a no-op "skipped" if
+     cancelled or already claimed) -> `getAdapter(claimed.portal)` (`packages/browser/src/adapters/index.ts`).
+  2. `hostAllowed(claimed.formUrl, adapter, extra)` checks the form URL's host against `adapter.allowedHosts`
+     (D128; fails -> `needs_manual`/`form_url_not_allowed`).
+  3. `loadAutofillContext` (`packages/browser/src/sessions/loadAutofillContext.ts`) reads the session,
+     profile, active goal's constraints and the newest resume/cover-letter PDF `generated_documents` rows
+     for the job, all under `withUserContext`.
+  4. `downloadAttachments` (`services/browser-worker/src/attachments.ts`) fetches each PDF from MinIO
+     (`minioFetcher` -> `@ai-career/storage`'s `getGeneratedDocument`) into a fresh `mkdtemp` session
+     `rootDir/files/{resume,cover_letter}.pdf`; a failed download is recorded, not thrown (`failed` list).
+  5. `launchBrowser` (`services/browser-worker/src/browser.ts`, D132) launches
+     `chromium.launchPersistentContext(rootDir/profile, ...)`; failure -> `failed`/`browser_launch_failed`,
+     `rootDir` removed. On success `deps.released.setActive(handle)` marks the window as the one in-progress
+     window shutdown must also close (D132).
+  6. `isCancelRequested` -> a cancel that landed between claiming the row and getting a window open still
+     wins here, before the row ever reaches `filling` -> `abandoned`/`cancelled` (window closed, not
+     released: the user never saw it).
+  7. `transitionSession(..., ["launching"], "filling")` -> `page.goto(formUrl)` -> `hostAllowed(page.url())`
+     again (redirect check #1: the navigation itself landed off-host) -> `page.waitForSelector(adapter.snapshotConfig.formSelector)`
+     -> `hostAllowed(page.url())` a third time (redirect check #2, D138: a client-side redirect that fires
+     after the form has loaded but before anything is read from the page) -- either failure ->
+     `needs_manual`/`off_host_redirect` through `releaseUnlessCancelled` (13b step 14), nothing filled.
+  8. `takeSnapshot(page, adapter)` (`services/browser-worker/src/snapshot.ts`) evaluates
+     `EXTRACT_SNAPSHOT_SOURCE` (`packages/browser/src/snapshot/extractSnapshotSource.ts`, D131) as a string
+     expression in the page, then pipes the page's return value through `sanitizeSnapshot`
+     (`packages/browser/src/snapshot/sanitizeSnapshot.ts`, D138) -- the page's own JS is untrusted content, so
+     every field is hand-checked (string types, the worker's own `[fg]\d+` key pattern, a known control, a
+     500-field/200-option cap, labels re-truncated to 200 chars) before anything downstream touches it; a
+     shape that doesn't check out returns `null`, which `runSession` treats the same as a failed health
+     check -- `needs_manual`/`health_check_failed`, empty audit.
+  9. `buildAutofillValues` (`packages/browser/src/values/buildAutofillValues.ts`, design §4.3) turns
+     profile + goal + attachment-availability into `AutofillValues`, each carrying a `source` label.
+  10. `buildFillPlan(snapshot, adapter, values)` (`packages/browser/src/plan/buildFillPlan.ts`, design §4.4) ->
+      `classifyField` per field (`packages/browser/src/plan/classifyField.ts`, D129, D138) -> health check
+      (every `adapter.requiredCanonicals` matched by exactly one field, else
+      `needs_manual`/`health_check_failed`, nothing filled) -> one `FillAction` + one `FieldAuditEntry` per
+      field. `classifyField`'s shared sponsorship rule now also checks the label for a polarity marker
+      (`without`/`not`/`no longer`/`unable`/`n't` or `n’t`, D138) and, if found, flags the field `ambiguous_wording`
+      instead of classifying it for a plain Yes/No fill -- `buildFillPlan`'s existing always-flag rule for
+      `sponsorship` (D129) then flags it regardless of `required`. The shared `linkedin` label rule also now
+      excludes a "how did you hear about us" / referral-source question (D138).
+  11. Per action: a fourth `hostAllowed(page.url())` check, immediately before `performAction` (D138: the
+      redirect could land strictly mid-loop, between two actions) -- failure -> `needs_manual`/
+      `off_host_redirect` through `releaseUnlessCancelled`, with the audit discarded (`fieldAudit: []`) since
+      a page that has already navigated away is not the one any of this audit's `filled` entries describes.
+      Otherwise: `performAction` then `verifyAction` (`services/browser-worker/src/actions.ts`, D130, D138) --
+      `assertTarget` guards every mutation against anything but the expected control kind (now itself under
+      the same 5 s `ACTION_TIMEOUT_MS` as the mutation/read-back that follows it, D138, so a target that goes
+      missing mid-navigation fails this check fast instead of hanging on Playwright's 30 s default); a verify
+      mismatch flips the audit entry to `flagged`/`verify_mismatch`; a thrown `GuardViolation`/other error
+      flips it to `flagged`/`guard_blocked`/`fill_error` and the loop continues with the next action. Cancel
+      is checked before each action, ahead of the host check.
+  12. `transitionSession(..., ["filling"], "awaiting_user", {fieldAudit, resumeDocumentId, coverLetterDocumentId})`.
+  13. Polling loop (1 s, `pollMs`): `handle.isClosed()` -> `abandoned`/`window_closed`; elapsed >= timeout ->
+      `abandoned`/`timeout`; every other tick, `isCancelRequested` -> `abandoned`/`cancelled`; for each open
+      page, `readPageText` (`snapshot.ts`) + `detectSubmission(adapter, {url, text, formUrl})`
+      (`packages/browser/src/detect/detectSubmission.ts`, D134) -> `submission_detected`. (No host re-check
+      here: `detectSubmission` already restricts to the form's own host, D134, and a page the user is
+      actively looking at is left alone rather than second-guessed.)
+  14. End: on `needs_manual`/`submission_detected` the window is released (`deps.released.release(handle, ms)`,
+      D132) instead of closed, unless a cancel landed in between (`releaseUnlessCancelled` re-checks and ends
+      `abandoned` instead); every other ending closes the window and its `rootDir` immediately. An uncaught
+      error anywhere in the try block -> `failSession(..., "unexpected_error")` then rethrows, so BullMQ marks
+      the job failed and `main.ts`'s `worker.on("failed", ...)` logs the error's class only (D136).
+
+### 13c. Polling and cancel (request-driven)
+
+`AutofillPanel` polls `GET /api/automation-sessions?jobId=` (`route.ts` `GET`) every 2 s while the latest
+session is active -> `getJobAutofillOverview` (`packages/browser/src/sessions/readSessions.ts`): re-runs
+`getAutofillSupport`, checks for a resume PDF and an existing `applications` row for the job, and returns
+the 10 newest sessions for the job -> serialized with `toSessionView` per session. The panel renders the
+field audit split into flagged / filled / skipped lists (`REASON_TEXT` lookup) and shows a "is the worker
+running?" hint once a `queued` session has waited over 10 s.
+
+`AutofillPanel.cancel` -> `POST /api/automation-sessions/[id]/cancel`
+(`apps/web/src/app/api/automation-sessions/[id]/cancel/route.ts`, new) -> `requestCancel`
+(`packages/browser/src/sessions/transitions.ts`, D133): locks the row `FOR UPDATE`; `queued` -> `abandoned`
+directly in the same transaction; any other active status -> sets `cancel_requested_at` only, which
+`runSession`'s poll loop (13b step 13) and its per-action check (13b step 11) pick up; terminal ->
+`not_cancellable` -> 409.
+
+`GET /api/automation-sessions/[id]` (`[id]/route.ts`) -> `getSession` -- single-session detail, used for
+direct links; not polled by the panel.
+
+### 13d. Record as applied (request-driven)
+
+`AutofillPanel.record` (shown once the latest session is `submission_detected` or `abandoned` and the job
+has no application yet) -> `POST /api/applications {jobId, automationSessionId}`
+(`apps/web/src/app/api/applications/route.ts`, existing route, new optional field) -> `createApplication`
+(`packages/applications/src/createApplication.ts`), inside the same transaction as the ingested-job path:
+  -> `lockLinkableSession` (`packages/applications/src/sessionLink.ts`, new, D135): locks the session row
+     `FOR UPDATE`; must match `jobId`, be `submission_detected`/`abandoned`, and have no `application_id` yet,
+     else `session_not_linkable` -> 409.
+  -> `withSessionDocuments` (same file): resolves the session's attached `resumeDocumentId`/
+     `coverLetterDocumentId` back to their `generated_documents.resumeOptimizationId`/`coverLetterId`
+     sources and uses those as the new application's document links unless the request body overrides them.
+  -> `loadLinkedDocuments` (existing, `packages/applications/src/documentLinks.ts`) validates the resolved
+     ids as usual.
+  -> inserts the `applications` row + initial `status_change` event (existing path), then
+     `UPDATE automation_sessions SET application_id = {row.id}` -- all in the one transaction.
+  -> Route returns 201; `AutofillPanel.record` dispatches `window.dispatchEvent(new
+     Event(APPLICATION_RECORDED_EVENT))` ("application:recorded") so `ApplicationPanel` (12a) reloads and
+     switches to its "Applied on ..." view without a page refresh. `AutofillPanel`'s own "Did you submit
+     anyway? Record as applied" prompt (the `abandoned` case) only renders when `latest.startedAt` is non-null
+     (D138): a session cancelled while still `queued` is `abandoned` with no `startedAt`, since the worker
+     never claimed it and no browser window was ever opened for the user to have submitted from.
+  -> The same event now also flows the other way (D138): `ApplicationPanel.submit`'s own successful "Mark as
+     applied" (the ordinary document-picker path, not the autofill one) dispatches
+     `APPLICATION_RECORDED_EVENT` too, and `AutofillPanel` now also listens for it and reloads its overview --
+     so its Record button disappears (an application now exists for the job) instead of staying up and 409ing
+     if clicked. `ApplicationPanel` guards its own listener (`justRecordedRef`) against redoing the fetch its
+     own dispatch would otherwise immediately retrigger, since the POST response it just got is already the
+     answer.
+
+### Changing Phase 8 behavior
+
+- **A new ATS portal** (e.g. Ashby): add an adapter implementing `PortalAdapter`
+  (`packages/browser/src/adapters/types.ts`) next to `greenhouse.ts`/`lever.ts` -- `buildFormUrl`,
+  `allowedHosts`, `snapshotConfig`, `requiredCanonicals`, `standardFields`, `confirmation` -- register it in
+  `adapters/index.ts`'s `getAdapter`/`ADAPTERS` map and `resolveAutofillTarget.ts`'s own `BY_KIND` map and
+  source-kind filter, and
+  capture a sanitized fixture HTML copy of the real form under `packages/browser/fixtures/` (and
+  `services/browser-worker`'s own fixture server, `testing/fixtureServer.ts`) for both the jsdom snapshot
+  tests and the worker's headless-Chrome integration tests.
+- **Classification rules** (which field maps to which canonical, what gets flagged vs. filled) live entirely
+  in `packages/browser/src/plan/classifyField.ts` (the shared label-regex rules) and each adapter's own
+  `standardFields` (id/name/label matchers, D129) -- never in the worker. `buildFillPlan.ts`'s
+  `isAlwaysFlag`/`notFilled` is the one place the required/optional flag-vs-skip rule and the
+  always-flag-regardless-of-required exceptions (D129) are encoded.
+- **`services/browser-worker/src/actions.ts` is the only module allowed to call a Playwright locator mutation
+  method.** Any new action kind must be added to `FillAction` (`packages/browser/src/types.ts`), given a
+  guarded case in `performAction`/`verifyAction` -- pass an explicit `{ timeout: ACTION_TIMEOUT_MS }` on every
+  Playwright call in that case, including `assertTarget`'s own `locator.evaluate` (D138): without one,
+  Playwright's 30 s default timeout applies, which would let a single stale/detached target stall the whole
+  session instead of failing fast into the next loop iteration's host check -- and must keep `noClick.test.ts`
+  (D130, D138) passing -- it scans every non-test file in `services/browser-worker/src`, plus
+  `packages/browser/src/snapshot/extractSnapshotSource.ts` (the other code that runs inside the application
+  page), for click/press/submit/keyboard/dispatchEvent calls and fails the build if any exist outside this
+  invariant.
+- **The page's own form snapshot is untrusted input.** Anything the in-page extractor could be made to
+  return goes through `sanitizeSnapshot` (`packages/browser/src/snapshot/sanitizeSnapshot.ts`, D138) before
+  `classifyField`/`buildFillPlan` ever see it; a new `SnapshotControl` or a change to the snapshot shape must
+  be reflected there too, or the new shape is silently dropped (fields) or rejected outright (top-level).
+
 In Docker (D125): `docker compose -f infra/docker-compose.yml --profile workers up -d --build` builds
 `services/maintenance-worker/Dockerfile` (repo-root context) and starts the `maintenance-worker` service,
 whose `CMD` is `tsx src/main.ts` -- the same entry point as above, with config from the repo's `.env`

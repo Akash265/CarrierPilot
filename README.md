@@ -55,6 +55,45 @@ rationale behind each architectural choice.
    `docker compose -f infra/docker-compose.yml --profile workers run --rm
    maintenance-worker node_modules/.bin/tsx src/runOnce.ts`.
 
+10. **Browser autofill (Phase 8)**, needed for the "Open & autofill
+    application" button on a match page to do anything:
+    - **Prerequisite:** Google Chrome must be installed on this machine (the
+      worker launches it with Playwright's `channel: "chrome"`; it does not
+      download its own browser). Set `BROWSER_EXECUTABLE_PATH` in `.env` to
+      point at a specific Chrome binary instead, if needed.
+    - Run `pnpm --filter @ai-career/db db:migrate` first if you haven't
+      already (migrations `0026`/`0027` add the `automation_sessions`
+      table).
+    - Start the worker **on the host, not in Docker**: `pnpm --filter
+      @ai-career/browser-worker start`. It needs a real desktop to open a
+      headed Chrome window, which a container does not have — there is no
+      Dockerfile or compose service for it. Run exactly one worker process
+      (concurrency is 1 either way, and the DB also only allows one active
+      session per user at a time).
+    - What it does: opens the job's Greenhouse or Lever hosted application
+      form in Chrome, fills your name, email, phone, LinkedIn, location,
+      attaches your exported resume (and cover letter, on Greenhouse), and
+      — only where the question is a plain yes/no, never a dropdown/combobox
+      widget or worded with a "without"/"not"/"don't"-style negation — visa
+      sponsorship and expected salary. GitHub/portfolio links, work
+      authorization, EEO/demographic questions and anything it doesn't
+      recognize are left for you, shown in the panel's field audit.
+    - The resume and cover letter are uploaded under fixed file names
+      (`resume.pdf`, `cover_letter.pdf`) regardless of what you named them or
+      how CareerPilot stores them internally — that's the file name the
+      employer sees attached, and it's also why your own file name or any
+      other local text never reaches the page.
+    - **You always click Submit yourself.** The worker has no code path
+      that can click, press a key, or submit a form — this is enforced by a
+      test that scans the worker's source for exactly those calls, not just
+      a convention.
+    - Three env vars control it (all optional, see `.env.example`):
+      `BROWSER_EXECUTABLE_PATH` (override the Chrome binary),
+      `BROWSER_HEADLESS` (default `false` — headed, since a human needs to
+      see and use the window; `true` is for tests only),
+      `BROWSER_SESSION_TIMEOUT_MIN` (default 30 — how long an open window
+      waits for you before the worker closes it).
+
 After adding new migrations, migrate the *test* database once before running
 the whole suite:
 `MIGRATIONS_DATABASE_URL=postgres://career_intel:career_intel@localhost:5432/career_intel_test pnpm --filter @ai-career/db db:migrate`.
@@ -175,7 +214,21 @@ recruiter contact and interview events. An applied job leaves the ranked
 `/matches` feed ("already applied") but its generated documents stay
 viewable on `/matches/[jobId]` until retention deletes them; the
 application's detail page lists the versions sent and links there.
-Browser automation (Phase 8) is deferred, so every application is recorded
-by hand rather than by an automation session. Existing checkouts: run
+Phase 8 (Browser Autofill) adds an automation session to that same tracker;
+see "Browser autofill" below. Existing checkouts: run
 `pnpm --filter @ai-career/db db:migrate` to add the two new tables, and see
 below to run the retention sweep.
+
+Phase 8 (Browser Autofill) complete: on a job sourced from Greenhouse or
+Lever, "Open & autofill application" on the match page opens a real, headed
+Chrome window on your computer, fills the fields it can identify with high
+confidence (name, email, phone, LinkedIn, location, resume/cover-letter
+attachments, and — only where the question is a plain yes/no, not a
+dropdown widget — visa sponsorship and salary expectation), and shows a
+field-by-field audit of what was filled, flagged for you, or intentionally
+skipped (EEO/demographic questions, GitHub/portfolio links, work
+authorization, anything it doesn't recognize). **You always review the
+window and click Submit yourself — the worker has no code path that can
+submit a form.** Once you've submitted (or decided not to), "Record as
+applied?" on the panel creates the application entry with the same
+resume/cover-letter versions the session attached, in one click.

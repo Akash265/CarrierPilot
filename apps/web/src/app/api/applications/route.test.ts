@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeAll, beforeEach, afterAll } from "vitest";
 import type postgres from "postgres";
-import { openAdminDb, wipeMatchingData, insertJob, insertApplication, insertCoverLetter } from "../../../test/jobsDb";
+import { openAdminDb, wipeMatchingData, insertJob, insertApplication, insertCoverLetter, insertAutomationSession } from "../../../test/jobsDb";
 
 vi.mock("@ai-career/config", () => ({
   loadEnv: () => ({
@@ -48,6 +48,17 @@ describe("POST /api/applications", () => {
     const otherJob = await insertJob(admin, USER, { title: "Analytics Engineer" });
     const letter = await insertCoverLetter(admin, USER, otherJob, {});
     expect((await post(JSON.stringify({ jobId, coverLetterId: letter }))).status).toBe(422);
+  });
+
+  it("records an application from an autofill session (201) and 409s an unlinkable one", async () => {
+    const jobId = await insertJob(admin, USER, {});
+    const active = await insertAutomationSession(admin, USER, jobId, { status: "awaiting_user" });
+    expect((await post(JSON.stringify({ jobId, automationSessionId: active }))).status).toBe(409);
+    const detected = await insertAutomationSession(admin, USER, jobId, { status: "submission_detected" });
+    const res = await post(JSON.stringify({ jobId, automationSessionId: detected }));
+    expect(res.status).toBe(201);
+    const [row] = await admin`SELECT application_id FROM automation_sessions WHERE id = ${detected}`;
+    expect(row.application_id).toBe((await res.json()).application.id);
   });
 
   it("creates an external application", async () => {

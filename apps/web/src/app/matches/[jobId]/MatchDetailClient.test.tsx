@@ -21,11 +21,20 @@ function mockFetch(matchBody: unknown, matchStatus = 200) {
       if (url.includes("/api/application-pitches/")) {
         return { ok: true, status: 200, json: async () => ({ versions: [], research: null }) } as Response;
       }
+      if (url.includes("/api/cover-letters/")) {
+        return { ok: true, status: 200, json: async () => ({ versions: [], research: null }) } as Response;
+      }
+      if (url.includes("/api/interview-preps/")) {
+        return { ok: true, status: 200, json: async () => ({ versions: [], research: null }) } as Response;
+      }
       if (url.includes("/api/applications/for-job/")) {
         return { ok: true, status: 200, json: async () => ({ application: null, documentOptions: { resumes: [], pitches: [], coverLetters: [] } }) } as Response;
       }
       if (url.includes("/api/documents")) {
         return { ok: true, status: 200, json: async () => ({ documents: [] }) } as Response;
+      }
+      if (url.includes("/api/automation-sessions")) {
+        return { ok: true, status: 200, json: async () => ({ support: { supported: false, reason: "no_supported_posting" }, resumeAvailable: false, applicationId: null, sessions: [] }) } as Response;
       }
       return { ok: matchStatus < 400, status: matchStatus, json: async () => matchBody } as Response;
     })
@@ -42,6 +51,7 @@ describe("MatchDetailClient", () => {
     expect(screen.getByText("Strong SQL alignment")).toBeInTheDocument();
     expect(screen.getByText("Slightly under target salary")).toBeInTheDocument();
     expect(screen.getByText("Tableau requested, not found")).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Application autofill" })).toBeInTheDocument();
   });
 
   it("shows the ineligible reason instead of scores when excluded", async () => {
@@ -80,7 +90,7 @@ describe("MatchDetailClient", () => {
             match: { eligible: false, ineligibleReason: "You applied to this job at Acme.", overallScore: null, factors: null, explanation: null, userAction: "none" },
             applicationId: "a1",
           }) } as Response)
-        : Promise.resolve({ ok: true, status: 200, json: async () => ({ application: null, documentOptions: { resumes: [], pitches: [], coverLetters: [] }, documents: [], optimizations: [], versions: [], research: null }) } as Response)
+        : Promise.resolve({ ok: true, status: 200, json: async () => ({ application: null, documentOptions: { resumes: [], pitches: [], coverLetters: [] }, documents: [], optimizations: [], versions: [], research: null, support: { supported: false, reason: "no_supported_posting" }, resumeAvailable: false, applicationId: null, sessions: [] }) } as Response)
     ));
     render(<MatchDetailClient jobId="j1" />);
     expect(await screen.findByRole("heading", { name: "Application" })).toBeInTheDocument();

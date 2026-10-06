@@ -1,4 +1,5 @@
-export type ApplicationErrorClass = "job_not_found" | "already_applied" | "document_mismatch" | "not_found" | "same_status";
+export type ApplicationErrorClass =
+  | "job_not_found" | "already_applied" | "document_mismatch" | "not_found" | "same_status" | "session_not_linkable";
 
 /** Carries a class only -- never user text -- so it is safe to log (CLAUDE.md §9). */
 export class ApplicationError extends Error {

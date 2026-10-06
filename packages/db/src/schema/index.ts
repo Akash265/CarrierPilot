@@ -29,3 +29,4 @@ export * from "./interviewPreparations";
 export * from "./generatedDocuments";
 export * from "./applications";
 export * from "./applicationEvents";
+export * from "./automationSessions";

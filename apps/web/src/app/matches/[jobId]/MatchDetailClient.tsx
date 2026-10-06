@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { ApplicationPanel } from "./ApplicationPanel";
+import { AutofillPanel } from "./AutofillPanel";
 import { ResumeOptimizationPanel } from "./ResumeOptimizationPanel";
 import { PitchPanel } from "./PitchPanel";
 import { CoverLetterPanel } from "./CoverLetterPanel";
@@ -134,6 +135,7 @@ export function MatchDetailClient({ jobId }: { jobId: string }) {
       )}
 
       <ApplicationPanel jobId={jobId} />
+      {showWorkspace && <AutofillPanel jobId={jobId} />}
       {showWorkspace && <ResumeOptimizationPanel jobId={jobId} />}
       {showWorkspace && <PitchPanel jobId={jobId} />}
       {showWorkspace && <CoverLetterPanel jobId={jobId} />}

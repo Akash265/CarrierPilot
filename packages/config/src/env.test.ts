@@ -118,4 +118,15 @@ describe("loadEnv", () => {
     expect(loadEnv({ ...validSource, RETENTION_DAYS: "0" }).RETENTION_DAYS).toBe(0);
     expect(() => loadEnv({ ...validSource, RETENTION_DAYS: "-1" })).toThrow(/RETENTION_DAYS/);
   });
+
+  it("parses the Phase 8 browser settings with safe defaults", () => {
+    const env = loadEnv({ ...validSource });
+    expect(env.BROWSER_HEADLESS).toBe(false);
+    expect(env.BROWSER_SESSION_TIMEOUT_MIN).toBe(30);
+    expect(env.BROWSER_EXECUTABLE_PATH).toBeUndefined();
+    const custom = loadEnv({ ...validSource, BROWSER_HEADLESS: "true", BROWSER_SESSION_TIMEOUT_MIN: "5", BROWSER_EXECUTABLE_PATH: "/opt/chrome" });
+    expect(custom).toMatchObject({ BROWSER_HEADLESS: true, BROWSER_SESSION_TIMEOUT_MIN: 5, BROWSER_EXECUTABLE_PATH: "/opt/chrome" });
+    expect(() => loadEnv({ ...validSource, BROWSER_HEADLESS: "yes" })).toThrow(/BROWSER_HEADLESS/);
+    expect(() => loadEnv({ ...validSource, BROWSER_SESSION_TIMEOUT_MIN: "0" })).toThrow(/BROWSER_SESSION_TIMEOUT_MIN/);
+  });
 });
