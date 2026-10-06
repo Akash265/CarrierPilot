@@ -203,4 +203,12 @@ describe("InsightsClient", () => {
     expect(section).toHaveTextContent("Predicts responses better than your average: no (error 0.710 vs 0.693 for your average; lower is better).");
     expect(section).toHaveTextContent("Your history doesn't show a pattern that beats your average yet, so ranking stays as it is.");
   });
+
+  it("says no pattern without an honesty-check line when nothing was evaluated (a failed fit or a training error)", async () => {
+    mockFetch(payload({ model: { ...MODEL_OFF, status: "no_pattern", decided: 40, responses: 20, nonResponses: 20 } }));
+    render(<InsightsClient />);
+    const section = await screen.findByRole("region", { name: "Your response model" });
+    expect(section).toHaveTextContent("Your history doesn't show a pattern that beats your average yet, so ranking stays as it is.");
+    expect(section).not.toHaveTextContent("Predicts responses better");
+  });
 });

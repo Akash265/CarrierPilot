@@ -84,7 +84,7 @@ function logLoss(y: 0 | 1, p: number): number {
 }
 
 /**
- * Spec §4.3. Gates in order: enough data; then a leave-one-out check that the model predicts held-out
+ * Spec §4.3. Gates in order: enough data (and at least one varying factor); then a leave-one-out check that the model predicts held-out
  * applications better (lower mean log-loss) than simply predicting the rest's response rate; else active.
  * A fold whose fit fails predicts the baseline for its held-out row (it cannot help the model pass).
  */
@@ -102,7 +102,12 @@ export function trainResponseModel(records: readonly OutcomeRecord[], settings: 
     return insufficient;
   }
   const model = fitModel(rows);
-  if (model === null) return insufficient;
+  if (model === null) {
+    // §4.3: no factor left after dropping constants is insufficient_data; §4.2: a fit that fails anyway
+    // (non-invertible Hessian -- guarded, practically unreachable at lambda 1) is no_pattern, with nothing evaluated.
+    if (fitScaling(rows.map((r) => r.factors)).keys.length === 0) return insufficient;
+    return { ...base, status: "no_pattern", looLogLoss: null, baselineLogLoss: null, blendWeight: null, model: null };
+  }
 
   let modelLoss = 0;
   let baselineLoss = 0;

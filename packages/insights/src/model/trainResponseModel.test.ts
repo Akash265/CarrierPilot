@@ -1,4 +1,11 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
+
+vi.mock("./fitLogistic", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./fitLogistic")>();
+  return { ...actual, fitLogistic: vi.fn(actual.fitLogistic) };
+});
+
+import { fitLogistic } from "./fitLogistic";
 import { blendWeight, trainResponseModel, trainingRows } from "./trainResponseModel";
 import { modelRecord, randomFactors, seededRandom, syntheticHistory } from "./testing";
 
@@ -40,6 +47,22 @@ describe("trainResponseModel gates", () => {
     const result = trainResponseModel(fewResponses, SETTINGS);
     expect(result.responses).toBeLessThan(8);
     expect(result.status).toBe("insufficient_data");
+  });
+
+  it("is insufficient_data when only the non-responses fall below the per-class minimum", () => {
+    const random = seededRandom(3);
+    const records = Array.from({ length: 40 }, (_, i) => modelRecord(i < 33 ? "positive" : "negative", randomFactors(random)));
+    const result = trainResponseModel(records, SETTINGS);
+    expect(result).toMatchObject({ responses: 33, nonResponses: 7, status: "insufficient_data", looLogLoss: null });
+  });
+
+  it("is no_pattern, with no losses, when the full fit fails after the count gate passed (spec §4.2)", () => {
+    // The full fit is the first fitLogistic call; a failing fit is guarded but practically unreachable at lambda 1.
+    vi.mocked(fitLogistic).mockReturnValueOnce(null);
+    const result = trainResponseModel(skillsDriven(), SETTINGS);
+    expect(result).toMatchObject({
+      status: "no_pattern", decided: 40, looLogLoss: null, baselineLogLoss: null, blendWeight: null, model: null,
+    });
   });
 
   it("is insufficient_data when no factor varies", () => {
