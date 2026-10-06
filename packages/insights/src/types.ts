@@ -1,4 +1,5 @@
 import type { schema } from "@ai-career/db";
+import type { FactorScores } from "@ai-career/matching/scoring";
 
 /** Single source of truth: the Postgres enum's values (same as packages/applications). */
 export type ApplicationStatus = (typeof schema.applicationStatusEnum.enumValues)[number];
@@ -60,6 +61,11 @@ export interface Interval {
   high: number;
 }
 
+/** One of matching's 9 factor names (skillsScore ... semanticScore). */
+export type FactorKey = keyof FactorScores;
+/** The 9 factor scores (0-1) of a match; null where the score is unknown (e.g. no comparable salary). */
+export type FactorVector = Record<FactorKey, number | null>;
+
 export interface DocumentsSent {
   resume: boolean;
   pitch: boolean;
@@ -89,4 +95,6 @@ export interface OutcomeRecord {
   postingAgeDays: number | null;
   documents: DocumentsSent | null;
   missedRequiredTerms: string[] | null;
+  /** Phase 10b: the eligible match's 9 factor scores at apply time; null without an eligible match. */
+  factors: FactorVector | null;
 }

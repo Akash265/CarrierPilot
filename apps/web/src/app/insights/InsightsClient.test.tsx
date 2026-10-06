@@ -14,6 +14,11 @@ const bucket = (over: Partial<Bucket>): Bucket => ({
 });
 const dimension = (key: Dimension["key"], title: string, buckets: Bucket[], unknownCount = 0): Dimension => ({ key, title, buckets, unknownCount });
 
+const MODEL_OFF: InsightsResponse["model"] = {
+  status: "insufficient_data", decided: 12, responses: 3, nonResponses: 9, minDecided: 30, minPerClass: 8, blendWeight: null,
+  looLogLoss: null, baselineLogLoss: null, factors: [],
+};
+
 function payload(over: Partial<InsightsResponse> = {}): InsightsResponse {
   return {
     settings: { undecidedDays: 30, minBucket: 5 },
@@ -39,6 +44,7 @@ function payload(over: Partial<InsightsResponse> = {}): InsightsResponse {
       negativesWithData: 20,
       positivesWithData: 3,
     },
+    model: MODEL_OFF,
     ...over,
   };
 }
@@ -155,5 +161,55 @@ describe("InsightsClient", () => {
     mockFetch({}, false);
     render(<InsightsClient />);
     expect(await screen.findByRole("alert")).toHaveTextContent("Could not load insights. Try again.");
+  });
+
+  it("shows the response model's progress toward its minimum", async () => {
+    mockFetch(payload());
+    render(<InsightsClient />);
+    const section = await screen.findByRole("region", { name: "Your response model" });
+    expect(section).toHaveTextContent(
+      "The model needs 30 decided applications with match scores, including at least 8 with a response and 8 without. You have 12 (3 with a response, 9 without)."
+    );
+    expect(section).toHaveTextContent("It is not a cause or a guarantee.");
+  });
+
+  it("explains an active model: the honesty check, the blend weight and each factor's direction", async () => {
+    mockFetch(payload({
+      model: {
+        status: "active", decided: 40, responses: 20, nonResponses: 20, minDecided: 30, minPerClass: 8, blendWeight: 0.2,
+        looLogLoss: 0.412, baselineLogLoss: 0.693,
+        factors: [
+          { key: "skillsScore", label: "Skills", direction: "higher", oddsRatio: 3.41 },
+          { key: "freshnessScore", label: "Freshness", direction: "lower", oddsRatio: 1.24 },
+          { key: "roleScore", label: "Role", direction: "lower", oddsRatio: 1.03 },
+          { key: "experienceScore", label: "Experience", direction: "higher", oddsRatio: 1.01 },
+        ],
+      },
+    }));
+    render(<InsightsClient />);
+    const section = await screen.findByRole("region", { name: "Your response model" });
+    expect(section).toHaveTextContent("Predicts responses better than your average: yes (error 0.412 vs 0.693 for your average; lower is better).");
+    expect(section).toHaveTextContent("Based on 40 decided applications (20 with a response).");
+    expect(section).toHaveTextContent('Turning on "Rank with my history" on Matches blends this model in at 20% of the ranking.');
+    expect(within(section).getByText("Skills: a higher score has gone with more responses (odds ×3.4 per typical step).")).toBeInTheDocument();
+    expect(within(section).getByText("Freshness: a higher score has gone with fewer responses (odds ÷1.2 per typical step).")).toBeInTheDocument();
+    expect(within(section).getByText("Little or no link so far: Role, Experience.")).toBeInTheDocument();
+    expect(section).not.toHaveTextContent("Role: a higher score");
+  });
+
+  it("says when the history shows no pattern", async () => {
+    mockFetch(payload({ model: { ...MODEL_OFF, status: "no_pattern", decided: 40, responses: 20, nonResponses: 20, looLogLoss: 0.71, baselineLogLoss: 0.693 } }));
+    render(<InsightsClient />);
+    const section = await screen.findByRole("region", { name: "Your response model" });
+    expect(section).toHaveTextContent("Predicts responses better than your average: no (error 0.710 vs 0.693 for your average; lower is better).");
+    expect(section).toHaveTextContent("Your history doesn't show a pattern that beats your average yet, so ranking stays as it is.");
+  });
+
+  it("says no pattern without an honesty-check line when nothing was evaluated (a failed fit or a training error)", async () => {
+    mockFetch(payload({ model: { ...MODEL_OFF, status: "no_pattern", decided: 40, responses: 20, nonResponses: 20 } }));
+    render(<InsightsClient />);
+    const section = await screen.findByRole("region", { name: "Your response model" });
+    expect(section).toHaveTextContent("Your history doesn't show a pattern that beats your average yet, so ranking stays as it is.");
+    expect(section).not.toHaveTextContent("Predicts responses better");
   });
 });

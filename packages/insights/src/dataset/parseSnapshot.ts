@@ -1,4 +1,5 @@
-import type { DocumentsSent } from "../types";
+import { FACTOR_KEYS } from "@ai-career/matching/scoring";
+import type { DocumentsSent, FactorVector } from "../types";
 
 /** The parts of a feature snapshot (v1 or v2, packages/applications/src/snapshot.ts) the dataset uses. */
 export interface ParsedSnapshot {
@@ -17,6 +18,8 @@ export interface ParsedSnapshot {
   /** v2 only; null for v1 snapshots and for applications sent without an optimized resume. */
   missedRequiredTerms: string[] | null;
   documents: DocumentsSent | null;
+  /** Phase 10b: the 9 factor scores (0-1) of an eligible match; null when there is no eligible match. */
+  factors: FactorVector | null;
 }
 
 type Obj = Record<string, unknown>;
@@ -62,6 +65,9 @@ export function parseSnapshot(raw: unknown): ParsedSnapshot {
           coverLetter: obj(documents.coverLetter) !== null,
           edited: [documents.pitch, documents.coverLetter].some((d) => obj(d)?.origin === "user_edited"),
         }
+      : null,
+    factors: match && match.eligible === true
+      ? (Object.fromEntries(FACTOR_KEYS.map((key) => [key, num(match[key])])) as FactorVector)
       : null,
   };
 }

@@ -144,4 +144,18 @@ describe("loadEnv", () => {
     expect(() => loadEnv({ ...validSource, INSIGHTS_MIN_BUCKET: "1" })).toThrow(/INSIGHTS_MIN_BUCKET/);
     expect(() => loadEnv({ ...validSource, INSIGHTS_MIN_BUCKET: "2.5" })).toThrow(/INSIGHTS_MIN_BUCKET/);
   });
+
+  it("defaults the Phase 10b response-model gate", () => {
+    const env = loadEnv(validSource);
+    expect(env.OUTCOME_MODEL_MIN_DECIDED).toBe(30);
+    expect(env.OUTCOME_MODEL_MIN_PER_CLASS).toBe(8);
+  });
+
+  it("parses and bounds the Phase 10b response-model gate", () => {
+    const env = loadEnv({ ...validSource, OUTCOME_MODEL_MIN_DECIDED: "50", OUTCOME_MODEL_MIN_PER_CLASS: "12" });
+    expect(env.OUTCOME_MODEL_MIN_DECIDED).toBe(50);
+    expect(env.OUTCOME_MODEL_MIN_PER_CLASS).toBe(12);
+    expect(() => loadEnv({ ...validSource, OUTCOME_MODEL_MIN_DECIDED: "9" })).toThrow(/OUTCOME_MODEL_MIN_DECIDED/);
+    expect(() => loadEnv({ ...validSource, OUTCOME_MODEL_MIN_PER_CLASS: "2" })).toThrow(/OUTCOME_MODEL_MIN_PER_CLASS/);
+  });
 });

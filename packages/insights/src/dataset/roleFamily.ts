@@ -1,4 +1,4 @@
-import { scoreRole } from "@ai-career/matching";
+import { scoreRole } from "@ai-career/matching/scoring";
 import type { InsightGoal } from "../types";
 
 export const OTHER_FAMILY = { key: "__other__", label: "Other" } as const;

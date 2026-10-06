@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeAll, beforeEach, afterAll } from "vitest";
 import type postgres from "postgres";
-import { openAdminDb, wipeMatchingData } from "../../../test/jobsDb";
+import { openAdminDb, wipeMatchingData, insertModelHistory } from "../../../test/jobsDb";
+import { clearResponseModelCache } from "../../../lib/insights/responseModel";
 
 vi.mock("@ai-career/config", () => ({
   loadEnv: () => ({
@@ -8,6 +9,8 @@ vi.mock("@ai-career/config", () => ({
     DATABASE_URL: process.env.TEST_APP_DATABASE_URL ?? "postgres://career_intel_app:career_intel_app@localhost:5432/career_intel_test",
     OUTCOME_UNDECIDED_DAYS: 30,
     INSIGHTS_MIN_BUCKET: 2,
+    OUTCOME_MODEL_MIN_DECIDED: 30,
+    OUTCOME_MODEL_MIN_PER_CLASS: 8,
   }),
 }));
 
@@ -19,6 +22,7 @@ beforeAll(async () => {
   admin = await openAdminDb();
 });
 beforeEach(async () => {
+  clearResponseModelCache();
   await wipeMatchingData(admin, USER);
   await wipeMatchingData(admin, OTHER);
 });
@@ -76,5 +80,20 @@ describe("GET /api/insights", () => {
     expect(body.tiers.response.rate).toBeCloseTo(2 / 3, 6);
     expect(body.tiers.interview).toMatchObject({ decided: 3, positives: 1, negatives: 2, excluded: 1 });
     expect(JSON.stringify(body)).not.toMatch(/SECRET NOTE|other user/);
+  });
+
+  it("reports the response model: progress below the gate, then direction and strength per factor once active", async () => {
+    const empty = await (await GET()).json();
+    expect(empty.model).toEqual({
+      status: "insufficient_data", decided: 0, responses: 0, nonResponses: 0, minDecided: 30, minPerClass: 8, blendWeight: null,
+      looLogLoss: null, baselineLogLoss: null, factors: [],
+    });
+
+    await insertModelHistory(admin, USER, 40);
+    const body = await (await GET()).json();
+    expect(body.model).toMatchObject({ status: "active", decided: 40, responses: 20, nonResponses: 20, blendWeight: 0.2 });
+    expect(body.model.looLogLoss).toBeLessThan(body.model.baselineLogLoss);
+    expect(body.model.factors[0]).toMatchObject({ key: "skillsScore", label: "Skills", direction: "higher" });
+    expect(body.model.factors[0].oddsRatio).toBeGreaterThan(1);
   });
 });

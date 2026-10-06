@@ -3,6 +3,7 @@ import { loadEnv } from "@ai-career/config";
 import { closeDbClient, createDbClient, withUserContext } from "@ai-career/db";
 import { formatValidationError } from "../../../lib/formatValidationError";
 import { ListMatchesQuerySchema, listMatches } from "../../../lib/matching/listMatches";
+import { loadResponseModel } from "../../../lib/insights/responseModel";
 
 export async function GET(request: Request) {
   const env = loadEnv();
@@ -13,8 +14,12 @@ export async function GET(request: Request) {
 
   const db = createDbClient(env);
   try {
-    const result = await withUserContext(db, env.DEFAULT_USER_ID, (tx) => listMatches(tx, parsed.data));
-    return NextResponse.json(result);
+    // Phase 10b: predictions (and, on request, the personal ranking) come from the response model trained on read.
+    const { result: model, summary } = await loadResponseModel(db, env);
+    const result = await withUserContext(db, env.DEFAULT_USER_ID, (tx) =>
+      listMatches(tx, parsed.data, { model: model.model, weight: model.blendWeight })
+    );
+    return NextResponse.json({ ...result, model: summary });
   } finally {
     await closeDbClient(db);
   }

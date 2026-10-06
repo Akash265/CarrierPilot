@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor, act } from "@testing-library/react";
 import { MatchesClient } from "./MatchesClient";
+import { resetRankPreferenceForTests, writeRankPreference } from "../../lib/insights/rankPreference";
 
 const matchItem = (over: Record<string, unknown> = {}) => ({
   jobId: "j1", jobTitle: "Data Engineer", companyName: "Acme", locationRaw: "Berlin", workMode: "remote",
@@ -26,7 +27,15 @@ function mockFetch(handlers: Record<string, Handler>) {
   return fn;
 }
 
-beforeEach(() => vi.unstubAllGlobals());
+beforeEach(() => {
+  vi.unstubAllGlobals();
+  window.localStorage.clear();
+  resetRankPreferenceForTests();
+});
+
+const MODEL_OFF = { status: "insufficient_data", decided: 12, responses: 3, nonResponses: 9, minDecided: 30, minPerClass: 8, blendWeight: null };
+const MODEL_ON = { status: "active", decided: 40, responses: 20, nonResponses: 20, minDecided: 30, minPerClass: 8, blendWeight: 0.2 };
+const PERSONAL = { probability: 0.354, low: 0.221, high: 0.498, raises: ["Skills"], lowers: [] };
 
 describe("MatchesClient", () => {
   it("shows a helpful empty state", async () => {
@@ -154,5 +163,116 @@ describe("MatchesClient", () => {
     fireEvent.click(screen.getByRole("checkbox", { name: /Show excluded jobs/ }));
     expect(await screen.findByText("You dismissed this job.")).toBeInTheDocument();
     expect(screen.queryByText("A strong overall match.")).not.toBeInTheDocument();
+  });
+
+  it("disables Rank with my history and says why while the model is not active", async () => {
+    mockFetch({
+      "GET /api/matches?eligible=true&page=1": () => ({ body: { matches: [matchItem()], page: 1, pageSize: 25, total: 1, ranking: "default", model: MODEL_OFF } }),
+      "GET /api/matches/runs/latest": () => ({ body: { run: null } }),
+    });
+    render(<MatchesClient />);
+    expect(await screen.findByText("Needs 30 decided applications with at least 8 responses and 8 without. You have 12 (3 with a response)."))
+      .toBeInTheDocument();
+    const toggle = screen.getByRole("checkbox", { name: "Rank with my history" });
+    expect(toggle).toBeDisabled();
+    expect(toggle).toHaveAccessibleDescription(
+      "Needs 30 decided applications with at least 8 responses and 8 without. You have 12 (3 with a response)."
+    );
+  });
+
+  it("links no description to the toggle while the model is active", async () => {
+    mockFetch({
+      "GET /api/matches?eligible=true&page=1": () => ({ body: { matches: [matchItem()], page: 1, pageSize: 25, total: 1, ranking: "default", model: MODEL_ON } }),
+      "GET /api/matches/runs/latest": () => ({ body: { run: null } }),
+    });
+    render(<MatchesClient />);
+    await screen.findByText("Data Engineer");
+    expect(screen.getByRole("checkbox", { name: "Rank with my history" })).not.toHaveAttribute("aria-describedby");
+  });
+
+  it("disables Rank with my history while excluded jobs are shown, keeping the stored choice", async () => {
+    window.localStorage.setItem("careerpilot.rankWithHistory", "1");
+    const ineligible = matchItem({ eligible: false, ineligibleReason: "You dismissed this job.", overallScore: null, factors: null, explanation: null });
+    mockFetch({
+      "GET /api/matches?eligible=true&page=1&rank=personal": () => ({
+        body: { matches: [matchItem({ personal: PERSONAL })], page: 1, pageSize: 25, total: 1, ranking: "personal", model: MODEL_ON },
+      }),
+      "GET /api/matches?eligible=false&page=1": () => ({
+        body: { matches: [ineligible], page: 1, pageSize: 25, total: 1, ranking: "default", model: MODEL_ON },
+      }),
+      "GET /api/matches/runs/latest": () => ({ body: { run: null } }),
+    });
+    render(<MatchesClient />);
+    expect(await screen.findByText("Ranked with your history (weight 20%)")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("checkbox", { name: /Show excluded jobs/ }));
+    expect(await screen.findByText("You dismissed this job.")).toBeInTheDocument();
+    const toggle = screen.getByRole("checkbox", { name: "Rank with my history" });
+    expect(toggle).toBeDisabled();
+    expect(toggle).not.toBeChecked();
+    expect(toggle).toHaveAccessibleDescription("Excluded jobs are always listed in the default order.");
+    expect(window.localStorage.getItem("careerpilot.rankWithHistory")).toBe("1");
+  });
+
+  it("shows each match's likely response and ranks with history when turned on, remembering the choice", async () => {
+    const fetchMock = mockFetch({
+      "GET /api/matches?eligible=true&page=1": () => ({
+        body: { matches: [matchItem({ personal: PERSONAL })], page: 1, pageSize: 25, total: 1, ranking: "default", model: MODEL_ON },
+      }),
+      "GET /api/matches?eligible=true&page=1&rank=personal": () => ({
+        body: { matches: [matchItem({ personal: PERSONAL })], page: 1, pageSize: 25, total: 1, ranking: "personal", model: MODEL_ON },
+      }),
+      "GET /api/matches/runs/latest": () => ({ body: { run: null } }),
+    });
+    render(<MatchesClient />);
+    expect(await screen.findByText("Your history: likely response 35% (22–50%)")).toBeInTheDocument();
+    const toggle = screen.getByRole("checkbox", { name: "Rank with my history" });
+    expect(toggle).toBeEnabled();
+    expect(toggle).not.toBeChecked();
+
+    fireEvent.click(toggle);
+    expect(await screen.findByText("Ranked with your history (weight 20%)")).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledWith("/api/matches?eligible=true&page=1&rank=personal");
+    expect(window.localStorage.getItem("careerpilot.rankWithHistory")).toBe("1");
+  });
+
+  it("requests the personal ranking from the start when it was turned on before", async () => {
+    window.localStorage.setItem("careerpilot.rankWithHistory", "1");
+    mockFetch({
+      "GET /api/matches?eligible=true&page=1&rank=personal": () => ({
+        body: { matches: [matchItem({ personal: PERSONAL })], page: 1, pageSize: 25, total: 1, ranking: "personal", model: MODEL_ON },
+      }),
+      "GET /api/matches/runs/latest": () => ({ body: { run: null } }),
+    });
+    render(<MatchesClient />);
+    expect(await screen.findByText("Ranked with your history (weight 20%)")).toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: "Rank with my history" })).toBeChecked();
+  });
+
+  it("ignores a slower, older response: only the latest request may update the list", async () => {
+    let releaseDefault: () => void = () => undefined;
+    const defaultBody = { matches: [matchItem({ personal: PERSONAL })], page: 1, pageSize: 25, total: 1, ranking: "default", model: MODEL_ON };
+    const personalBody = { ...defaultBody, ranking: "personal" };
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      if (url === "/api/matches/runs/latest") return { ok: true, status: 200, json: async () => ({ run: null }) } as Response;
+      if (url === "/api/matches?eligible=true&page=1") {
+        await new Promise<void>((resolve) => {
+          releaseDefault = resolve;
+        });
+        return { ok: true, status: 200, json: async () => defaultBody } as Response;
+      }
+      return { ok: true, status: 200, json: async () => personalBody } as Response;
+    }));
+
+    render(<MatchesClient />);
+    await waitFor(() => expect(screen.getByRole("checkbox", { name: "Rank with my history" })).toBeInTheDocument());
+    // The default request is still in flight; the user's choice issues a newer personal request.
+    act(() => writeRankPreference(true));
+    expect(await screen.findByText("Ranked with your history (weight 20%)")).toBeInTheDocument();
+
+    await act(async () => {
+      releaseDefault();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    expect(screen.getByText("Ranked with your history (weight 20%)")).toBeInTheDocument();
   });
 });

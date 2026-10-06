@@ -10,7 +10,7 @@ function record(response: OutcomeLabel, interview: OutcomeLabel, over: Partial<O
     response: { label: response, reason: "" }, interview: { label: interview, reason: "" },
     roleFamily: { key: "data engineer", label: "Data Engineer" }, company: { key: "acme", label: "Acme" },
     workMode: "remote", countryCode: "DE", salaryVsFloor: null, matchScore: 72, atsScore: 88, requiredKeywordCoverage: 0.9,
-    postingAgeDays: 3, documents: { resume: true, pitch: false, coverLetter: false, edited: false }, missedRequiredTerms: null,
+    postingAgeDays: 3, documents: { resume: true, pitch: false, coverLetter: false, edited: false }, missedRequiredTerms: null, factors: null,
     ...over,
   };
 }

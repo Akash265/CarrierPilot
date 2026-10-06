@@ -1425,3 +1425,75 @@ writes `snapshotVersion: 2` with `ats.missedRequiredTerms` (D143). Nothing else 
 - Labels: `packages/insights/src/dataset/labels.ts` (+ `labels.test.ts`); the cutoff is `OUTCOME_UNDECIDED_DAYS`.
 - A new dimension: add a `DimensionDef` to `stats/dimensions.ts`; if it needs a new snapshot field, read it in `parseSnapshot.ts` and add it to `OutcomeRecord`.
 - A new snapshot field: write it in `packages/applications/src/snapshot.ts` and bump `snapshotVersion`; `parseSnapshot` must keep reading older versions.
+
+---
+
+## 15. Phase 10b — Personal Response Model
+
+### 15a. `GET /api/matches` (predictions, and optionally the personal ranking)
+
+```
+GET /api/matches                        apps/web/src/app/api/matches/route.ts
+ ├─ loadEnv(); createDbClient(env)
+ ├─ loadResponseModel(db, env)           apps/web/src/lib/insights/responseModel.ts
+ │    ├─ loadInsightInputs(db, DEFAULT_USER_ID)        packages/insights/src/load/loadInsightInputs.ts
+ │    ├─ buildOutcomeDataset(inputs, {...})            packages/insights/src/dataset/buildOutcomeDataset.ts   (10a, unchanged)
+ │    └─ trainResponseModelSafely(records, env)        apps/web/src/lib/insights/responseModel.ts
+ │         ├─ cacheKey: sha256(JSON.stringify({ userId, minDecided, minPerClass, rows: trainingRows(records) }))   (D153)
+ │         ├─ cache hit (same key as the last successful training) → reuse cached ModelResult, skip training
+ │         └─ cache miss → trainResponseModel(records, settings)    packages/insights/src/model/trainResponseModel.ts
+ │              ├─ trainingRows(records)                        -- decided, non-external, has factor scores
+ │              ├─ gate: rows/class counts (insufficient_data if not met)
+ │              ├─ fitModel(rows)                                -- fitScaling + standardize (prepareFeatures.ts) → fitLogistic (fitLogistic.ts)
+ │              │    null: no varying factor → insufficient_data; any other fit failure → no_pattern, losses null (§4.2)
+ │              ├─ leave-one-out: per row, fitModel(rest) → modelProbability vs. base rate, both log-losses
+ │              └─ status: insufficient_data | no_pattern | active (+ model, blendWeight when active)
+ │            → stored as the cache entry { key, result } (only on success)
+ │         (any thrown error here -- or while loading the dataset -- goes through failed(): logged by class name only,
+ │          degraded to no_pattern, never cached)
+ ├─ withUserContext(db, DEFAULT_USER_ID, tx => listMatches(tx, query, { model, weight }))   apps/web/src/lib/matching/listMatches.ts
+ │    ├─ default path (rank=default, or model inactive): existing SQL order/paging (D139), each row → predictResponse(model, factorVectorOf(row)) if model active and row eligible
+ │    └─ personal path (rank=personal, eligible=true, model active): load every eligible open row → predictResponse per row → blendedScore(overall, probability, weight) → sort blended desc, overall desc, job id asc → page in code (§4.6)
+ └─ 200 { matches: [...{ match: { ...factors, personal: ResponsePrediction | null } }], page, pageSize, total, ranking: "default"|"personal", model: ModelSummary }
+```
+
+### 15b. `GET /api/matches/[jobId]` (one prediction)
+
+Same `loadResponseModel` call, then a single `predictResponse(model, factorVectorOf(matchRow))` when the model is active and the match is eligible; folded into the existing `toMatchView(matchRow, personal)` (`apps/web/src/lib/matching/serializeMatch.ts`) alongside `model: ModelSummary`. `PATCH` is unchanged. `MatchDetailClient.tsx` keeps `body.model`'s `decided`/`responses` and, under the prediction, renders `formatSampleSize` ("Based on {decided} decided applications ({responses} with a response).").
+
+### 15c. `GET /api/insights` (explaining the model)
+
+```
+GET /api/insights                        apps/web/src/app/api/insights/route.ts
+ ├─ loadInsightInputs → buildOutcomeDataset              (10a, unchanged -- same records as 15a, computed again on this request)
+ ├─ computeInsights(records, {...})                      (10a, unchanged)
+ └─ trainResponseModelSafely(records, env)   apps/web/src/lib/insights/responseModel.ts   (same cache as 15a: a hit skips training)
+      └─ toModelInsightsView({ result, summary })        apps/web/src/lib/insights/responseModel.ts
+           -- adds looLogLoss, baselineLogLoss, and factors: describeFactors(model) (packages/insights/src/model/predictResponse.ts) when active, else []
+ → 200 { settings, ...insights(10a), model: ModelInsightsView }
+```
+
+`InsightsClient.tsx`'s `ModelSection` renders this: progress toward the gate, the honesty check (only when both log-losses are non-null), and — only when `active` — the sample size (`formatSampleSize`), the blend-weight note, each kept factor above `WEAK_ODDS_RATIO` (1.1) with direction and odds ratio, weaker factors grouped as "Little or no link so far", and a fixed not-a-cause note.
+
+### 15d. The client (`/matches`)
+
+```
+MatchesClient.tsx
+ ├─ rankWithHistory = useSyncExternalStore(subscribeRankPreference, readRankPreference, serverRankPreference)   apps/web/src/lib/insights/rankPreference.ts
+ │    (server snapshot is always false; the stored localStorage choice, or the in-memory fallback, applies after hydration)
+ ├─ load(): fetch(`/api/matches?eligible=...&page=1${rankWithHistory && !showIneligible ? "&rank=personal" : ""}`)
+ │    -- latestRequest ref: only the response to the most recently issued request may call setResult (older, slower
+ │       responses -- e.g. a default-ranked request still in flight when the toggle flips to personal -- are dropped)
+ ├─ "Rank with my history" checkbox: disabled unless result.model.status === "active" (modelUnavailableReason, formatPersonal.ts, explains why,
+ │    linked via aria-describedby="rank-with-history-reason"), and disabled + shown unchecked while "Show excluded jobs" is on
+ │    (reason "Excluded jobs are always listed in the default order." when the model is otherwise active; the stored preference is left as it is)
+ │    onChange → writeRankPreference(checked) → localStorage write (or in-memory only on failure) → notifies subscribers → re-render → new load()
+ └─ MatchRow / match detail: formatLikelyResponse + formatFactorPushes (apps/web/src/lib/insights/formatPersonal.ts) render match.personal
+```
+
+### Changing Phase 10b behavior
+
+- **Gate thresholds:** `OUTCOME_MODEL_MIN_DECIDED` / `OUTCOME_MODEL_MIN_PER_CLASS` in `.env` / `packages/config/src/env.ts` -- no code change needed to tighten or loosen the gate.
+- **Fit/threshold constants** (ridge λ, Newton iteration cap/tolerance, the leave-one-out log-loss epsilon, the raises/lowers contribution threshold and cap, the weak-factor odds-ratio cutoff): named constants in `packages/insights/src/model/*.ts` (`RIDGE_LAMBDA`, `MAX_ITERATIONS`, `STEP_TOLERANCE`, `LOG_LOSS_EPSILON`, `CONTRIBUTION_THRESHOLD`, `MAX_NAMED_FACTORS`) and `apps/web/src/app/insights/InsightsClient.tsx` (`WEAK_ODDS_RATIO`) -- never inline magic numbers.
+- **Factor display names:** `FACTOR_LABELS` in `packages/insights/src/model/predictResponse.ts` (keep in sync with the factor chip labels on `/matches`).
+- **The blend formula / weight cap:** `blendWeight`/`blendedScore` in `packages/insights/src/model/{trainResponseModel,predictResponse}.ts`.

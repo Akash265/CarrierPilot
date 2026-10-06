@@ -2,8 +2,14 @@
 
 import { useEffect, useState } from "react";
 import type { Bucket, Dimension, Headline, Insights, Patterns, Tier } from "@ai-career/insights";
+import type { ModelInsightsView } from "../../lib/insights/responseModel";
+import { formatSampleSize } from "../../lib/insights/formatPersonal";
 
-export type InsightsResponse = Insights & { settings: { undecidedDays: number; minBucket: number } };
+export type InsightsResponse = Insights & {
+  settings: { undecidedDays: number; minBucket: number };
+  /** Phase 10b: the personal response model. */
+  model: ModelInsightsView;
+};
 type State = { kind: "loading" } | { kind: "error" } | { kind: "ready"; data: InsightsResponse };
 
 const TIER_TITLE: Record<Tier, string> = { response: "Got a response", interview: "Got an interview" };
@@ -120,6 +126,48 @@ function PatternsSection({ patterns }: { patterns: Patterns }) {
   );
 }
 
+/** Below this odds ratio per typical step a factor is listed as having little or no link (no direction claimed). */
+const WEAK_ODDS_RATIO = 1.1;
+
+/** Phase 10b spec §6: the personal response model -- progress to the gate, the honesty check, the learned factors. */
+function ModelSection({ model }: { model: ModelInsightsView }) {
+  const strong = model.factors.filter((f) => f.oddsRatio >= WEAK_ODDS_RATIO);
+  const weak = model.factors.filter((f) => f.oddsRatio < WEAK_ODDS_RATIO);
+  return (
+    <section aria-labelledby="model-heading" className="flex flex-col gap-2 rounded border p-4 text-sm">
+      <h2 id="model-heading" className="text-lg font-medium">Your response model</h2>
+      {model.status === "insufficient_data" && (
+        <p>
+          {`The model needs ${model.minDecided} decided applications with match scores, including at least ${model.minPerClass} with a response and ${model.minPerClass} without. You have ${model.decided} (${model.responses} with a response, ${model.nonResponses} without).`}
+        </p>
+      )}
+      {model.looLogLoss !== null && model.baselineLogLoss !== null && (
+        <p>
+          {`Predicts responses better than your average: ${model.status === "active" ? "yes" : "no"} (error ${model.looLogLoss.toFixed(3)} vs ${model.baselineLogLoss.toFixed(3)} for your average; lower is better).`}
+        </p>
+      )}
+      {model.status === "no_pattern" && <p>Your history doesn&apos;t show a pattern that beats your average yet, so ranking stays as it is.</p>}
+      {model.status === "active" && (
+        <>
+          <p>{formatSampleSize(model)}</p>
+          {model.blendWeight !== null && (
+            <p>{`Turning on "Rank with my history" on Matches blends this model in at ${Math.round(model.blendWeight * 100)}% of the ranking.`}</p>
+          )}
+          <ul className="list-disc pl-5">
+            {strong.map((f) => (
+              <li key={f.key}>
+                {`${f.label}: a higher score has gone with ${f.direction === "higher" ? "more" : "fewer"} responses (odds ${f.direction === "higher" ? "×" : "÷"}${f.oddsRatio.toFixed(1)} per typical step).`}
+              </li>
+            ))}
+          </ul>
+          {weak.length > 0 && <p>{`Little or no link so far: ${weak.map((f) => f.label).join(", ")}.`}</p>}
+        </>
+      )}
+      <p className="text-xs text-gray-600">This describes your own past applications. It is not a cause or a guarantee.</p>
+    </section>
+  );
+}
+
 function HowCalculated({ settings }: { settings: InsightsResponse["settings"] }) {
   return (
     <details className="rounded border p-3 text-sm">
@@ -177,6 +225,8 @@ export function InsightsClient() {
         <HeadlineCard tier="response" headline={data.tiers.response} />
         <HeadlineCard tier="interview" headline={data.tiers.interview} />
       </div>
+
+      <ModelSection model={data.model} />
 
       <section aria-labelledby="breakdowns-heading" className="flex flex-col gap-3">
         <h2 id="breakdowns-heading" className="text-lg font-medium">Breakdowns</h2>

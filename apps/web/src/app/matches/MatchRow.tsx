@@ -1,5 +1,6 @@
 import Link from "next/link";
 import type { MatchListItem } from "../../lib/matching/listMatches";
+import { formatLikelyResponse } from "../../lib/insights/formatPersonal";
 
 const FACTOR_LABELS: [key: keyof NonNullable<MatchListItem["match"]["factors"]>, label: string][] = [
   ["skills", "Skills"], ["experience", "Experience"], ["location", "Location"], ["sponsorship", "Sponsorship"],
@@ -45,6 +46,10 @@ export function MatchRow({
       )}
 
       {match.eligible && match.explanation?.summary && <p className="text-sm">{match.explanation.summary}</p>}
+
+      {match.eligible && match.personal && (
+        <p className="text-sm text-gray-700">{`Your history: ${formatLikelyResponse(match.personal)}`}</p>
+      )}
 
       {match.eligible && (
         <div className="flex gap-2">
