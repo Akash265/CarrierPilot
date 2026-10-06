@@ -148,7 +148,9 @@ export function MatchesClient() {
   }
 
   const modelActive = result?.model?.status === "active";
-  const unavailableReason = result?.model ? modelUnavailableReason(result.model) : null;
+  const modelReason = result?.model ? modelUnavailableReason(result.model) : null;
+  // Excluded jobs are never re-ranked, so an otherwise-active toggle is disabled there and says why.
+  const unavailableReason = modelReason ?? (modelActive && showIneligible ? "Excluded jobs are always listed in the default order." : null);
 
   return (
     <div className="flex flex-col gap-4">

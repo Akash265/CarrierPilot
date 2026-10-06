@@ -251,5 +251,6 @@ both env-configurable) — and the model beats your average on a held-out
 check. An opt-in "Rank with my history" toggle on `/matches` blends the
 prediction into the ranking, at a weight that grows with your history but
 never exceeds 50%. The model, its honesty check and which factors it found
-are explained on `/insights`. No AI calls; the model is fit fresh from your
-data on every request, not stored.
+are explained on `/insights`. No AI calls; the model is rebuilt from your
+data on read and retrained only when that data or its settings change
+(an in-process cache), never stored.

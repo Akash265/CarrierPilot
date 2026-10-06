@@ -1486,7 +1486,7 @@ MatchesClient.tsx
  │       responses -- e.g. a default-ranked request still in flight when the toggle flips to personal -- are dropped)
  ├─ "Rank with my history" checkbox: disabled unless result.model.status === "active" (modelUnavailableReason, formatPersonal.ts, explains why,
  │    linked via aria-describedby="rank-with-history-reason"), and disabled + shown unchecked while "Show excluded jobs" is on
- │    (the stored preference is left as it is)
+ │    (reason "Excluded jobs are always listed in the default order." when the model is otherwise active; the stored preference is left as it is)
  │    onChange → writeRankPreference(checked) → localStorage write (or in-memory only on failure) → notifies subscribers → re-render → new load()
  └─ MatchRow / match detail: formatLikelyResponse + formatFactorPushes (apps/web/src/lib/insights/formatPersonal.ts) render match.personal
 ```

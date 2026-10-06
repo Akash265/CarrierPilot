@@ -168,7 +168,7 @@ describe("GET /api/matches", () => {
     const all: Item[] = [...first.matches, ...second.matches];
     expect(new Set(all.map((m) => m.jobId)).size).toBe(27);
     const keyed = all.map((m) => ({
-      jobId: m.jobId, overall: m.match.overallScore, blended: blendedScore(m.match.overallScore, m.match.personal.probability, 0.2),
+      jobId: m.jobId, overall: m.match.overallScore, blended: blendedScore(m.match.overallScore, m.match.personal.probability, first.model.blendWeight),
     }));
     const expected = [...keyed].sort((a, b) => b.blended - a.blended || b.overall - a.overall || (a.jobId < b.jobId ? -1 : 1));
     expect(keyed.map((k) => k.jobId)).toEqual(expected.map((k) => k.jobId));

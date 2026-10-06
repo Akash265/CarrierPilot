@@ -209,6 +209,7 @@ describe("MatchesClient", () => {
     const toggle = screen.getByRole("checkbox", { name: "Rank with my history" });
     expect(toggle).toBeDisabled();
     expect(toggle).not.toBeChecked();
+    expect(toggle).toHaveAccessibleDescription("Excluded jobs are always listed in the default order.");
     expect(window.localStorage.getItem("careerpilot.rankWithHistory")).toBe("1");
   });
 
