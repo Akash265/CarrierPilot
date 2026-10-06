@@ -1266,7 +1266,7 @@ Each job -> `runSession` (`services/browser-worker/src/runSession.ts`, design §
       (every `adapter.requiredCanonicals` matched by exactly one field, else
       `needs_manual`/`health_check_failed`, nothing filled) -> one `FillAction` + one `FieldAuditEntry` per
       field. `classifyField`'s shared sponsorship rule now also checks the label for a polarity marker
-      (`without`/`not`/`no longer`/`unable`/`n't`, D138) and, if found, flags the field `ambiguous_wording`
+      (`without`/`not`/`no longer`/`unable`/`n't` or `n’t`, D138) and, if found, flags the field `ambiguous_wording`
       instead of classifying it for a plain Yes/No fill -- `buildFillPlan`'s existing always-flag rule for
       `sponsorship` (D129) then flags it regardless of `required`. The shared `linkedin` label rule also now
       excludes a "how did you hear about us" / referral-source question (D138).

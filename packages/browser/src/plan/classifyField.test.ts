@@ -46,6 +46,10 @@ describe("classifyField", () => {
     expect(classifyField(field({ label: "Don't you require visa sponsorship?" }), greenhouseV1)).toEqual({
       canonical: "sponsorship", flagReason: "ambiguous_wording",
     });
+    // Real ATS labels often use the typographic apostrophe (U+2019).
+    expect(classifyField(field({ label: "Don’t you require visa sponsorship?" }), greenhouseV1)).toEqual({
+      canonical: "sponsorship", flagReason: "ambiguous_wording",
+    });
   });
 
   it("still fills the plain 'will you now or in the future require sponsorship' phrasing", () => {

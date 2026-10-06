@@ -16,7 +16,7 @@ const SALARY = /\b(?:salary|compensation|pay)\b[^?]*\b(?:expect|desired|requirem
  * "no longer", "unable") reads opposite to the plain "Will you require sponsorship?" phrasing that
  * `toAction`'s Yes/No inversion assumes. Rather than guess the polarity, such a field is never filled.
  */
-const SPONSORSHIP_POLARITY = /\b(?:without|not|no longer|unable)\b|n't\b/i;
+const SPONSORSHIP_POLARITY = /\b(?:without|not|no longer|unable)\b|n['’]t\b/i;
 /** "How did you hear about us? (LinkedIn, referral, ...)" names LinkedIn as a channel, not a profile field. */
 const LINKEDIN_SOURCE_EXCLUSION = /hear about|how did you (?:hear|find)|source|referr/i;
 
