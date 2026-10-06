@@ -33,3 +33,6 @@ export const FACTOR_WEIGHTS: Record<keyof FactorScores, number> = {
   freshnessScore: 0.05,
   semanticScore: 0.05,
 };
+
+/** The 9 factors in FACTOR_WEIGHTS order -- the feature order of Phase 10b's personal response model. */
+export const FACTOR_KEYS = Object.keys(FACTOR_WEIGHTS) as (keyof FactorScores)[];
