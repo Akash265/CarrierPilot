@@ -7,3 +7,8 @@ export { labelOutcome, type LabelInput, type LabelOptions, type LabelResult } fr
 export { parseSnapshot, type ParsedSnapshot } from "./dataset/parseSnapshot";
 export { OTHER_FAMILY, ROLE_MATCH_THRESHOLD, roleKey, pickGoal, roleFamilyKey, roleLabels } from "./dataset/roleFamily";
 export { buildOutcomeDataset, salaryVsFloor } from "./dataset/buildOutcomeDataset";
+export { DIMENSIONS, BREAKDOWN_CAP, type DimensionDef, type DimensionKey } from "./stats/dimensions";
+export {
+  computeInsights, OTHERS_KEY, HIGH_COVERAGE_THRESHOLD, MIN_TERM_NEGATIVES, MAX_MISSED_TERMS,
+  type Headline, type Bucket, type Dimension, type MissedTermPattern, type HighCoveragePattern, type Patterns, type Insights,
+} from "./stats/computeInsights";
