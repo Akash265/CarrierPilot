@@ -39,14 +39,18 @@ function relativeLocation(location: string): string {
  * followed by "    at ..." frame lines. That exact header text is skipped (the message is matched, never emitted), so a
  * message or name line shaped like a frame ("    at Jane Doe:2019") can never be read as one. Fail closed: if the
  * stack does not start with the error's own header followed by a line break (a custom stack, or a message changed
- * after the stack was captured), no frames are emitted at all (D173, D175).
+ * after the stack was captured), no frames are emitted at all (D173, D175). Node writes a coded error's header as
+ * "<name> [<code>]: <message>" (even with an empty message); that form counts only with the error's own code-shaped
+ * code.
  */
-function framesOf(stack: string | undefined, name: unknown, message: unknown, redactor: Redactor): string[] {
+function framesOf(stack: string | undefined, name: unknown, message: unknown, code: unknown, redactor: Redactor): string[] {
   if (!stack) return [];
   const n = typeof name === "string" ? name : "";
   const m = typeof message === "string" ? message : "";
-  const header = n && m ? `${n}: ${m}` : n || m;
-  if (!stack.startsWith(header) || (stack.length > header.length && stack[header.length] !== "\n")) return [];
+  const headers = [n && m ? `${n}: ${m}` : n || m];
+  if (typeof code === "string" && CODE.test(code)) headers.push(`${n} [${code}]: ${m}`);
+  const header = headers.find((h) => stack.startsWith(h) && (stack.length === h.length || stack[h.length] === "\n"));
+  if (header === undefined) return [];
   const frames: string[] = [];
   for (const line of stack.slice(header.length).split("\n")) {
     const at = line.trim().match(/^at (.+)$/);
@@ -73,8 +77,10 @@ function safeName(name: unknown, redactor: Redactor): string {
 
 /** Frames go through the redactor too: a path can contain a profile value. */
 export function serializeError(error: Error, redactor: Redactor = new Redactor()): SerializedError {
-  const out: SerializedError = { name: safeName(error.name, redactor), frames: framesOf(error.stack, error.name, error.message, redactor) };
   const code = (error as { code?: unknown }).code;
+  const out: SerializedError = {
+    name: safeName(error.name, redactor), frames: framesOf(error.stack, error.name, error.message, code, redactor),
+  };
   if (typeof code === "string" && CODE.test(code)) out.code = code;
   const cause = (error as { cause?: unknown }).cause;
   if (isErrorLike(cause)) out.causeName = safeName(cause.name, redactor);

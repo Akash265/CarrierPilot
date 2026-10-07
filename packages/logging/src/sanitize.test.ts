@@ -101,6 +101,28 @@ describe("serializeError never emits message text", () => {
     expect(serializeError(prefix, redactor).frames).toEqual([]);
   });
 
+  it("reads frames after Node's coded header \"<name> [<code>]: <message>\", also with an empty message", () => {
+    let real: Error | undefined;
+    try {
+      Buffer.alloc(-1);
+    } catch (e) {
+      real = e as Error;
+    }
+    expect(serializeError(real!).frames[0]).toMatch(/^packages\/logging\/src\/sanitize\.test\.ts:\d+:\d+$/);
+    const empty = Object.assign(new Error(""), { name: "AggregateError", code: "ECONNREFUSED" });
+    empty.stack = "AggregateError [ECONNREFUSED]: \n    at connect (/r/packages/db/src/client.ts:3:1)";
+    expect(serializeError(empty).frames).toEqual(["packages/db/src/client.ts:3:1"]);
+  });
+
+  it("fails closed on a coded header whose code is not code-shaped or not the error's own", () => {
+    const odd = Object.assign(new Error("m"), { code: "jane doe" });
+    odd.stack = "Error [jane doe]: m\n    at run (/r/services/x/src/main.ts:5:1)";
+    expect(serializeError(odd).frames).toEqual([]);
+    const other = Object.assign(new Error("m"), { code: "E_ONE" });
+    other.stack = "Error [E_TWO]: m\n    at run (/r/services/x/src/main.ts:5:1)";
+    expect(serializeError(other).frames).toEqual([]);
+  });
+
   it("does not read frames out of a name that contains newlines", () => {
     const e = errorWithFrames("Bad\n    at Jane (/home/u/secret-file.ts:20:1)", ["run (/r/services/x/src/main.ts:5:1)"], {}, "");
     const out = serializeError(e, redactor);

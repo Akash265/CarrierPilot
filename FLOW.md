@@ -1581,7 +1581,7 @@ createLogger({ service }).error(event, fields)        packages/logging/src/logge
  ├─ sanitize(fields, defaultRedactor())                packages/logging/src/sanitize.ts
  │    strings → Redactor.redact (D9 values, then the email pattern) → truncate 500
  │    Error   → { name, code? (code-shaped), causeName?, frames ≤ 8 repo-relative }   -- frames read only after the exact
-              "<name>: <message>" header (no match → no frames); name/causeName identifier-shaped or "Error";
+              "<name>: <message>" header, or Node's "<name> [<code>]: <message>" (no match → no frames); name/causeName identifier-shaped or "Error";
               frames scrubbed (D173, D175)
  │    top-level `error` that is not an Error → { name: "NonError", type }  (a rejected string/object can carry content) (D175)
  │    objects ≤ depth 3, arrays ≤ 50, cycles "[circular]", Date → ISO, bigint → string
