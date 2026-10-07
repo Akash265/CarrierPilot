@@ -266,3 +266,14 @@ from `AI_BUDGET_WARN_PERCENT` (default 80%). Costs are estimates from a
 built-in price table, not your invoice. Optionally set `LANGFUSE_HOST`,
 `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY` (all three) to also send that
 metadata to Langfuse Cloud or a self-hosted Langfuse.
+
+Phase 11b (Logging & Monitoring) complete: every process writes structured
+JSON log lines through one logger that never prints an error's message and
+redacts your own name, email, phone, address and LinkedIn URL (and any email
+address) — set `LOG_LEVEL` to `debug`, `info` (default), `warn` or `error`.
+An unexpected server error now answers "Something went wrong (request
+<id>)" and the same id appears in the server log. `/status` shows whether
+each worker is running, stopped or stale (no heartbeat for
+`STATUS_STALE_AFTER_MS`, default 90 s; it must be longer than
+`HEARTBEAT_INTERVAL_MS`, the 30 s beat) and what is waiting or failed in
+each queue.

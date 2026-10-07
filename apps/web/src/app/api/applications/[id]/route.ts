@@ -6,12 +6,13 @@ import { readJsonBody } from "../../../../lib/readJsonBody";
 import { formatValidationError } from "../../../../lib/formatValidationError";
 import { toApplicationView, toEventView } from "../../../../lib/applications/serializeApplication";
 import { applicationErrorResponse } from "../../../../lib/applications/errorResponse";
+import { withRouteErrors } from "../../../../lib/http/withRouteErrors";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const notFound = () => NextResponse.json({ error: "Application not found" }, { status: 404 });
 type Ctx = { params: Promise<{ id: string }> };
 
-export async function GET(_request: Request, { params }: Ctx) {
+async function handleGET(_request: Request, { params }: Ctx) {
   const { id } = await params;
   if (!UUID_RE.test(id)) return notFound();
   const env = loadEnv();
@@ -25,7 +26,7 @@ export async function GET(_request: Request, { params }: Ctx) {
   }
 }
 
-export async function PATCH(request: Request, { params }: Ctx) {
+async function handlePATCH(request: Request, { params }: Ctx) {
   const { id } = await params;
   if (!UUID_RE.test(id)) return notFound();
   const json = await readJsonBody(request);
@@ -46,7 +47,7 @@ export async function PATCH(request: Request, { params }: Ctx) {
   }
 }
 
-export async function DELETE(_request: Request, { params }: Ctx) {
+async function handleDELETE(_request: Request, { params }: Ctx) {
   const { id } = await params;
   if (!UUID_RE.test(id)) return notFound();
   const env = loadEnv();
@@ -57,3 +58,7 @@ export async function DELETE(_request: Request, { params }: Ctx) {
     await closeDbClient(db);
   }
 }
+
+export const GET = withRouteErrors("/api/applications/[id]", handleGET);
+export const PATCH = withRouteErrors("/api/applications/[id]", handlePATCH);
+export const DELETE = withRouteErrors("/api/applications/[id]", handleDELETE);

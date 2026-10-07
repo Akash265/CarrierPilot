@@ -21,7 +21,7 @@ describe("Home", () => {
     render(<Home />);
 
     const links = screen.getAllByRole("link");
-    expect(links.map((a) => a.getAttribute("href"))).toEqual(["/profile", "/career-goal", "/sources", "/jobs", "/matches", "/applications", "/insights", "/usage"]);
+    expect(links.map((a) => a.getAttribute("href"))).toEqual(["/profile", "/career-goal", "/sources", "/jobs", "/matches", "/applications", "/insights", "/usage", "/status"]);
     expect(screen.getByRole("link", { name: /candidate profile/i })).toHaveAttribute("href", "/profile");
     expect(screen.getByRole("link", { name: /describe the roles you want/i })).toHaveAttribute("href", "/career-goal");
     expect(screen.getByRole("link", { name: /job sources/i })).toHaveAttribute("href", "/sources");
@@ -30,6 +30,7 @@ describe("Home", () => {
     expect(screen.getByRole("link", { name: /track what you've applied to/i })).toHaveAttribute("href", "/applications");
     expect(screen.getByRole("link", { name: /which applications get responses/i })).toHaveAttribute("href", "/insights");
     expect(screen.getByRole("link", { name: /estimated spend against your monthly budget/i })).toHaveAttribute("href", "/usage");
+    expect(screen.getByRole("link", { name: "9. System status — workers and queues" })).toHaveAttribute("href", "/status");
   });
 
   it("shows no AI budget badge while spend is under the warn threshold", async () => {

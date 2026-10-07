@@ -6,8 +6,9 @@ import { formatValidationError } from "../../../lib/formatValidationError";
 import { readJsonBody } from "../../../lib/readJsonBody";
 import { saveConfirmedProfile } from "../../../lib/profile/saveProfile";
 import { serializeProfile } from "../../../lib/profile/serializeProfile";
+import { withRouteErrors } from "../../../lib/http/withRouteErrors";
 
-export async function GET() {
+async function handleGET() {
   const env = loadEnv();
   const db = createDbClient(env);
   try {
@@ -18,7 +19,7 @@ export async function GET() {
   }
 }
 
-export async function PATCH(request: Request) {
+async function handlePATCH(request: Request) {
   const env = loadEnv();
   const jsonBody = await readJsonBody(request);
   if (!jsonBody.ok) return jsonBody.response;
@@ -30,3 +31,6 @@ export async function PATCH(request: Request) {
   const result = await saveConfirmedProfile(env, parsed.data);
   return NextResponse.json({ status: "saved", factsGenerated: result.factsGenerated });
 }
+
+export const GET = withRouteErrors("/api/profile", handleGET);
+export const PATCH = withRouteErrors("/api/profile", handlePATCH);

@@ -16,6 +16,7 @@ import {
 } from "@ai-career/ai";
 import { createUsageSink } from "../../../../lib/aiUsage/createUsageSink";
 import { budgetExceededResponse } from "../../../../lib/aiUsage/budgetResponse";
+import { withRouteErrors } from "../../../../lib/http/withRouteErrors";
 
 const MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024;
 
@@ -49,7 +50,7 @@ async function extractWithRetry(
   }
 }
 
-export async function POST(request: Request) {
+async function handlePOST(request: Request) {
   const env = loadEnv();
 
   // Reject an oversized upload from its declared Content-Length BEFORE
@@ -169,7 +170,7 @@ export async function POST(request: Request) {
   }
 }
 
-export async function DELETE() {
+async function handleDELETE() {
   const env = loadEnv();
   const db = createDbClient(env);
   const storageClient = createStorageClient(env);
@@ -197,3 +198,6 @@ export async function DELETE() {
     await closeDbClient(db);
   }
 }
+
+export const POST = withRouteErrors("/api/profile/resume", handlePOST);
+export const DELETE = withRouteErrors("/api/profile/resume", handleDELETE);

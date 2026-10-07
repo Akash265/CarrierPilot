@@ -186,16 +186,20 @@ describe("GET /api/matches", () => {
     vi.mocked(trainResponseModel).mockImplementationOnce(() => {
       throw new RangeError("secret application text");
     });
-    const log = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const written: string[] = [];
+    const log = vi.spyOn(process.stderr, "write").mockImplementation((chunk) => (written.push(String(chunk)), true));
 
     const res = await list("?rank=personal");
+    log.mockRestore();
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.ranking).toBe("default");
     expect(body.model.status).toBe("no_pattern");
     expect(body.matches.map((m: { jobTitle: string }) => m.jobTitle)).toEqual(["Weak skills", "Strong skills"]);
     expect(body.matches.every((m: { match: { personal: unknown } }) => m.match.personal === null)).toBe(true);
-    expect(log).toHaveBeenCalledWith(JSON.stringify({ event: "response_model_failed", error: "RangeError" }));
-    expect(log.mock.calls.flat().join(" ")).not.toContain("secret");
+    const failures = written.filter((l) => l.includes("response_model_failed"));
+    expect(failures).toHaveLength(1);
+    expect(JSON.parse(failures[0])).toMatchObject({ level: "error", service: "web", event: "response_model_failed", error: { name: "RangeError" } });
+    expect(written.join(" ")).not.toContain("secret");
   });
 });

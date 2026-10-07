@@ -4,6 +4,7 @@ import type { Env } from "@ai-career/config";
 import type { ConfirmedProfile } from "./confirmedProfileSchema";
 import { deriveFact, type DerivedFact } from "./deriveFacts";
 import { createUsageSink } from "../aiUsage/createUsageSink";
+import { invalidateWebRedactions } from "../webLogging";
 
 type ExistingFact = {
   contentHash: string;
@@ -210,6 +211,8 @@ export async function saveConfirmedProfile(
       }
     });
 
+    // Phase 11b: the identifying values D9 redacts may have changed; the next error log reloads them.
+    invalidateWebRedactions();
     return { factsGenerated: facts.length };
   } finally {
     await closeDbClient(db);

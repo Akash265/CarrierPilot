@@ -67,6 +67,13 @@ const envSchema = z
     LANGFUSE_HOST: z.preprocess(blankAsUnset, z.string().url().regex(/^https?:\/\//i, "must be an http(s) URL").optional()),
     LANGFUSE_PUBLIC_KEY: z.preprocess(blankAsUnset, z.string().min(1).optional()),
     LANGFUSE_SECRET_KEY: z.preprocess(blankAsUnset, z.string().min(1).optional()),
+    // Phase 11b (design §3, §5.2). Minimum level the structured logger writes, and how long a worker may go without
+    // a heartbeat (they beat every 30 s) before /status calls it "stale".
+    LOG_LEVEL: z.preprocess(blankAsUnset, z.enum(["debug", "info", "warn", "error"]).default("info")),
+    STATUS_STALE_AFTER_MS: z.preprocess(blankAsUnset, z.coerce.number().int().min(1000).default(90_000)),
+    // How often each worker writes its heartbeat. STATUS_STALE_AFTER_MS must be longer (checked below), or a running
+    // worker would read as "stale" between two beats; keep both the same for the web app and the workers.
+    HEARTBEAT_INTERVAL_MS: z.preprocess(blankAsUnset, z.coerce.number().int().min(1000).default(30_000)),
   })
   .superRefine((val, ctx) => {
     if (val.EMBEDDING_PROVIDER === "voyage" && !val.VOYAGE_API_KEY) {
@@ -74,6 +81,13 @@ const envSchema = z
         code: z.ZodIssueCode.custom,
         path: ["VOYAGE_API_KEY"],
         message: "VOYAGE_API_KEY is required when EMBEDDING_PROVIDER=voyage",
+      });
+    }
+    if (val.STATUS_STALE_AFTER_MS <= val.HEARTBEAT_INTERVAL_MS) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["STATUS_STALE_AFTER_MS"],
+        message: `must be longer than HEARTBEAT_INTERVAL_MS (${val.HEARTBEAT_INTERVAL_MS}); about 3x is a good margin`,
       });
     }
     const langfuse = { LANGFUSE_HOST: val.LANGFUSE_HOST, LANGFUSE_PUBLIC_KEY: val.LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY: val.LANGFUSE_SECRET_KEY };

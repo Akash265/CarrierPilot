@@ -1571,3 +1571,71 @@ GET /api/usage                          apps/web/src/app/api/usage/route.ts
 GET /api/health  → + aiUsage { langfuseEnabled, langfuseExportFailures }    apps/web/src/app/api/health/route.ts
 ```
 
+## 17. Phase 11b — Structured Logging, PII Scrubbing & Monitoring
+
+### 17a. A log line
+
+```
+createLogger({ service }).error(event, fields)        packages/logging/src/logger.ts
+ ├─ below the process level (configureLogging / initProcessLogging; default info)? → nothing written
+ ├─ sanitize(fields, defaultRedactor())                packages/logging/src/sanitize.ts
+ │    strings → Redactor.redact (D9 values, then the email pattern) → truncate 500
+ │    Error   → { name, code? (code-shaped), causeName?, frames ≤ 8 repo-relative }   -- frames read only after the exact
+              "<name>: <message>" header, or Node's "<name> [<code>]: <message>" (no match → no frames); name/causeName identifier-shaped or "Error";
+              frames scrubbed (D173, D175)
+ │    top-level `error` that is not an Error → { name: "NonError", type }  (a rejected string/object can carry content) (D175)
+ │    objects ≤ depth 3, arrays ≤ 50, cycles "[circular]", Date → ISO, bigint → string
+ └─ JSON line { ts, level, service, event, ...fields } → stderr (warn/error) | stdout (debug/info); never throws
+```
+
+### 17b. Keeping the D9 values current
+
+```
+worker main.ts (all four) / runOnce.ts
+ └─ initProcessLogging({ level: env.LOG_LEVEL, load: () => loadRedactionValues(db, DEFAULT_USER_ID), logger })
+      packages/logging/src/processLogging.ts → createRedactionRefresher(defaultRedactor(), load)   packages/logging/src/refresher.ts
+      ├─ installs uncaughtException / unhandledRejection handlers once → log message-free, exit 1 (D173)
+      ├─ await refresh()                    -- before the first line; a failed load logs redaction_refresh_failed, keeps old values
+      └─ startInterval(60 s) → stop()       -- called in shutdown
+      loadRedactionValues                   packages/db/src/redactionValues.ts  (candidate_profiles under RLS)
+web: refreshWebRedactions()                 apps/web/src/lib/webLogging.ts   (first call: configureLogging(LOG_LEVEL) + refresher;
+                                            then refreshIfStale, ≤ once a minute, one short-lived DB connection per load)
+     invalidateWebRedactions()              ← saveConfirmedProfile after a successful save (next error reloads)        (D174)
+refresher: each load ≤ 2 s (RedactionLoadTimeout); every attempt, failed or not, starts the 60 s window     (D174)
+           a timed-out load still applies when it lands, unless a newer load already succeeded (numbered loads) (D175)
+```
+
+### 17c. An error escaping a route
+
+```
+export const POST = withRouteErrors("/api/x/[id]", handlePOST)     every apps/web/src/app/api/**/route.ts
+ └─ withRouteErrors                          apps/web/src/lib/http/withRouteErrors.ts
+      try handlePOST(...)  → its own Response, untouched (404/409/429/502 ...)
+      catch error
+       ├─ requestId = 8 hex chars
+       ├─ await refreshWebRedactions()       (never throws)
+       ├─ log.error("request_failed", { requestId, route, method, path (no query), error })
+       └─ 500 { error: "Something went wrong (request <id>). Details are in the server log.", requestId } + x-request-id
+render errors: instrumentation.ts onRequestError → (Node.js runtime only) import("./lib/renderErrors") → log.error("render_failed")
+guard: apps/web/src/lib/http/allRoutesWrapped.test.ts
+```
+
+### 17d. Heartbeats and /status
+
+```
+worker main.ts → (right after Redis opens) startHeartbeat(connection, "<worker>", { intervalMs: HEARTBEAT_INTERVAL_MS })
+                  SET careerpilot:worker:<worker> {startedAt, beatAt, pid, stoppedAt:null}  now + every interval
+shutdown = createShutdown({ logger, steps })     packages/monitoring/src/shutdown.ts   (D174)
+  SIGINT/SIGTERM (any number) → steps once: worker.close → heartbeat.stop() (SET ... stoppedAt, ≤ 2 s) → connection.quit → db
+  → exit 0 | step throws → shutdown_failed, exit 1 | still waiting after 8 s → shutdown_timed_out, exit 1   (D175: 8 s, ref'd)
+worker.on("error", throttleErrorLog(log, "worker_error"))   packages/logging/src/throttle.ts                  (D175)
+  first error logged in full; the rest counted for 60 s → one worker_error_suppressed { count, windowMs }
+
+GET /api/status                               apps/web/src/app/api/status/route.ts → loadStatus(env, now, checks?)   apps/web/src/lib/status/loadStatus.ts
+ ├─ loadEnv() throws → 200 unavailableReport() (status_config_invalid logged)          (D174)
+ ├─ in parallel: database SELECT 1 (5 s) and the Redis steps below                     (D174)
+ ├─ database: SELECT 1 (5 s)                  → ok | unavailable
+ ├─ Redis: lazyConnect → connect() → ping (5 s each); failure → redis unavailable, workers [], queues []
+ ├─ readWorkerStatus(redis, now, { staleAfterMs: STATUS_STALE_AFTER_MS })   packages/monitoring/src/status.ts → workerState()
+ └─ readQueueStatus(redis, QUEUES)            getJobCounts + getFailed(0,0); failedReason only if failureCode() accepts it
+/status → StatusClient fetches GET /api/status on load, every 30 s and on Refresh (newest response wins)

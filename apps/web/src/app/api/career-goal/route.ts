@@ -2,8 +2,9 @@ import { NextResponse } from "next/server";
 import { loadEnv } from "@ai-career/config";
 import { createDbClient, closeDbClient, withUserContext } from "@ai-career/db";
 import { getCareerGoalState } from "../../../lib/career-goal/serializeCareerGoal";
+import { withRouteErrors } from "../../../lib/http/withRouteErrors";
 
-export async function GET() {
+async function handleGET() {
   const env = loadEnv();
   const db = createDbClient(env);
   try {
@@ -13,3 +14,5 @@ export async function GET() {
     await closeDbClient(db);
   }
 }
+
+export const GET = withRouteErrors("/api/career-goal", handleGET);

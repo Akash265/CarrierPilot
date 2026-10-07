@@ -8,10 +8,11 @@ import { toCoverLetterView } from "../../../../../lib/coverLetter/serializeCover
 import { toResearchView } from "../../../../../lib/applicationPitch/serializePitch";
 import { createUsageSink } from "../../../../../lib/aiUsage/createUsageSink";
 import { budgetExceededResponse } from "../../../../../lib/aiUsage/budgetResponse";
+import { withRouteErrors } from "../../../../../lib/http/withRouteErrors";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-export async function POST(_request: Request, { params }: { params: Promise<{ jobId: string }> }) {
+async function handlePOST(_request: Request, { params }: { params: Promise<{ jobId: string }> }) {
   const { jobId } = await params;
   if (!UUID_RE.test(jobId)) return NextResponse.json({ error: "Job not found" }, { status: 404 });
 
@@ -38,3 +39,5 @@ export async function POST(_request: Request, { params }: { params: Promise<{ jo
     await closeDbClient(db);
   }
 }
+
+export const POST = withRouteErrors("/api/cover-letters/[jobId]/run", handlePOST);

@@ -9,10 +9,11 @@ import { loadResponseModel } from "../../../../lib/insights/responseModel";
 import { formatValidationError } from "../../../../lib/formatValidationError";
 import { readJsonBody } from "../../../../lib/readJsonBody";
 import { MatchActionSchema } from "../../../../lib/matching/matchActionSchema";
+import { withRouteErrors } from "../../../../lib/http/withRouteErrors";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-export async function GET(_request: Request, { params }: { params: Promise<{ jobId: string }> }) {
+async function handleGET(_request: Request, { params }: { params: Promise<{ jobId: string }> }) {
   const { jobId } = await params;
   if (!UUID_RE.test(jobId)) return NextResponse.json({ error: "Match not found" }, { status: 404 });
 
@@ -38,7 +39,7 @@ export async function GET(_request: Request, { params }: { params: Promise<{ job
   }
 }
 
-export async function PATCH(request: Request, { params }: { params: Promise<{ jobId: string }> }) {
+async function handlePATCH(request: Request, { params }: { params: Promise<{ jobId: string }> }) {
   const { jobId } = await params;
   if (!UUID_RE.test(jobId)) return NextResponse.json({ error: "Match not found" }, { status: 404 });
 
@@ -70,3 +71,6 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ jo
     await closeDbClient(db);
   }
 }
+
+export const GET = withRouteErrors("/api/matches/[jobId]", handleGET);
+export const PATCH = withRouteErrors("/api/matches/[jobId]", handlePATCH);

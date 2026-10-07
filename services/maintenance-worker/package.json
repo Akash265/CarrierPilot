@@ -15,6 +15,8 @@
     "@ai-career/applications": "workspace:*",
     "@ai-career/config": "workspace:*",
     "@ai-career/db": "workspace:*",
+    "@ai-career/logging": "workspace:*",
+    "@ai-career/monitoring": "workspace:*",
     "@ai-career/storage": "workspace:*",
     "bullmq": "^5.34.0",
     "ioredis": "^5.4.0",

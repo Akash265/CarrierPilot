@@ -42,12 +42,15 @@ describe("trainResponseModelSafely", () => {
     vi.mocked(trainResponseModel).mockImplementationOnce(() => {
       throw new RangeError("secret application text");
     });
-    const log = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const written: string[] = [];
+    const log = vi.spyOn(process.stderr, "write").mockImplementation((chunk) => (written.push(String(chunk)), true));
     const { result, summary } = trainResponseModelSafely([], ENV);
+    log.mockRestore();
     expect(result).toMatchObject({ status: "no_pattern", model: null, blendWeight: null });
     expect(summary.status).toBe("no_pattern");
-    expect(log).toHaveBeenCalledWith(JSON.stringify({ event: "response_model_failed", error: "RangeError" }));
-    expect(log.mock.calls.flat().join(" ")).not.toContain("secret");
+    expect(written).toHaveLength(1);
+    expect(JSON.parse(written[0])).toMatchObject({ level: "error", service: "web", event: "response_model_failed", error: { name: "RangeError" } });
+    expect(written.join(" ")).not.toContain("secret");
   });
 });
 
@@ -87,7 +90,7 @@ describe("trainResponseModelSafely cache", () => {
     vi.mocked(trainResponseModel).mockImplementationOnce(() => {
       throw new RangeError("boom");
     });
-    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    vi.spyOn(process.stderr, "write").mockImplementation(() => true);
     expect(trainResponseModelSafely(history(), ENV).result.status).toBe("no_pattern");
     const retry = trainResponseModelSafely(history(), ENV);
     expect(trainResponseModel).toHaveBeenCalledTimes(2);

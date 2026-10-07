@@ -154,8 +154,10 @@ describe("POST /api/job-sources/upload", () => {
       await vi.importActual<typeof import("@ai-career/ingestion")>("@ai-career/ingestion").then((m) => m.storeUpload(tx, input));
       throw new Error("secret-internal-detail");
     });
-    // The route lets the error propagate: Next.js turns that into a bare 500, so no response body exists to leak it.
-    await expect(POST(upload())).rejects.toThrow("secret-internal-detail");
+    // Phase 11b: the error is caught by withRouteErrors -- a 500 with a request id, never the internal detail.
+    const res = await POST(upload());
+    expect(res.status).toBe(500);
+    expect(JSON.stringify(await res.json())).not.toContain("secret-internal-detail");
     expect(await sourceCount()).toBe(0);
     expect(await rawCount()).toBe(0);
     expect(enqueueIngestion).not.toHaveBeenCalled();

@@ -6,10 +6,11 @@ import { readJsonBody } from "../../../../../lib/readJsonBody";
 import { formatValidationError } from "../../../../../lib/formatValidationError";
 import { toApplicationView } from "../../../../../lib/applications/serializeApplication";
 import { applicationErrorResponse } from "../../../../../lib/applications/errorResponse";
+import { withRouteErrors } from "../../../../../lib/http/withRouteErrors";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
+async function handlePOST(request: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   if (!UUID_RE.test(id)) return NextResponse.json({ error: "Application not found" }, { status: 404 });
   const json = await readJsonBody(request);
@@ -29,3 +30,5 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     await closeDbClient(db);
   }
 }
+
+export const POST = withRouteErrors("/api/applications/[id]/status", handlePOST);

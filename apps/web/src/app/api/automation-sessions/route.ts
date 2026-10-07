@@ -8,13 +8,14 @@ import { formatValidationError } from "../../../lib/formatValidationError";
 import { enqueueAutofill } from "../../../lib/browser-automation/enqueue";
 import { toSessionView } from "../../../lib/browser-automation/serializeSession";
 import { automationErrorResponse } from "../../../lib/browser-automation/errorResponse";
+import { withRouteErrors } from "../../../lib/http/withRouteErrors";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const CreateBodySchema = z.object({ jobId: z.string().uuid() }).strict();
 const jobNotFound = () => NextResponse.json({ error: "Job not found" }, { status: 404 });
 
 /** Everything AutofillPanel renders, in one request (design §6). */
-export async function GET(request: Request) {
+async function handleGET(request: Request) {
   const jobId = new URL(request.url).searchParams.get("jobId");
   if (jobId === null) return NextResponse.json({ error: "jobId is required" }, { status: 400 });
   if (!UUID_RE.test(jobId)) return jobNotFound();
@@ -29,7 +30,7 @@ export async function GET(request: Request) {
   }
 }
 
-export async function POST(request: Request) {
+async function handlePOST(request: Request) {
   const json = await readJsonBody(request);
   if (!json.ok) return json.response;
   const parsed = CreateBodySchema.safeParse(json.body);
@@ -54,3 +55,6 @@ export async function POST(request: Request) {
     await closeDbClient(db);
   }
 }
+
+export const GET = withRouteErrors("/api/automation-sessions", handleGET);
+export const POST = withRouteErrors("/api/automation-sessions", handlePOST);

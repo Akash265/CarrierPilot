@@ -8,8 +8,9 @@ import { readJsonBody } from "../../../lib/readJsonBody";
 import { formatValidationError } from "../../../lib/formatValidationError";
 import { toApplicationView } from "../../../lib/applications/serializeApplication";
 import { applicationErrorResponse } from "../../../lib/applications/errorResponse";
+import { withRouteErrors } from "../../../lib/http/withRouteErrors";
 
-export async function GET(request: Request) {
+async function handleGET(request: Request) {
   const params = new URL(request.url).searchParams;
   const status = params.get("status");
   if (status !== null && !(APPLICATION_STATUSES as readonly string[]).includes(status)) {
@@ -29,7 +30,7 @@ export async function GET(request: Request) {
   }
 }
 
-export async function POST(request: Request) {
+async function handlePOST(request: Request) {
   const json = await readJsonBody(request);
   if (!json.ok) return json.response;
   const parsed = CreateApplicationBodySchema.safeParse(json.body);
@@ -48,3 +49,6 @@ export async function POST(request: Request) {
     await closeDbClient(db);
   }
 }
+
+export const GET = withRouteErrors("/api/applications", handleGET);
+export const POST = withRouteErrors("/api/applications", handlePOST);
