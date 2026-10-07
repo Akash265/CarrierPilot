@@ -1348,7 +1348,7 @@ drizzle-orm 0.45 wraps a failed query in `DrizzleQueryError` whose message holds
 **What it affects:** `e2e/`, `pnpm-workspace.yaml`, `package.json`, `.github/workflows/ci.yml`, `.gitignore`.
 
 ### D183. Phase 11d: `VOYAGE_API_BASE`
-**Decision:** The Voyage endpoint is `${VOYAGE_API_BASE}/v1/embeddings` (default `https://api.voyageai.com`), validated as a URL by `loadEnv`, like `GREENHOUSE_API_BASE`/`LEVER_API_BASE`.
+**Decision:** The Voyage endpoint is `${VOYAGE_API_BASE}/v1/embeddings`; `loadEnv` validates the optional override as a URL, and the default (`https://api.voyageai.com`) lives only in `packages/ai/src/embeddings.ts`, so 11a's guard that Voyage is reached only through `embedTexts` still holds.
 **Why:** The URL was hard-coded, so an E2E run could only either call the real, paid API or exercise the "embeddings failed" path. Operator-controlled, never user input.
 **What it affects:** `packages/ai/src/embeddings.ts`, `packages/config/src/env.ts`, the env interfaces in `runMatching.ts` and `runResumeOptimization.ts`.
 

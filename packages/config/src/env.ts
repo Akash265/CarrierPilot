@@ -33,8 +33,9 @@ const envSchema = z
     // the E2E fake ATS server is used. See DECISIONS.md D3.
     GREENHOUSE_API_BASE: z.string().url().default("https://boards-api.greenhouse.io"),
     LEVER_API_BASE: z.string().url().default("https://api.lever.co"),
-    // Phase 11d (D183): Voyage's API base, overridable like the ATS bases so the E2E suite never calls the real API.
-    VOYAGE_API_BASE: z.preprocess(blankAsUnset, z.string().url().default("https://api.voyageai.com")),
+    // Phase 11d (D183): overrides Voyage's API base (the default lives in packages/ai's embeddings.ts, the one place
+    // that talks to Voyage) so the E2E suite never calls the real API.
+    VOYAGE_API_BASE: z.preprocess(blankAsUnset, z.string().url().optional()),
     INGEST_INTERVAL_MINUTES: z.coerce.number().int().min(5).default(360),
     // Phase 5 matching. All tunable, none yet backed by labeled data (design doc §10).
     MATCHING_EXPLAIN_TOP_N: z.coerce.number().int().min(1).max(200).default(25),

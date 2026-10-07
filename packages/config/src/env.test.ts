@@ -283,8 +283,9 @@ describe("loadEnv", () => {
     expect(() => loadEnv({ ...validSource, RATE_LIMIT_JOBS_PER_MINUTE: "-1" })).toThrow(/RATE_LIMIT_JOBS_PER_MINUTE/);
   });
 
-  it("Phase 11d: VOYAGE_API_BASE defaults to Voyage and can point at a stand-in", () => {
-    expect(loadEnv(validSource).VOYAGE_API_BASE).toBe("https://api.voyageai.com");
+  it("Phase 11d: VOYAGE_API_BASE is unset by default (embedTexts then uses Voyage) and can point at a stand-in", () => {
+    expect(loadEnv(validSource).VOYAGE_API_BASE).toBeUndefined();
+    expect(loadEnv({ ...validSource, VOYAGE_API_BASE: "" }).VOYAGE_API_BASE).toBeUndefined();
     expect(loadEnv({ ...validSource, VOYAGE_API_BASE: "http://127.0.0.1:4013" }).VOYAGE_API_BASE).toBe("http://127.0.0.1:4013");
     expect(() => loadEnv({ ...validSource, VOYAGE_API_BASE: "nope" })).toThrow(/VOYAGE_API_BASE/);
   });
