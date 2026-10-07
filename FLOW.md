@@ -1571,3 +1571,58 @@ GET /api/usage                          apps/web/src/app/api/usage/route.ts
 GET /api/health  → + aiUsage { langfuseEnabled, langfuseExportFailures }    apps/web/src/app/api/health/route.ts
 ```
 
+## 17. Phase 11b — Structured Logging, PII Scrubbing & Monitoring
+
+### 17a. A log line
+
+```
+createLogger({ service }).error(event, fields)        packages/logging/src/logger.ts
+ ├─ below the process level (configureLogging / initProcessLogging; default info)? → nothing written
+ ├─ sanitize(fields, defaultRedactor())                packages/logging/src/sanitize.ts
+ │    strings → Redactor.redact (D9 values, then the email pattern) → truncate 500
+ │    Error   → { name, code? (code-shaped), causeName?, frames ≤ 8 repo-relative }   -- message never read
+ │    objects ≤ depth 3, arrays ≤ 50, cycles "[circular]", Date → ISO, bigint → string
+ └─ JSON line { ts, level, service, event, ...fields } → stderr (warn/error) | stdout (debug/info); never throws
+```
+
+### 17b. Keeping the D9 values current
+
+```
+worker main.ts (all four) / runOnce.ts
+ └─ initProcessLogging({ level: env.LOG_LEVEL, load: () => loadRedactionValues(db, DEFAULT_USER_ID), logger })
+      packages/logging/src/processLogging.ts → createRedactionRefresher(defaultRedactor(), load)   packages/logging/src/refresher.ts
+      ├─ await refresh()                    -- before the first line; a failed load logs redaction_refresh_failed, keeps old values
+      └─ startInterval(60 s) → stop()       -- called in shutdown
+      loadRedactionValues                   packages/db/src/redactionValues.ts  (candidate_profiles under RLS)
+web: refreshWebRedactions()                 apps/web/src/lib/webLogging.ts   (first call: configureLogging(LOG_LEVEL) + refresher;
+                                            then refreshIfStale, ≤ once a minute, one short-lived DB connection per load)
+```
+
+### 17c. An error escaping a route
+
+```
+export const POST = withRouteErrors("/api/x/[id]", handlePOST)     every apps/web/src/app/api/**/route.ts
+ └─ withRouteErrors                          apps/web/src/lib/http/withRouteErrors.ts
+      try handlePOST(...)  → its own Response, untouched (404/409/429/502 ...)
+      catch error
+       ├─ requestId = 8 hex chars
+       ├─ await refreshWebRedactions()       (never throws)
+       ├─ log.error("request_failed", { requestId, route, method, path (no query), error })
+       └─ 500 { error: "Something went wrong (request <id>). Details are in the server log.", requestId } + x-request-id
+render errors: instrumentation.ts onRequestError → (Node.js runtime only) import("./lib/renderErrors") → log.error("render_failed")
+guard: apps/web/src/lib/http/allRoutesWrapped.test.ts
+```
+
+### 17d. Heartbeats and /status
+
+```
+worker main.ts → startHeartbeat(connection, "<worker>")      packages/monitoring/src/heartbeat.ts
+                  SET careerpilot:worker:<worker> {startedAt, beatAt, pid, stoppedAt:null}  now + every 30 s
+shutdown (runs once: `stopping` guard) → worker.close → heartbeat.stop() (SET ... stoppedAt) → connection.quit
+
+GET /api/status                               apps/web/src/app/api/status/route.ts → loadStatus(env)   apps/web/src/lib/status/loadStatus.ts
+ ├─ database: SELECT 1 (5 s)                  → ok | unavailable
+ ├─ Redis: lazyConnect → connect() → ping (5 s each); failure → redis unavailable, workers [], queues []
+ ├─ readWorkerStatus(redis, now, { staleAfterMs: STATUS_STALE_AFTER_MS })   packages/monitoring/src/status.ts → workerState()
+ └─ readQueueStatus(redis, QUEUES)            getJobCounts + getFailed(0,0); failedReason only if failureCode() accepts it
+/status → StatusClient fetches GET /api/status on load, every 30 s and on Refresh (newest response wins)

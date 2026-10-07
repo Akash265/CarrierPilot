@@ -1,6 +1,6 @@
 # Architecture — AI Career Intelligence & Application Platform
 
-Status: **Phases 0–10 and 11a are implemented** (foundation, candidate profile, career goal, job intelligence, hybrid matching, ATS resume optimization, company research + Hiring Manager Pitch, document export, cover letter + interview preparation, application tracker, guarded browser autofill, outcome analytics, personal response model, AI usage tracking + monthly budget ceiling). This document describes the agreed architecture as of 2026-09-06. See `DECISIONS.md` for the rationale behind each choice. Update this file as implementation reveals deviations — it must describe what's actually built, not an aspiration.
+Status: **Phases 0–10, 11a and 11b are implemented** (foundation, candidate profile, career goal, job intelligence, hybrid matching, ATS resume optimization, company research + Hiring Manager Pitch, document export, cover letter + interview preparation, application tracker, guarded browser autofill, outcome analytics, personal response model, AI usage tracking + monthly budget ceiling, structured logging + worker/queue status). This document describes the agreed architecture as of 2026-09-06. See `DECISIONS.md` for the rationale behind each choice. Update this file as implementation reveals deviations — it must describe what's actually built, not an aspiration.
 
 ## 1. Product framing
 
@@ -175,9 +175,9 @@ Everything else (job_requirements, resume_optimizations, ats_evaluations, plus t
 ## 9. Security & privacy
 
 - Uploaded files: scanned/stripped of macros and EXIF, renamed with UUID, stored encrypted (MinIO local / R2 optional).
-- Log scrubbing: exact-match substring redaction of known profile values ([D9](../DECISIONS.md)) — no NER/generic-regex PII detection.
+- Log scrubbing: exact-match substring redaction of known profile values ([D9](../DECISIONS.md)) plus one email-address pattern — no NER or name regexes. Implemented in Phase 11b ([D168](../DECISIONS.md)); see §22.
 - Retention: `RETENTION_DAYS` (default 30) after an application reaches a terminal status, the job-specific generated documents and tailored resume text for that job are deleted -- resume optimizations, pitches, cover letters, interview prep and their rendered files. The base resume/profile is never deleted by retention. Implemented in Phase 9; see §17.
-- Structured logging only; no resume/profile content in production logs regardless of scrubbing (defense in depth).
+- Structured logging only; no resume/profile content in production logs regardless of scrubbing (defense in depth). Since Phase 11b every process logs through `@ai-career/logging`, which never writes an error's message ([D166](../DECISIONS.md), [D167](../DECISIONS.md)).
 
 ## 10. What's still open
 
@@ -505,3 +505,11 @@ call order and DECISIONS.md D127–D136 the rationale behind each piece.
 - **Costs are estimates** from `packages/ai/src/usage/prices.ts`; an unknown model is priced at the highest known rate and named on `/usage` ([D156](../DECISIONS.md)). A response that reports no token usage is charged an estimate from the request (`max_tokens` for Anthropic, 4 characters per token for Voyage) and marked `usage_estimated`, never $0 ([D164](../DECISIONS.md)).
 - **Langfuse (optional).** With all three `LANGFUSE_*` variables set, each recorded call is also sent as one OpenTelemetry span to Langfuse's OTLP endpoint, metadata only, fire-and-forget; `GET /api/health` reports whether export is on and how many exports this process has failed ([D160](../DECISIONS.md)).
 - **Known gaps.** Check-then-call can overshoot the ceiling by the cost of calls already in flight. Prices are a hand-maintained table. The export failure counter is per process and resets on restart. Schema-validation failures are not a separate outcome. Logging (D9 scrubbing), rate limiting, an index audit and automated E2E in CI are Phase 11b–11d.
+
+## 22. Structured Logging, PII Scrubbing & Monitoring (Phase 11b)
+
+- **Logging.** Every process logs through `@ai-career/logging`: one JSON line per event (`ts`, `level`, `service`, `event`, fields), `warn`/`error` on stderr, filtered by `LOG_LEVEL`. Fields are sanitized — strings scrubbed and truncated, errors reduced to class name, a code-shaped `code` and repo-relative stack frames, never their message ([D166](../DECISIONS.md), [D167](../DECISIONS.md)). A test fails on any `console.` call in production code.
+- **D9 scrubbing.** The user's own name, email, phone, address and LinkedIn URL (exact, case-insensitive) and any email address are replaced before a line is written. Workers load the values at start and every minute; the web process loads them on its error path ([D168](../DECISIONS.md)).
+- **Route errors.** All 40 API routes are wrapped in `withRouteErrors`: an error that escapes a handler is logged as `request_failed` (route, method, path without query string, error) and answered with a 500 carrying a request id, so the raw message never reaches Next.js's default handler or the client. Render errors go through `instrumentation.ts`'s `onRequestError` ([D169](../DECISIONS.md)).
+- **Monitoring.** Each worker writes a Redis heartbeat every 30 s and records a clean stop on shutdown; `/status` (via `GET /api/status`) shows each worker as running, stopped, stale (no beat for `STATUS_STALE_AFTER_MS`, default 90 s) or never seen, plus each BullMQ queue's waiting/active/delayed/failed counts and its last failure — the reason only when it is one of our codes ([D170](../DECISIONS.md), [D171](../DECISIONS.md)).
+- **Known gaps.** Next.js still prints its own line for render errors. No log shipping, rotation or alerting: stdout/stderr is the contract. Name variants are not redacted (D9). Heartbeat states assume web and workers share one clock. Failed-job counts cover only the jobs each queue retains.
