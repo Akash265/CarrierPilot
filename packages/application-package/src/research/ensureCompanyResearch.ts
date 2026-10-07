@@ -1,5 +1,5 @@
 import { and, asc, eq, isNotNull, or, sql } from "drizzle-orm";
-import type Anthropic from "@anthropic-ai/sdk";
+import type { MessagesClient } from "@ai-career/ai";
 import { schema, withUserContext, type DbClient } from "@ai-career/db";
 import { runCompanyResearch, type CompanyResearchEnv } from "./runCompanyResearch";
 import { deriveInternalFacts } from "./deriveInternalFacts";
@@ -61,7 +61,7 @@ export async function loadCompanyResearch(tx: DbClient, companyKey: string): Pro
 export async function ensureCompanyResearch(
   db: DbClient,
   userId: string,
-  anthropicClient: Pick<Anthropic, "messages">,
+  anthropicClient: MessagesClient,
   env: CompanyResearchEnv,
   job: JobForResearch,
   opts: { forceRefresh?: boolean } = {}

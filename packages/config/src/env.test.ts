@@ -158,4 +158,63 @@ describe("loadEnv", () => {
     expect(() => loadEnv({ ...validSource, OUTCOME_MODEL_MIN_DECIDED: "9" })).toThrow(/OUTCOME_MODEL_MIN_DECIDED/);
     expect(() => loadEnv({ ...validSource, OUTCOME_MODEL_MIN_PER_CLASS: "2" })).toThrow(/OUTCOME_MODEL_MIN_PER_CLASS/);
   });
+
+  it("defaults the Phase 11a AI budget settings", () => {
+    const env = loadEnv(validSource);
+    expect(env.AI_MONTHLY_BUDGET_USD).toBe(20);
+    expect(env.AI_BUDGET_WARN_PERCENT).toBe(80);
+  });
+
+  it("parses and bounds the Phase 11a AI budget settings", () => {
+    const env = loadEnv({ ...validSource, AI_MONTHLY_BUDGET_USD: "7.5", AI_BUDGET_WARN_PERCENT: "90" });
+    expect(env.AI_MONTHLY_BUDGET_USD).toBe(7.5);
+    expect(env.AI_BUDGET_WARN_PERCENT).toBe(90);
+    expect(loadEnv({ ...validSource, AI_MONTHLY_BUDGET_USD: "0" }).AI_MONTHLY_BUDGET_USD).toBe(0);
+    expect(() => loadEnv({ ...validSource, AI_MONTHLY_BUDGET_USD: "-1" })).toThrow(/AI_MONTHLY_BUDGET_USD/);
+    expect(() => loadEnv({ ...validSource, AI_MONTHLY_BUDGET_USD: "abc" })).toThrow(/AI_MONTHLY_BUDGET_USD/);
+    expect(() => loadEnv({ ...validSource, AI_BUDGET_WARN_PERCENT: "0" })).toThrow(/AI_BUDGET_WARN_PERCENT/);
+    expect(() => loadEnv({ ...validSource, AI_BUDGET_WARN_PERCENT: "101" })).toThrow(/AI_BUDGET_WARN_PERCENT/);
+    expect(() => loadEnv({ ...validSource, AI_BUDGET_WARN_PERCENT: "80.5" })).toThrow(/AI_BUDGET_WARN_PERCENT/);
+  });
+
+  it("treats an empty AI budget value as unset, never as an unlimited 0", () => {
+    const env = loadEnv({ ...validSource, AI_MONTHLY_BUDGET_USD: "", AI_BUDGET_WARN_PERCENT: "  " });
+    expect(env.AI_MONTHLY_BUDGET_USD).toBe(20);
+    expect(env.AI_BUDGET_WARN_PERCENT).toBe(80);
+  });
+
+  it("leaves Langfuse export off when no LANGFUSE_* variable is set (empty counts as unset)", () => {
+    expect(loadEnv(validSource).LANGFUSE_HOST).toBeUndefined();
+    const env = loadEnv({ ...validSource, LANGFUSE_HOST: "", LANGFUSE_PUBLIC_KEY: "", LANGFUSE_SECRET_KEY: "" });
+    expect(env.LANGFUSE_HOST).toBeUndefined();
+    expect(env.LANGFUSE_PUBLIC_KEY).toBeUndefined();
+    expect(env.LANGFUSE_SECRET_KEY).toBeUndefined();
+  });
+
+  it("accepts a complete Langfuse configuration", () => {
+    const env = loadEnv({
+      ...validSource,
+      LANGFUSE_HOST: "https://cloud.langfuse.com",
+      LANGFUSE_PUBLIC_KEY: "pk-lf-test",
+      LANGFUSE_SECRET_KEY: "sk-lf-test",
+    });
+    expect(env.LANGFUSE_HOST).toBe("https://cloud.langfuse.com");
+    expect(env.LANGFUSE_PUBLIC_KEY).toBe("pk-lf-test");
+    expect(env.LANGFUSE_SECRET_KEY).toBe("sk-lf-test");
+  });
+
+  it("rejects a partial Langfuse configuration, naming the missing variables", () => {
+    expect(() => loadEnv({ ...validSource, LANGFUSE_PUBLIC_KEY: "pk-lf-test" })).toThrow(
+      /LANGFUSE_HOST.*LANGFUSE_SECRET_KEY|LANGFUSE_SECRET_KEY.*LANGFUSE_HOST/
+    );
+    expect(() =>
+      loadEnv({ ...validSource, LANGFUSE_HOST: "https://cloud.langfuse.com", LANGFUSE_SECRET_KEY: "sk-lf-test" })
+    ).toThrow(/LANGFUSE_PUBLIC_KEY/);
+  });
+
+  it("rejects a non-http(s) LANGFUSE_HOST", () => {
+    expect(() =>
+      loadEnv({ ...validSource, LANGFUSE_HOST: "ftp://x.example", LANGFUSE_PUBLIC_KEY: "p", LANGFUSE_SECRET_KEY: "s" })
+    ).toThrow(/LANGFUSE_HOST/);
+  });
 });

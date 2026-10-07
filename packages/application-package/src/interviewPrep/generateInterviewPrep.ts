@@ -1,5 +1,6 @@
 import { randomBytes } from "node:crypto";
 import type Anthropic from "@anthropic-ai/sdk";
+import type { MessagesClient } from "@ai-career/ai";
 import type { Env } from "@ai-career/config";
 import {
   LIKELY_QUESTION_CATEGORIES, MAX_FRAMING_CHARS, MAX_GAP_TERMS, MAX_OUTLINE_LINE_CHARS, MAX_POINT_CHARS, MAX_QUESTION_CHARS,
@@ -97,7 +98,7 @@ export interface GenerateInterviewPrepInput {
  * rule stated here. Job context, evidence and gap terms each get their own random delimiter (D20).
  */
 export async function generateInterviewPrep(
-  client: Pick<Anthropic, "messages">,
+  client: MessagesClient,
   env: Pick<Env, "ANTHROPIC_MODEL_RESEARCH">,
   input: GenerateInterviewPrepInput
 ): Promise<InterviewPrepDraft> {

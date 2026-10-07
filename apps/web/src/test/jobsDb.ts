@@ -39,6 +39,8 @@ export async function wipeJobData(adminSql: postgres.Sql, userId: string): Promi
 
 /** Also wipes the tables wipeJobData already covers, plus the matching-specific ones. */
 export async function wipeMatchingData(adminSql: postgres.Sql, userId: string): Promise<void> {
+  // Phase 11a: ai_calls rows (budget seeds and calls recorded by the routes under test).
+  await adminSql`DELETE FROM ai_calls WHERE user_id = ${userId}`;
   await adminSql`DELETE FROM job_matches WHERE user_id = ${userId}`;
   await adminSql`DELETE FROM matching_runs WHERE user_id = ${userId}`;
   await adminSql`DELETE FROM career_goals WHERE user_id = ${userId}`;
@@ -339,3 +341,31 @@ export async function insertModelHistory(adminSql: postgres.Sql, userId: string,
         (${userId}, ${row.id}, 'status_change', '2026-09-03T09:00:00Z', 'applied', ${status})`;
   }
 }
+
+/** Phase 11a: a recorded call costing `usd` now, so this month's estimated spend reaches a test's ceiling. */
+export async function insertAiSpend(adminSql: postgres.Sql, userId: string, usd: number): Promise<void> {
+  await adminSql`
+    INSERT INTO ai_calls (user_id, operation, provider, model, latency_ms, estimated_cost_usd, price_known, outcome)
+    VALUES (${userId}, 'pitch_generation', 'anthropic', 'claude-haiku-4-5', 1000, ${usd}, true, 'ok')`;
+}
+
+/** Phase 11a: the ai_calls rows a route recorded for this user, oldest first. */
+export async function aiCallRows(adminSql: postgres.Sql, userId: string) {
+  return adminSql<{ operation: string; outcome: string; error_code: string | null }[]>`
+    SELECT operation, outcome, error_code FROM ai_calls WHERE user_id = ${userId} ORDER BY created_at, operation`;
+}
+
+/** Phase 11a: one work-experience bullet, so the resume snapshot has evidence and generation gets past no_profile. */
+export async function insertResumeEvidence(adminSql: postgres.Sql, userId: string): Promise<void> {
+  const [exp] = await adminSql`
+    INSERT INTO work_experiences (user_id, company, title, display_order) VALUES (${userId}, 'Acme', 'Engineer', 0) RETURNING id`;
+  await adminSql`
+    INSERT INTO work_experience_bullets (user_id, work_experience_id, text, display_order)
+    VALUES (${userId}, ${exp.id}, 'Built a data pipeline', 0)`;
+}
+
+export async function wipeResumeEvidence(adminSql: postgres.Sql, userId: string): Promise<void> {
+  await adminSql`DELETE FROM work_experience_bullets WHERE user_id = ${userId}`;
+  await adminSql`DELETE FROM work_experiences WHERE user_id = ${userId}`;
+}
+

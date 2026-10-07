@@ -25,6 +25,12 @@ import type { InterviewPrepDraft } from "../interviewPrep/interviewPrepSchema";
 const USER = "00000000-0000-0000-0000-000000000014";
 const ENV = { ANTHROPIC_MODEL_FAST: "fast-model", ANTHROPIC_MODEL_RESEARCH: "research-model", COMPANY_RESEARCH_MAX_SEARCHES: 5 };
 const CLIENT = {} as Pick<Anthropic, "messages">;
+// One distinct fake per operation (Phase 11a), so tests can see which label each call was handed.
+const LABELLED = new Map<string, Pick<Anthropic, "messages">>();
+const CLIENT_FOR = (operation: string) => {
+  if (!LABELLED.has(operation)) LABELLED.set(operation, { ...CLIENT });
+  return LABELLED.get(operation)!;
+};
 const SQL_ID = "11111111-1111-1111-1111-111111111111";
 const K8S_ID = "11111111-1111-1111-1111-111111111112";
 let testDb: TestDb;
@@ -87,7 +93,7 @@ async function seed(opts: { match?: boolean; eligible?: boolean; profile?: boole
   return job.id as string;
 }
 
-const run = (jobId: string) => runInterviewPrepGeneration(testDb.db, { userId: USER, jobId, anthropicClient: CLIENT, env: ENV });
+const run = (jobId: string) => runInterviewPrepGeneration(testDb.db, { userId: USER, jobId, anthropicFor: CLIENT_FOR, env: ENV });
 
 describe("runInterviewPrepGeneration", () => {
   it("maps the gates like the pitch, checking the profile before any paid research", async () => {
@@ -183,5 +189,12 @@ describe("runInterviewPrepGeneration", () => {
     const jobId = await seed();
     const [a, b] = await Promise.all([run(jobId), run(jobId)]);
     expect([a.interviewPrep.version, b.interviewPrep.version].sort()).toEqual([1, 2]);
+  });
+
+  it("hands the interview-prep call the client labelled interview_prep_generation", async () => {
+    const jobId = await seed();
+    await run(jobId);
+    expect(vi.mocked(generateInterviewPrep).mock.calls[0][0]).toBe(CLIENT_FOR("interview_prep_generation"));
+    expect(vi.mocked(ensureJobRequirements).mock.calls[0][2]).toBe(CLIENT_FOR("job_requirements_extraction"));
   });
 });

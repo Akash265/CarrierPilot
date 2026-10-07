@@ -4,15 +4,16 @@ import { schema, withUserContext } from "@ai-career/db";
 import { openTestDb, wipeUser, type TestDb } from "../testing/db";
 import { ensureJobEmbeddings, EMBEDDING_BATCH_SIZE } from "./ensureJobEmbeddings";
 
-vi.mock("@ai-career/ai", () => ({ embedTexts: vi.fn() }));
-import { embedTexts } from "@ai-career/ai";
+vi.mock("@ai-career/ai", async (importOriginal) => ({ ...(await importOriginal<typeof import("@ai-career/ai")>()), embedTexts: vi.fn() }));
+import { AiBudgetExceededError, NoopUsageSink, embedTexts } from "@ai-career/ai";
 
 // Not e2: packages/ingestion/src/pipeline/runIngestion.test.ts uses e2 as its own OTHER_USER and
 // unconditionally wipes it in beforeEach/afterAll, which raced this file's job inserts under
 // `turbo run test`'s cross-package parallelism (both packages share one test database) -- found via
 // intermittent "row undefined" / wrong-call-count failures that never reproduced in isolation.
 const USER = "00000000-0000-0000-0000-0000000000e6";
-const ENV = { EMBEDDING_PROVIDER: "voyage" as const, VOYAGE_API_KEY: "k", VOYAGE_EMBEDDING_MODEL: "voyage-3.5" };
+const ENV = { EMBEDDING_PROVIDER: "voyage" as const, VOYAGE_API_KEY: "k", VOYAGE_EMBEDDING_MODEL: "voyage-3.5", AI_MONTHLY_BUDGET_USD: 20 };
+const SINK = NoopUsageSink;
 let testDb: TestDb;
 
 // jobs.embedding is a vector(1024) column (Task 3's migration): Postgres rejects a shorter vector
@@ -50,7 +51,7 @@ describe("ensureJobEmbeddings", () => {
   it("embeds a job with no embedding yet", async () => {
     vi.mocked(embedTexts).mockResolvedValue([vec(0.1, 0.2)]);
     const jobId = await seedJob("hash-1");
-    const result = await withUserContext(testDb.db, USER, (tx) => ensureJobEmbeddings(tx, ENV, [jobId]));
+    const result = await withUserContext(testDb.db, USER, (tx) => ensureJobEmbeddings(tx, ENV, [jobId], SINK));
     const [row] = await withUserContext(testDb.db, USER, (tx) => tx.select().from(schema.jobs).where(eq(schema.jobs.id, jobId)));
     expect(row.embedding).toEqual(vec(0.1, 0.2));
     expect(row.embeddingContentHash).toBe("hash-1");
@@ -59,7 +60,7 @@ describe("ensureJobEmbeddings", () => {
 
   it("skips a job whose embeddingContentHash already matches its current descriptionHash", async () => {
     const jobId = await seedJob("hash-1", vec(0.9, 0.9), "hash-1");
-    const result = await withUserContext(testDb.db, USER, (tx) => ensureJobEmbeddings(tx, ENV, [jobId]));
+    const result = await withUserContext(testDb.db, USER, (tx) => ensureJobEmbeddings(tx, ENV, [jobId], SINK));
     expect(embedTexts).not.toHaveBeenCalled();
     expect(result).toEqual({ embedded: 0, failed: 0 });
   });
@@ -67,7 +68,7 @@ describe("ensureJobEmbeddings", () => {
   it("re-embeds a job whose descriptionHash changed since its stored embeddingContentHash", async () => {
     vi.mocked(embedTexts).mockResolvedValue([vec(0.5, 0.5)]);
     const jobId = await seedJob("hash-2", vec(0.1, 0.1), "hash-1");
-    await withUserContext(testDb.db, USER, (tx) => ensureJobEmbeddings(tx, ENV, [jobId]));
+    await withUserContext(testDb.db, USER, (tx) => ensureJobEmbeddings(tx, ENV, [jobId], SINK));
     const [row] = await withUserContext(testDb.db, USER, (tx) => tx.select().from(schema.jobs).where(eq(schema.jobs.id, jobId)));
     expect(row.embedding).toEqual(vec(0.5, 0.5));
     expect(row.embeddingContentHash).toBe("hash-2");
@@ -76,7 +77,7 @@ describe("ensureJobEmbeddings", () => {
   it("leaves a job's embedding untouched and does not throw when Voyage fails", async () => {
     vi.mocked(embedTexts).mockRejectedValue(new Error("voyage down"));
     const jobId = await seedJob("hash-1");
-    const result = await withUserContext(testDb.db, USER, (tx) => ensureJobEmbeddings(tx, ENV, [jobId]));
+    const result = await withUserContext(testDb.db, USER, (tx) => ensureJobEmbeddings(tx, ENV, [jobId], SINK));
     const [row] = await withUserContext(testDb.db, USER, (tx) => tx.select().from(schema.jobs).where(eq(schema.jobs.id, jobId)));
     expect(row.embedding).toBeNull();
     expect(result).toEqual({ embedded: 0, failed: 1 });
@@ -87,7 +88,7 @@ describe("ensureJobEmbeddings", () => {
     vi.mocked(embedTexts).mockImplementation(async (_env, texts: string[]) => texts.map(() => vec(0.3, 0.3)));
     const ids = await seedManyJobs(total);
 
-    const result = await withUserContext(testDb.db, USER, (tx) => ensureJobEmbeddings(tx, ENV, ids));
+    const result = await withUserContext(testDb.db, USER, (tx) => ensureJobEmbeddings(tx, ENV, ids, SINK));
 
     expect(embedTexts).toHaveBeenCalledTimes(2);
     const callSizes = vi.mocked(embedTexts).mock.calls.map(([, texts]) => (texts as string[]).length).sort((a, b) => b - a);
@@ -104,7 +105,7 @@ describe("ensureJobEmbeddings", () => {
       .mockImplementationOnce(async (_env, texts: string[]) => texts.map(() => vec(0.4, 0.4)));
     const ids = await seedManyJobs(total);
 
-    const result = await withUserContext(testDb.db, USER, (tx) => ensureJobEmbeddings(tx, ENV, ids));
+    const result = await withUserContext(testDb.db, USER, (tx) => ensureJobEmbeddings(tx, ENV, ids, SINK));
 
     // chunk() always fills the first chunk to full size before starting the second, so the failing
     // (first) call always covers exactly EMBEDDING_BATCH_SIZE jobs, regardless of row order.
@@ -114,5 +115,23 @@ describe("ensureJobEmbeddings", () => {
     const rows = await withUserContext(testDb.db, USER, (tx) => tx.select().from(schema.jobs).where(inArray(schema.jobs.id, ids)));
     const embeddedCount = rows.filter((r) => r.embedding !== null).length;
     expect(embeddedCount).toBe(5);
+  });
+
+  it("passes the usage sink and the job_embedding operation to embedTexts", async () => {
+    const jobId = await seedJob("h1");
+    vi.mocked(embedTexts).mockResolvedValue([vec(0.1, 0.2)]);
+    await withUserContext(testDb.db, USER, (tx) => ensureJobEmbeddings(tx, ENV, [jobId], SINK));
+    expect(embedTexts).toHaveBeenCalledWith(ENV, [expect.any(String)], { sink: SINK, operation: "job_embedding" });
+  });
+
+  it("stops at the first chunk the monthly AI budget blocks, counting every remaining job as failed", async () => {
+    const total = EMBEDDING_BATCH_SIZE * 2 + 3;
+    vi.mocked(embedTexts).mockRejectedValue(new AiBudgetExceededError(20, 20, new Date("2026-11-01T00:00:00Z")));
+    const ids = await seedManyJobs(total);
+
+    const result = await withUserContext(testDb.db, USER, (tx) => ensureJobEmbeddings(tx, ENV, ids, SINK));
+
+    expect(embedTexts).toHaveBeenCalledTimes(1);
+    expect(result).toEqual({ embedded: 0, failed: total });
   });
 });

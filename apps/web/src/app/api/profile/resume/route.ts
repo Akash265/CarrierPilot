@@ -7,11 +7,15 @@ import {
   detectResumeFileType,
   extractText,
   extractProfileFromResume,
-  createAnthropicClient,
+  createAnthropicFor,
+  AiBudgetExceededError,
   UnsupportedFileTypeError,
   ExtractionValidationError,
+  type MessagesClient,
   type ResumeExtractionDraft,
 } from "@ai-career/ai";
+import { createUsageSink } from "../../../../lib/aiUsage/createUsageSink";
+import { budgetExceededResponse } from "../../../../lib/aiUsage/budgetResponse";
 
 const MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024;
 
@@ -31,7 +35,7 @@ const MIME_BY_FILE_TYPE: Record<Awaited<ReturnType<typeof detectResumeFileType>>
 };
 
 async function extractWithRetry(
-  anthropic: ReturnType<typeof createAnthropicClient>,
+  anthropic: MessagesClient,
   env: Parameters<typeof extractProfileFromResume>[1],
   text: string
 ): Promise<ResumeExtractionDraft> {
@@ -128,7 +132,7 @@ export async function POST(request: Request) {
       // for a failed Anthropic/Zod extraction. Outside the try it would escape as
       // an unhandled 500 and leave extraction_status stuck at 'pending' forever.
       const text = await extractText(buffer, fileType);
-      const anthropic = createAnthropicClient(env);
+      const anthropic = createAnthropicFor(env, createUsageSink(db, env))("resume_extraction");
       const draft = await extractWithRetry(anthropic, env, text);
       await withUserContext(db, env.DEFAULT_USER_ID, (tx) =>
         tx
@@ -138,6 +142,15 @@ export async function POST(request: Request) {
       );
       return NextResponse.json({ resumeDocumentId, status: "extracted", draft });
     } catch (error) {
+      if (error instanceof AiBudgetExceededError) {
+        await withUserContext(db, env.DEFAULT_USER_ID, (tx) =>
+          tx
+            .update(schema.resumeDocuments)
+            .set({ extractionStatus: "failed", extractionError: "ai_budget_exceeded" })
+            .where(eq(schema.resumeDocuments.id, resumeDocumentId))
+        );
+        return budgetExceededResponse(error, { resumeDocumentId, status: "failed" });
+      }
       const message =
         error instanceof ExtractionValidationError ? error.message : "Extraction failed";
       await withUserContext(db, env.DEFAULT_USER_ID, (tx) =>

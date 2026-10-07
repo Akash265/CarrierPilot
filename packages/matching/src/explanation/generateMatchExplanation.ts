@@ -1,4 +1,5 @@
 import type Anthropic from "@anthropic-ai/sdk";
+import type { MessagesClient } from "@ai-career/ai";
 import type { Env } from "@ai-career/config";
 import { MatchExplanationSchema, type MatchExplanationDraft } from "./matchExplanationSchema";
 
@@ -38,7 +39,7 @@ export interface MatchExplanationInput {
  * surface from untrusted job content without needing per-field nonce handling (design doc §9).
  */
 export async function generateMatchExplanation(
-  client: Pick<Anthropic, "messages">,
+  client: MessagesClient,
   env: Pick<Env, "ANTHROPIC_MODEL_FAST">,
   input: MatchExplanationInput
 ): Promise<MatchExplanationDraft> {

@@ -1,5 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { withUserContext, type DbClient } from "@ai-career/db";
+import type { AnthropicFor } from "@ai-career/ai";
 import { hasUnsafeText } from "@ai-career/ingestion/text";
 import type { CompanyResearchWithFacts } from "../research/ensureCompanyResearch";
 import { generatePitch, PitchGenerationValidationError } from "../pitch/generatePitch";
@@ -17,7 +18,7 @@ export type RunPitchGenerationEnv = ApplicationContextEnv;
 export interface RunPitchGenerationOptions {
   userId: string;
   jobId: string;
-  anthropicClient: Pick<Anthropic, "messages">;
+  anthropicFor: AnthropicFor;
   env: RunPitchGenerationEnv;
 }
 
@@ -31,12 +32,12 @@ export interface RunPitchGenerationResult {
  * research, requirements and evidence index; this adds the pitch call, the guard and the locked insert.
  */
 export async function runPitchGeneration(db: DbClient, opts: RunPitchGenerationOptions): Promise<RunPitchGenerationResult> {
-  const { userId, jobId, anthropicClient, env } = opts;
+  const { userId, jobId, anthropicFor, env } = opts;
   const { job, snapshot, research, evidence } = await prepareApplicationContext(db, opts);
 
   let guard: PitchGuardResult;
   try {
-    const draft = await generatePitch(anthropicClient, env, { jobTitle: job.title, companyName: job.companyName, evidence });
+    const draft = await generatePitch(anthropicFor("pitch_generation"), env, { jobTitle: job.title, companyName: job.companyName, evidence });
     guard = applyPitchGuard(evidence, draft);
   } catch (error) {
     if (error instanceof Anthropic.APIError || error instanceof PitchGenerationValidationError) {

@@ -1,7 +1,7 @@
 import { and, eq, max, sql } from "drizzle-orm";
 import Anthropic from "@anthropic-ai/sdk";
 import { schema, withUserContext, type DbClient } from "@ai-career/db";
-import { embedTexts } from "@ai-career/ai";
+import { embedTexts, type AiUsageSink, type AnthropicFor } from "@ai-career/ai";
 import { ensureJobRequirements } from "../requirements/ensureJobRequirements";
 import { JobRequirementExtractionValidationError } from "../requirements/extractJobRequirements";
 import { buildResumeSnapshot } from "../optimization/buildResumeSnapshot";
@@ -32,12 +32,16 @@ export interface RunResumeOptimizationEnv {
   EMBEDDING_PROVIDER: "voyage" | "self-hosted";
   VOYAGE_API_KEY?: string;
   VOYAGE_EMBEDDING_MODEL: string;
+  AI_MONTHLY_BUDGET_USD: number;
 }
 
 export interface RunResumeOptimizationOptions {
   userId: string;
   jobId: string;
-  anthropicClient: Pick<Anthropic, "messages">;
+  /** One labelled, budget-checked Anthropic client per operation (Phase 11a). */
+  anthropicFor: AnthropicFor;
+  /** Where the similarity-embedding call is recorded and budget-checked (Phase 11a). */
+  usageSink: AiUsageSink;
   env: RunResumeOptimizationEnv;
 }
 
@@ -54,6 +58,7 @@ const numOrNull = (n: number | null): string | null => (n === null ? null : Stri
  * OptimizeResumeValidationError, Anthropic.APIError) are deliberately NOT swallowed here, unlike
  * runMatching's "skip this job's explanation, keep going" rule -- this is a single user-triggered
  * action on one job, not a batch run scoring many jobs, so there is nothing else to "keep going" to.
+ * (AiBudgetExceededError is not in that list: it propagates so the route can answer 429, Phase 11a.)
  * They are instead mapped to ResumeOptimizationError("unknown") (D57's lesson, same distinction
  * runMatching.ts's outer catch makes) so the caller (Task 12's API route) can tell "this call needs
  * to surface a 502 and let the user retry" apart from a genuine bug, which is rethrown unchanged.
@@ -62,7 +67,7 @@ export async function runResumeOptimization(
   db: DbClient,
   opts: RunResumeOptimizationOptions
 ): Promise<RunResumeOptimizationResult> {
-  const { userId, jobId, anthropicClient, env } = opts;
+  const { userId, jobId, anthropicFor, usageSink, env } = opts;
   const inUserContext = <T>(fn: (tx: DbClient) => Promise<T>) => withUserContext(db, userId, fn);
 
   const [match] = await inUserContext((tx) => tx.select().from(jobMatches).where(eq(jobMatches.jobId, jobId)).limit(1));
@@ -93,7 +98,7 @@ export async function runResumeOptimization(
     // must never leave job_requirements half-replaced), and this is a single-job, user-triggered
     // action, not a hot path serving concurrent traffic on the same job.
     const requirements = await inUserContext((tx) =>
-      ensureJobRequirements(tx, env, anthropicClient, {
+      ensureJobRequirements(tx, env, anthropicFor("job_requirements_extraction"), {
         id: job.id, title: job.title, descriptionText: job.descriptionText, descriptionHash: job.descriptionHash,
       })
     );
@@ -103,7 +108,7 @@ export async function runResumeOptimization(
 
     snapshot = await inUserContext((tx) => buildResumeSnapshot(tx));
 
-    draft = await optimizeResume(anthropicClient, env, {
+    draft = await optimizeResume(anthropicFor("resume_optimization"), env, {
       jobTitle: job.title, companyName: job.companyName, requirements: requirementsForPrompt, catalog: snapshot.catalog,
     });
     guardResult = applyDeterministicGuard(snapshot.catalog, draft);
@@ -124,12 +129,12 @@ export async function runResumeOptimization(
   let semanticSimilarity: number | null = null;
   if (job.embedding !== null && combinedOptimizedText.trim().length > 0) {
     try {
-      const [resumeEmbedding] = await embedTexts(env, [combinedOptimizedText]);
+      const [resumeEmbedding] = await embedTexts(env, [combinedOptimizedText], { sink: usageSink, operation: "resume_similarity_embedding" });
       semanticSimilarity = scoreSemanticSimilarity(job.embedding, resumeEmbedding ?? null);
     } catch {
-      // Same "degrade, never block" rule as ensureJobEmbeddings: a Voyage outage leaves
-      // semanticSimilarity null (computeOverallScore redistributes its weight) rather than failing
-      // the whole optimization.
+      // Same "degrade, never block" rule as ensureJobEmbeddings: a Voyage outage -- or a call blocked by
+      // the monthly AI budget (Phase 11a) -- leaves semanticSimilarity null (computeOverallScore
+      // redistributes its weight) rather than failing the whole optimization.
       semanticSimilarity = null;
     }
   }

@@ -9,13 +9,13 @@ import {
   CareerGoalExtractionValidationError,
   type CareerGoalExtractionDraft,
 } from "@ai-career/ai";
+import { insertAiSpend, aiCallRows } from "../../../../test/jobsDb";
 
 vi.mock("@ai-career/ai", async () => {
   const actual = await vi.importActual<typeof import("@ai-career/ai")>("@ai-career/ai");
   return {
     ...actual,
     extractCareerGoal: vi.fn(),
-    createAnthropicClient: () => ({}),
   };
 });
 
@@ -26,6 +26,9 @@ vi.mock("@ai-career/config", () => ({
       "postgres://career_intel_app:career_intel_app@localhost:5432/career_intel_test",
     ANTHROPIC_MODEL_FAST: "test-model",
     ANTHROPIC_MODEL_RESEARCH: "test-model",
+    ANTHROPIC_API_KEY: "sk-ant-test",
+    AI_MONTHLY_BUDGET_USD: 5,
+    AI_BUDGET_WARN_PERCENT: 80,
   }),
 }));
 
@@ -51,9 +54,11 @@ beforeAll(async () => {
   // Delete the FK-child table first.
   await adminSql`DELETE FROM career_goal_constraints WHERE user_id = ${TEST_USER_ID}`;
   await adminSql`DELETE FROM career_goals WHERE user_id = ${TEST_USER_ID}`;
+  await adminSql`DELETE FROM ai_calls WHERE user_id = ${TEST_USER_ID}`;
 });
 
 afterAll(async () => {
+  await adminSql`DELETE FROM ai_calls WHERE user_id = ${TEST_USER_ID}`;
   await adminSql.end();
 });
 
@@ -236,4 +241,26 @@ describe("POST /api/career-goal/parse", () => {
     expect(row.parse_status).toBe("failed");
     expect(row.parse_error).toBe("bad output");
   });
+
+  it("answers 429 with the budget message when the monthly AI budget blocks the parse, without retrying", async () => {
+    await insertAiSpend(adminSql, TEST_USER_ID, 5);
+    // Drive the real tracked client the route built (label career_goal_parse); the gate blocks before the SDK.
+    vi.mocked(extractCareerGoal).mockImplementation(async (client) => {
+      await client.messages.create({ model: "test-model", max_tokens: 1, messages: [{ role: "user", content: "x" }] });
+      throw new Error("unreachable: the budget gate should have thrown");
+    });
+
+    const res = await POST(makeRequest({ rawText: "Data roles in Berlin" }));
+    const body = await res.json();
+
+    expect(res.status).toBe(429);
+    expect(body).toMatchObject({ status: "failed", code: "ai_budget_exceeded" });
+    expect(body.error).toMatch(/^Monthly AI budget reached/);
+    expect(vi.mocked(extractCareerGoal)).toHaveBeenCalledTimes(1);
+    const [goal] = await adminSql`SELECT parse_status, parse_error FROM career_goals WHERE id = ${body.goalId}`;
+    expect(goal).toEqual({ parse_status: "failed", parse_error: "ai_budget_exceeded" });
+    expect(await aiCallRows(adminSql, TEST_USER_ID)).toContainEqual({ operation: "career_goal_parse", outcome: "blocked", error_code: "budget_exceeded" });
+    await adminSql`DELETE FROM ai_calls WHERE user_id = ${TEST_USER_ID}`;
+  });
 });
+

@@ -1,6 +1,7 @@
 import { eq } from "drizzle-orm";
 import Anthropic from "@anthropic-ai/sdk";
 import { schema, withUserContext, type DbClient } from "@ai-career/db";
+import type { AnthropicFor } from "@ai-career/ai";
 import {
   buildResumeSnapshot, ensureJobRequirements, JobRequirementExtractionValidationError, type ResumeSnapshot,
 } from "@ai-career/resume-optimization";
@@ -22,7 +23,8 @@ export interface ApplicationContextEnv {
 export interface PrepareApplicationContextOptions {
   userId: string;
   jobId: string;
-  anthropicClient: Pick<Anthropic, "messages">;
+  /** One labelled, budget-checked Anthropic client per operation (Phase 11a). */
+  anthropicFor: AnthropicFor;
   env: ApplicationContextEnv;
 }
 
@@ -39,10 +41,11 @@ export interface ApplicationContext {
  * 7a's runPitchGeneration). Order matters: the cheap DB gates and the profile check run BEFORE
  * ensureCompanyResearch, so a user with no profile never triggers a paid web search. Research failures
  * never surface here (they are stored as a status). ensureJobRequirements' Anthropic.APIError and
- * validation error map to "unknown" (→ 502, D57); anything else is a bug and is rethrown.
+ * validation error map to "unknown" (→ 502, D57); anything else is a bug and is rethrown -- including
+ * AiBudgetExceededError (Phase 11a), which the routes answer with 429.
  */
 export async function prepareApplicationContext(db: DbClient, opts: PrepareApplicationContextOptions): Promise<ApplicationContext> {
-  const { userId, jobId, anthropicClient, env } = opts;
+  const { userId, jobId, anthropicFor, env } = opts;
   const inUserContext = <T>(fn: (tx: DbClient) => Promise<T>) => withUserContext(db, userId, fn);
 
   const [match] = await inUserContext((tx) => tx.select().from(jobMatches).where(eq(jobMatches.jobId, jobId)).limit(1));
@@ -55,7 +58,7 @@ export async function prepareApplicationContext(db: DbClient, opts: PrepareAppli
   const snapshot = await inUserContext((tx) => buildResumeSnapshot(tx));
   if (snapshot.catalog.length === 0) throw new ApplicationGenerationError("no_profile");
 
-  const research = await ensureCompanyResearch(db, userId, anthropicClient, env, {
+  const research = await ensureCompanyResearch(db, userId, anthropicFor("company_research"), env, {
     id: job.id, companyKey: job.companyKey, companyName: job.companyName, title: job.title,
   });
 
@@ -64,7 +67,7 @@ export async function prepareApplicationContext(db: DbClient, opts: PrepareAppli
     // Same accepted trade-off as runResumeOptimization: ensureJobRequirements may make an Anthropic
     // call inside this transaction, buying atomic replace-on-change of the job_requirements cache.
     requirements = await inUserContext((tx) =>
-      ensureJobRequirements(tx, env, anthropicClient, {
+      ensureJobRequirements(tx, env, anthropicFor("job_requirements_extraction"), {
         id: job.id, title: job.title, descriptionText: job.descriptionText, descriptionHash: job.descriptionHash,
       })
     );

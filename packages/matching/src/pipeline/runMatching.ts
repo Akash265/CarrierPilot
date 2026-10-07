@@ -1,6 +1,7 @@
 import { and, eq, inArray, isNotNull } from "drizzle-orm";
 import Anthropic from "@anthropic-ai/sdk";
 import { schema, withUserContext, type DbClient } from "@ai-career/db";
+import { AiBudgetExceededError, type AiUsageSink, type AnthropicFor } from "@ai-career/ai";
 import { evaluateEligibility } from "../eligibility/evaluateEligibility";
 import { scoreSkills } from "../scoring/scoreSkills";
 import { scoreExperience } from "../scoring/scoreExperience";
@@ -44,11 +45,15 @@ export interface RunMatchingEnv {
   MATCHING_EXPERIENCE_GRACE_YEARS: number;
   MATCHING_FRESHNESS_HALF_LIFE_HOURS: number;
   MATCHING_EXPLANATION_TTL_DAYS: number;
+  AI_MONTHLY_BUDGET_USD: number;
 }
 
 export interface RunMatchingOptions {
   userId: string;
-  anthropicClient: Pick<Anthropic, "messages">;
+  /** One labelled, budget-checked Anthropic client per operation (Phase 11a). */
+  anthropicFor: AnthropicFor;
+  /** Where this run's embedding calls are recorded and budget-checked (Phase 11a). */
+  usageSink: AiUsageSink;
   env: RunMatchingEnv;
   now?: () => Date;
 }
@@ -78,7 +83,7 @@ interface ScoredJob {
  * after recording it -- same shape as packages/ingestion's `runIngestion`.
  */
 export async function runMatching(db: DbClient, opts: RunMatchingOptions): Promise<MatchingRunSummary> {
-  const { userId, env, anthropicClient } = opts;
+  const { userId, env, anthropicFor, usageSink } = opts;
   const now = opts.now ?? (() => new Date());
   const inUserContext = <T>(fn: (tx: DbClient) => Promise<T>) => withUserContext(db, userId, fn);
 
@@ -125,10 +130,10 @@ export async function runMatching(db: DbClient, opts: RunMatchingOptions): Promi
     );
     const candidateYears = profile?.yearsOfExperience ?? null;
 
-    const goalEmbedding = await inUserContext((tx) => ensureGoalEmbedding(tx, env, constraints.id));
+    const goalEmbedding = await inUserContext((tx) => ensureGoalEmbedding(tx, env, constraints.id, usageSink));
 
     const initialRows = await inUserContext((tx) => fetchCandidateJobs(tx, goalEmbedding));
-    const embeddingResult = await inUserContext((tx) => ensureJobEmbeddings(tx, env, initialRows.map((r) => r.id)));
+    const embeddingResult = await inUserContext((tx) => ensureJobEmbeddings(tx, env, initialRows.map((r) => r.id), usageSink));
     counters.embedded = embeddingResult.embedded;
     counters.embeddingFailed = embeddingResult.failed;
     // Re-fetch so a job embedded just now is reflected in this run's semantic similarity.
@@ -242,11 +247,12 @@ export async function runMatching(db: DbClient, opts: RunMatchingOptions): Promi
       })
     );
     const toExplain = stale.slice(0, env.MATCHING_EXPLAIN_TOP_N);
+    const explainClient = anthropicFor("match_explanation");
 
     for (const item of toExplain) {
       try {
         const referenceDate = item.job.postedAt ?? item.job.firstSeenAt;
-        const draft = await generateMatchExplanation(anthropicClient, env, {
+        const draft = await generateMatchExplanation(explainClient, env, {
           jobTitle: item.job.title,
           companyName: item.job.companyName,
           overallScore: item.overallScore,
@@ -265,6 +271,9 @@ export async function runMatching(db: DbClient, opts: RunMatchingOptions): Promi
         );
         counters.explained++;
       } catch (error) {
+        // Over the monthly AI budget (Phase 11a): every remaining explanation would be blocked too, so stop
+        // explaining and finish the run -- the scores are complete, only narratives are missing.
+        if (error instanceof AiBudgetExceededError) break;
         // A malformed response (MatchExplanationValidationError) or a transient Anthropic API failure
         // (rate limit, 5xx, network -- Anthropic.APIError) leaves the row's deterministic scores intact
         // and moves on to the next job -- never blocks the run (design doc §4 step 6). Anything else is

@@ -1,5 +1,5 @@
 import { eq, inArray, and, ne, isNull, or } from "drizzle-orm";
-import { embedTexts } from "@ai-career/ai";
+import { AiBudgetExceededError, embedTexts, type AiUsageSink } from "@ai-career/ai";
 import { schema, type DbClient } from "@ai-career/db";
 import type { Env } from "@ai-career/config";
 
@@ -31,12 +31,14 @@ function chunk<T>(items: T[], size: number): T[][] {
  * to the rate limit). A chunk's failure leaves only that chunk's jobs' embeddings untouched -- they
  * simply keep scoring with semanticScore's "unknown" default and are retried on the next run -- rather
  * than one oversized, all-or-nothing request taking out every job (same "degrade, never block the
- * run" rule as `ensureGoalEmbedding`).
+ * run" rule as `ensureGoalEmbedding`). A chunk blocked by the monthly AI budget (Phase 11a) stops the
+ * loop: every later chunk would be blocked too, so they are counted as failed without another call.
  */
 export async function ensureJobEmbeddings(
   tx: DbClient,
-  env: Pick<Env, "EMBEDDING_PROVIDER" | "VOYAGE_API_KEY" | "VOYAGE_EMBEDDING_MODEL">,
-  jobIds: string[]
+  env: Pick<Env, "EMBEDDING_PROVIDER" | "VOYAGE_API_KEY" | "VOYAGE_EMBEDDING_MODEL" | "AI_MONTHLY_BUDGET_USD">,
+  jobIds: string[],
+  usageSink: AiUsageSink
 ): Promise<EnsureJobEmbeddingsResult> {
   if (jobIds.length === 0) return { embedded: 0, failed: 0 };
 
@@ -54,14 +56,20 @@ export async function ensureJobEmbeddings(
   let embedded = 0;
   let failed = 0;
 
-  for (const batch of chunk(stale, EMBEDDING_BATCH_SIZE)) {
+  const batches = chunk(stale, EMBEDDING_BATCH_SIZE);
+  for (const [batchIndex, batch] of batches.entries()) {
     let embeddings: number[][];
     try {
       embeddings = await embedTexts(
         env,
-        batch.map((job) => `${job.title} ${job.descriptionText}`)
+        batch.map((job) => `${job.title} ${job.descriptionText}`),
+        { sink: usageSink, operation: "job_embedding" }
       );
-    } catch {
+    } catch (error) {
+      if (error instanceof AiBudgetExceededError) {
+        failed += batches.slice(batchIndex).reduce((n, b) => n + b.length, 0);
+        break;
+      }
       // Swallowed: job content must never be logged (CLAUDE.md §9), and a Voyage outage on one chunk
       // must not fail the whole matching run or take out other chunks -- these jobs simply keep
       // scoring with semanticScore's "unknown" default and are retried next run.

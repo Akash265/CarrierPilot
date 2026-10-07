@@ -2,9 +2,11 @@
 import { NextResponse } from "next/server";
 import { loadEnv } from "@ai-career/config";
 import { closeDbClient, createDbClient } from "@ai-career/db";
-import { createAnthropicClient } from "@ai-career/ai";
+import { AiBudgetExceededError, createAnthropicFor } from "@ai-career/ai";
 import { runPitchGeneration, PitchGenerationError } from "@ai-career/application-package";
 import { toPitchView, toResearchView } from "../../../../../lib/applicationPitch/serializePitch";
+import { createUsageSink } from "../../../../../lib/aiUsage/createUsageSink";
+import { budgetExceededResponse } from "../../../../../lib/aiUsage/budgetResponse";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -18,11 +20,12 @@ export async function POST(_request: Request, { params }: { params: Promise<{ jo
     const result = await runPitchGeneration(db, {
       userId: env.DEFAULT_USER_ID,
       jobId,
-      anthropicClient: createAnthropicClient(env),
+      anthropicFor: createAnthropicFor(env, createUsageSink(db, env)),
       env,
     });
     return NextResponse.json({ pitch: toPitchView(result.pitch), research: toResearchView(result.research) }, { status: 201 });
   } catch (error) {
+    if (error instanceof AiBudgetExceededError) return budgetExceededResponse(error);
     if (error instanceof PitchGenerationError) {
       if (error.errorClass === "no_match") return NextResponse.json({ error: 'Run "Find Matches" for this job first' }, { status: 404 });
       if (error.errorClass === "not_eligible") return NextResponse.json({ error: "This job is not an eligible match" }, { status: 400 });

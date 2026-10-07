@@ -1,0 +1,127 @@
+import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
+import { fileURLToPath } from "node:url";
+import { randomUUID } from "node:crypto";
+import path from "node:path";
+import postgres from "postgres";
+import { drizzle } from "drizzle-orm/postgres-js";
+import { migrate } from "drizzle-orm/postgres-js/migrator";
+import { sql } from "drizzle-orm";
+import { withUserContext } from "./rls";
+import { createDbClient, closeDbClient } from "./client";
+import { DbUsageSink, type AiCallRecord } from "./aiUsage/dbUsageSink";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const MIGRATIONS_FOLDER = path.resolve(__dirname, "../migrations");
+const ADMIN_URL =
+  process.env.TEST_MIGRATIONS_DATABASE_URL ?? "postgres://career_intel:career_intel@localhost:5432/career_intel_test";
+const APP_URL =
+  process.env.TEST_APP_DATABASE_URL ?? "postgres://career_intel_app:career_intel_app@localhost:5432/career_intel_test";
+const adminSql = postgres(ADMIN_URL);
+const db = createDbClient({ DATABASE_URL: APP_URL });
+
+// Phase 11a test users (…0b01/…0b02), verified unused repo-wide on 2026-10-07.
+const USER_A = "00000000-0000-0000-0000-000000000b01";
+const USER_B = "00000000-0000-0000-0000-000000000b02";
+const MIGRATION_LOCK = 7420001;
+
+const wipe = () => adminSql`DELETE FROM ai_calls WHERE user_id IN (${USER_A}, ${USER_B})`;
+
+beforeAll(async () => {
+  const lock = await adminSql.reserve();
+  try {
+    await lock`SELECT pg_advisory_lock(${MIGRATION_LOCK})`;
+    await migrate(drizzle(adminSql), { migrationsFolder: MIGRATIONS_FOLDER });
+    await adminSql.unsafe("GRANT USAGE ON SCHEMA public TO career_intel_app");
+    await adminSql.unsafe("GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO career_intel_app");
+  } finally {
+    await lock`SELECT pg_advisory_unlock(${MIGRATION_LOCK})`;
+    lock.release();
+  }
+});
+
+beforeEach(wipe);
+
+afterAll(async () => {
+  await wipe();
+  await adminSql.end();
+  await closeDbClient(db);
+});
+
+const event = (overrides: Partial<AiCallRecord> = {}): AiCallRecord => ({
+  id: randomUUID(),
+  createdAt: new Date("2026-10-07T12:00:00Z"),
+  operation: "match_explanation",
+  provider: "anthropic",
+  model: "claude-haiku-4-5-20251001",
+  inputTokens: 100,
+  outputTokens: 20,
+  cacheReadTokens: 0,
+  cacheCreationTokens: 0,
+  webSearchRequests: 0,
+  latencyMs: 900,
+  estimatedCostUsd: 0.0002,
+  priceKnown: true,
+  outcome: "ok",
+  errorCode: null,
+  ...overrides,
+});
+
+const countAs = async (userId: string) =>
+  ((await withUserContext(db, userId, (tx) => tx.execute(sql`SELECT count(*)::int AS n FROM ai_calls`))) as unknown as { n: number }[])[0].n;
+
+describe("ai_calls — DbUsageSink, RLS and constraints", () => {
+  it("records a row for its own user that other users cannot see", async () => {
+    await new DbUsageSink(db, USER_A).record(event());
+    expect(await countAs(USER_A)).toBe(1);
+    expect(await countAs(USER_B)).toBe(0);
+    const [row] = await adminSql`SELECT * FROM ai_calls WHERE user_id = ${USER_A}`;
+    expect(row).toMatchObject({ operation: "match_explanation", provider: "anthropic", estimated_cost_usd: "0.000200", outcome: "ok" });
+  });
+
+  it("sums spend since a given instant, inclusive, for its own user only", async () => {
+    const a = new DbUsageSink(db, USER_A);
+    const since = new Date("2026-10-01T00:00:00Z");
+    await a.record(event({ createdAt: new Date("2026-09-30T23:59:59.999Z"), estimatedCostUsd: 5 }));
+    await a.record(event({ createdAt: since, estimatedCostUsd: 0.1 }));
+    await a.record(event({ createdAt: new Date("2026-10-07T00:00:00Z"), estimatedCostUsd: 0.2 }));
+    await new DbUsageSink(db, USER_B).record(event({ estimatedCostUsd: 9 }));
+    expect(await a.spendSinceUsd(since)).toBe(0.3);
+    expect(await new DbUsageSink(db, USER_B).spendSinceUsd(since)).toBe(9);
+  });
+
+  it("sums to 0 with no rows", async () => {
+    expect(await new DbUsageSink(db, USER_A).spendSinceUsd(new Date(0))).toBe(0);
+  });
+
+  it("is append-only for the app role: UPDATE and DELETE match no rows", async () => {
+    await new DbUsageSink(db, USER_A).record(event({ estimatedCostUsd: 1 }));
+    const updated = await withUserContext(db, USER_A, (tx) => tx.execute(sql`UPDATE ai_calls SET estimated_cost_usd = 0 RETURNING id`));
+    const deleted = await withUserContext(db, USER_A, (tx) => tx.execute(sql`DELETE FROM ai_calls RETURNING id`));
+    expect(updated).toHaveLength(0);
+    expect(deleted).toHaveLength(0);
+    expect(await new DbUsageSink(db, USER_A).spendSinceUsd(new Date(0))).toBe(1);
+  });
+
+  it("rejects an insert claiming another user's id", async () => {
+    await expect(
+      withUserContext(db, USER_A, (tx) =>
+        tx.execute(sql`INSERT INTO ai_calls (user_id, operation, provider, model, latency_ms, estimated_cost_usd, price_known, outcome)
+                       VALUES (${USER_B}, 'x', 'anthropic', 'm', 0, 0, true, 'ok')`)
+      )
+    ).rejects.toThrow(/row-level security/);
+  });
+
+  it("enforces provider, outcome and non-negative CHECKs", async () => {
+    const sink = new DbUsageSink(db, USER_A);
+    await expect(sink.record(event({ provider: "openai" as never }))).rejects.toThrow(/ai_calls_provider_valid/);
+    await expect(sink.record(event({ outcome: "invalid_output" as never }))).rejects.toThrow(/ai_calls_outcome_valid/);
+    await expect(sink.record(event({ inputTokens: -1 }))).rejects.toThrow(/ai_calls_counts_non_negative/);
+    await expect(sink.record(event({ estimatedCostUsd: -0.01 }))).rejects.toThrow(/ai_calls_cost_non_negative/);
+  });
+
+  it("keeps whole micro-dollars exactly (no float drift in the sum)", async () => {
+    const sink = new DbUsageSink(db, USER_A);
+    for (let i = 0; i < 10; i++) await sink.record(event({ estimatedCostUsd: 0.000001 }));
+    expect(await sink.spendSinceUsd(new Date(0))).toBe(0.00001);
+  });
+});

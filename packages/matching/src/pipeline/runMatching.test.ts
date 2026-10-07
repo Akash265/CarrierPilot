@@ -4,8 +4,11 @@ import { schema, withUserContext } from "@ai-career/db";
 import { openTestDb, wipeUser, type TestDb } from "../testing/db";
 import { runMatching } from "./runMatching";
 
-vi.mock("@ai-career/ai", () => ({ embedTexts: vi.fn().mockResolvedValue([]) }));
-import { embedTexts } from "@ai-career/ai";
+vi.mock("@ai-career/ai", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@ai-career/ai")>()),
+  embedTexts: vi.fn().mockResolvedValue([]),
+}));
+import { AiBudgetExceededError, NoopUsageSink, embedTexts } from "@ai-career/ai";
 
 const USER = "00000000-0000-0000-0000-0000000000e5";
 let testDb: TestDb;
@@ -19,6 +22,7 @@ const ENV = {
   MATCHING_EXPERIENCE_GRACE_YEARS: 1,
   MATCHING_FRESHNESS_HALF_LIFE_HOURS: 168,
   MATCHING_EXPLANATION_TTL_DAYS: 7,
+  AI_MONTHLY_BUDGET_USD: 20,
 };
 
 function fakeAnthropic(explanation: unknown = { strongMatches: ["x"], partialMatches: [], gaps: [], summary: "s" }): Pick<Anthropic, "messages"> {
@@ -70,7 +74,7 @@ async function seedJob(opts: { title: string; companyName?: string }): Promise<s
 describe("runMatching", () => {
   it("throws MatchingError('no_active_goal') and records a failed run when there is no confirmed active goal", async () => {
     await expect(
-      runMatching(testDb.db, { userId: USER, anthropicClient: fakeAnthropic(), env: ENV })
+      runMatching(testDb.db, { userId: USER, usageSink: NoopUsageSink, anthropicFor: () => fakeAnthropic(), env: ENV })
     ).rejects.toMatchObject({ errorClass: "no_active_goal" });
   });
 
@@ -83,7 +87,7 @@ describe("runMatching", () => {
       tx.update(schema.careerGoalConstraints).set({ excludedCompanies: ["Excluded Co"] })
     );
 
-    const summary = await runMatching(testDb.db, { userId: USER, anthropicClient: fakeAnthropic(), env: ENV });
+    const summary = await runMatching(testDb.db, { userId: USER, usageSink: NoopUsageSink, anthropicFor: () => fakeAnthropic(), env: ENV });
 
     expect(summary.status).toBe("completed");
     expect(summary.jobsEvaluated).toBe(3);
@@ -101,14 +105,26 @@ describe("runMatching", () => {
     expect(run.jobsEligible).toBe(2);
   });
 
+  it("records the run's goal and job embedding calls through the usage sink it was given", async () => {
+    await seedGoalAndProfile();
+    await seedJob({ title: "Data Engineer" });
+    const sink = { spendSinceUsd: async () => 0, record: async () => undefined };
+
+    await runMatching(testDb.db, { userId: USER, usageSink: sink, anthropicFor: () => fakeAnthropic(), env: ENV });
+
+    const operations = vi.mocked(embedTexts).mock.calls.map((call) => call[2]);
+    expect(operations).toContainEqual({ sink, operation: "goal_embedding" });
+    expect(operations).toContainEqual({ sink, operation: "job_embedding" });
+  });
+
   it("marks a matched job ineligible once it closes, carrying its userAction forward", async () => {
     await seedGoalAndProfile();
     const jobId = await seedJob({ title: "Data Engineer" });
-    await runMatching(testDb.db, { userId: USER, anthropicClient: fakeAnthropic(), env: { ...ENV, MATCHING_EXPLAIN_TOP_N: 0 } });
+    await runMatching(testDb.db, { userId: USER, usageSink: NoopUsageSink, anthropicFor: () => fakeAnthropic(), env: { ...ENV, MATCHING_EXPLAIN_TOP_N: 0 } });
     await testDb.adminSql`UPDATE job_matches SET user_action = 'saved', user_action_at = now() WHERE job_id = ${jobId}`;
     await testDb.adminSql`UPDATE jobs SET status = 'closed', closed_at = now() WHERE id = ${jobId}`;
 
-    await runMatching(testDb.db, { userId: USER, anthropicClient: fakeAnthropic(), env: ENV });
+    await runMatching(testDb.db, { userId: USER, usageSink: NoopUsageSink, anthropicFor: () => fakeAnthropic(), env: ENV });
 
     const [row] = await withUserContext(testDb.db, USER, (tx) => tx.select().from(schema.jobMatches));
     expect(row.eligible).toBe(false);
@@ -122,7 +138,7 @@ describe("runMatching", () => {
     const jobId = await seedJob({ title: "Data Engineer" });
     await testDb.adminSql`UPDATE jobs SET status = 'closed', closed_at = now() WHERE id = ${jobId}`;
 
-    await runMatching(testDb.db, { userId: USER, anthropicClient: fakeAnthropic(), env: ENV });
+    await runMatching(testDb.db, { userId: USER, usageSink: NoopUsageSink, anthropicFor: () => fakeAnthropic(), env: ENV });
 
     expect(await withUserContext(testDb.db, USER, (tx) => tx.select().from(schema.jobMatches))).toHaveLength(0);
   });
@@ -130,10 +146,10 @@ describe("runMatching", () => {
   it("keeps a dismissed job ineligible on the next run and carries its userAction forward", async () => {
     await seedGoalAndProfile();
     const jobId = await seedJob({ title: "Data Engineer" });
-    await runMatching(testDb.db, { userId: USER, anthropicClient: fakeAnthropic(), env: { ...ENV, MATCHING_EXPLAIN_TOP_N: 0 } });
+    await runMatching(testDb.db, { userId: USER, usageSink: NoopUsageSink, anthropicFor: () => fakeAnthropic(), env: { ...ENV, MATCHING_EXPLAIN_TOP_N: 0 } });
     await testDb.adminSql`UPDATE job_matches SET user_action = 'dismissed', user_action_at = now() WHERE job_id = ${jobId}`;
 
-    await runMatching(testDb.db, { userId: USER, anthropicClient: fakeAnthropic(), env: ENV });
+    await runMatching(testDb.db, { userId: USER, usageSink: NoopUsageSink, anthropicFor: () => fakeAnthropic(), env: ENV });
 
     const rows = await withUserContext(testDb.db, USER, (tx) => tx.select().from(schema.jobMatches));
     const dismissed = rows.find((r) => r.jobId === jobId)!;
@@ -146,7 +162,7 @@ describe("runMatching", () => {
     await seedJob({ title: "Data Engineer" });
     const badClient = fakeAnthropic({ strongMatches: "not-an-array" });
 
-    const summary = await runMatching(testDb.db, { userId: USER, anthropicClient: badClient, env: ENV });
+    const summary = await runMatching(testDb.db, { userId: USER, usageSink: NoopUsageSink, anthropicFor: () => badClient, env: ENV });
 
     expect(summary.status).toBe("completed");
     expect(summary.jobsExplained).toBe(0);
@@ -161,7 +177,7 @@ describe("runMatching", () => {
     const rateLimited = new Anthropic.RateLimitError(429, { type: "rate_limit_error", message: "slow down" }, "Rate limited", new Headers());
     const failingClient = erroringAnthropic(rateLimited);
 
-    const summary = await runMatching(testDb.db, { userId: USER, anthropicClient: failingClient, env: ENV });
+    const summary = await runMatching(testDb.db, { userId: USER, usageSink: NoopUsageSink, anthropicFor: () => failingClient, env: ENV });
 
     expect(summary.status).toBe("completed");
     expect(summary.jobsExplained).toBe(0);
@@ -177,7 +193,7 @@ describe("runMatching", () => {
     const failingClient = erroringAnthropic(new TypeError("something the design doesn't anticipate"));
 
     await expect(
-      runMatching(testDb.db, { userId: USER, anthropicClient: failingClient, env: ENV })
+      runMatching(testDb.db, { userId: USER, usageSink: NoopUsageSink, anthropicFor: () => failingClient, env: ENV })
     ).rejects.toMatchObject({ errorClass: "unknown" });
   });
 
@@ -188,14 +204,44 @@ describe("runMatching", () => {
       INSERT INTO applications (user_id, job_id, company_name, job_title, status, status_changed_at, applied_at, feature_snapshot)
       VALUES (${USER}, ${jobId}, 'Acme', 'Data Engineer', 'applied', now(), current_date, '{}'::jsonb)`;
 
-    await runMatching(testDb.db, { userId: USER, anthropicClient: fakeAnthropic(), env: ENV });
+    await runMatching(testDb.db, { userId: USER, usageSink: NoopUsageSink, anthropicFor: () => fakeAnthropic(), env: ENV });
     let [row] = await testDb.adminSql`SELECT eligible, ineligible_reason FROM job_matches WHERE job_id = ${jobId}`;
     expect(row.eligible).toBe(false);
     expect(row.ineligible_reason).toBe("You applied to this job at Acme.");
 
     await testDb.adminSql`DELETE FROM applications WHERE user_id = ${USER}`;
-    await runMatching(testDb.db, { userId: USER, anthropicClient: fakeAnthropic(), env: ENV });
+    await runMatching(testDb.db, { userId: USER, usageSink: NoopUsageSink, anthropicFor: () => fakeAnthropic(), env: ENV });
     [row] = await testDb.adminSql`SELECT eligible FROM job_matches WHERE job_id = ${jobId}`;
     expect(row.eligible).toBe(true);
   });
+
+  it("asks for a match_explanation client for the explanation step", async () => {
+    await seedGoalAndProfile();
+    await seedJob({ title: "Data Engineer" });
+    const anthropicFor = vi.fn(() => fakeAnthropic());
+    await runMatching(testDb.db, { userId: USER, usageSink: NoopUsageSink, anthropicFor, env: ENV });
+    expect(anthropicFor).toHaveBeenCalledWith("match_explanation");
+  });
+
+  it("stops explaining at the first budget block but still completes the run with every score stored", async () => {
+    await seedGoalAndProfile();
+    await seedJob({ title: "Data Engineer" });
+    await seedJob({ title: "Data Analyst" });
+    const create = vi.fn(async () => {
+      throw new AiBudgetExceededError(20, 20, new Date("2026-11-01T00:00:00Z"));
+    });
+    const blockedClient = { messages: { create } } as unknown as Pick<Anthropic, "messages">;
+
+    const summary = await runMatching(testDb.db, {
+      userId: USER, usageSink: NoopUsageSink, anthropicFor: () => blockedClient, env: { ...ENV, MATCHING_EXPLAIN_TOP_N: 5 },
+    });
+
+    expect(summary.status).toBe("completed");
+    expect(summary.jobsEligible).toBe(2);
+    expect(summary.jobsExplained).toBe(0);
+    expect(create).toHaveBeenCalledTimes(1);
+    const rows = await withUserContext(testDb.db, USER, (tx) => tx.select().from(schema.jobMatches));
+    expect(rows.filter((r) => r.eligible && r.overallScore !== null)).toHaveLength(2);
+  });
 });
+

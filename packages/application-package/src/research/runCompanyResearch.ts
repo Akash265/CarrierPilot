@@ -1,5 +1,6 @@
 import { randomBytes } from "node:crypto";
 import Anthropic from "@anthropic-ai/sdk";
+import type { MessagesClient } from "@ai-career/ai";
 import type { Env } from "@ai-career/config";
 import type { ResearchFactDraft, ResearchStatus } from "../types";
 import { extractCitedFacts } from "./extractCitedFacts";
@@ -34,7 +35,7 @@ export type CompanyResearchEnv = Pick<Env, "ANTHROPIC_MODEL_RESEARCH" | "COMPANY
  * is a bug and is rethrown.
  */
 export async function runCompanyResearch(
-  client: Pick<Anthropic, "messages">,
+  client: MessagesClient,
   env: CompanyResearchEnv,
   input: CompanyResearchInput
 ): Promise<CompanyResearchResult> {

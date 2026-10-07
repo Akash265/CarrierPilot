@@ -1,7 +1,9 @@
 // apps/web/src/app/api/application-pitches/[jobId]/run/route.test.ts
 import { describe, it, expect, vi, beforeAll, beforeEach, afterAll } from "vitest";
 import type postgres from "postgres";
-import { openAdminDb, wipeMatchingData, insertJob, insertCareerGoal, insertMatch } from "../../../../../test/jobsDb";
+import {
+  openAdminDb, wipeMatchingData, insertJob, insertCareerGoal, insertMatch, insertAiSpend, aiCallRows, insertResumeEvidence, wipeResumeEvidence,
+} from "../../../../../test/jobsDb";
 
 vi.mock("@ai-career/config", () => ({
   loadEnv: () => ({
@@ -14,6 +16,8 @@ vi.mock("@ai-career/config", () => ({
     EMBEDDING_PROVIDER: "voyage",
     VOYAGE_API_KEY: "voyage-test",
     VOYAGE_EMBEDDING_MODEL: "voyage-3.5",
+    AI_MONTHLY_BUDGET_USD: 5,
+    AI_BUDGET_WARN_PERCENT: 80,
   }),
 }));
 
@@ -25,9 +29,13 @@ let admin: postgres.Sql;
 beforeAll(async () => {
   admin = await openAdminDb();
 });
-beforeEach(() => wipeMatchingData(admin, USER));
+beforeEach(async () => {
+  await wipeMatchingData(admin, USER);
+  await wipeResumeEvidence(admin, USER);
+});
 afterAll(async () => {
   await wipeMatchingData(admin, USER);
+  await wipeResumeEvidence(admin, USER);
   await admin.end();
 });
 
@@ -60,4 +68,22 @@ describe("POST /api/application-pitches/[jobId]/run", () => {
     expect(res.status).toBe(409);
     expect((await res.json()).error).toMatch(/profile/i);
   });
+
+  it("answers 429 with the budget message once this month's AI spend reaches the ceiling, before any paid research call", async () => {
+    const goalId = await insertCareerGoal(admin, USER);
+    const jobId = await insertJob(admin, USER, {});
+    await insertMatch(admin, USER, jobId, goalId, { eligible: true });
+    await insertResumeEvidence(admin, USER);
+    await insertAiSpend(admin, USER, 5);
+
+    const res = await run(jobId);
+
+    expect(res.status).toBe(429);
+    const body = await res.json();
+    expect(body.code).toBe("ai_budget_exceeded");
+    expect(body.error).toMatch(/^Monthly AI budget reached/);
+    expect(await aiCallRows(admin, USER)).toContainEqual({ operation: "company_research", outcome: "blocked", error_code: "budget_exceeded" });
+    expect(await admin`SELECT 1 FROM company_research WHERE user_id = ${USER}`).toHaveLength(0);
+  });
 });
+

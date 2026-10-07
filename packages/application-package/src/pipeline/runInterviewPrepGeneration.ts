@@ -17,7 +17,7 @@ export interface RunInterviewPrepGenerationResult {
 
 /** Phase 7c design §4.3: shared context → deterministic gap terms → research-tier call → guard → D44 → locked insert. */
 export async function runInterviewPrepGeneration(db: DbClient, opts: PrepareApplicationContextOptions): Promise<RunInterviewPrepGenerationResult> {
-  const { userId, jobId, anthropicClient, env } = opts;
+  const { userId, jobId, anthropicFor, env } = opts;
   const { job, snapshot, research, requirements, evidence } = await prepareApplicationContext(db, opts);
   // D100: every missing required term is detected; the model is given (and may write gap questions for)
   // only the first MAX_GAP_TERMS, but no likely question may target any of them, and all are stored.
@@ -26,7 +26,7 @@ export async function runInterviewPrepGeneration(db: DbClient, opts: PrepareAppl
 
   let guard: InterviewPrepGuardResult;
   try {
-    const draft = await generateInterviewPrep(anthropicClient, env, { jobTitle: job.title, companyName: job.companyName, evidence, gapTerms: modelGapTerms });
+    const draft = await generateInterviewPrep(anthropicFor("interview_prep_generation"), env, { jobTitle: job.title, companyName: job.companyName, evidence, gapTerms: modelGapTerms });
     guard = applyInterviewPrepGuard(evidence, { modelGapTerms, allGapTerms }, draft);
   } catch (error) {
     if (error instanceof Anthropic.APIError || error instanceof InterviewPrepGenerationValidationError) {

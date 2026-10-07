@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { loadEnv } from "@ai-career/config";
+import { AiUsageLink } from "./AiUsageLink";
 
 export default function Home() {
   const env = loadEnv();
@@ -31,6 +32,7 @@ export default function Home() {
         <Link href="/insights" className="underline">
           7. Insights — see which applications get responses
         </Link>
+        <AiUsageLink />
       </nav>
     </main>
   );

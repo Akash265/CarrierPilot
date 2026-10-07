@@ -1,5 +1,6 @@
 import { randomBytes } from "node:crypto";
 import type Anthropic from "@anthropic-ai/sdk";
+import type { MessagesClient } from "@ai-career/ai";
 import type { Env } from "@ai-career/config";
 import { MAX_PARAGRAPH_CHARS } from "../types";
 import type { PitchEvidenceItem } from "../pitch/buildEvidenceIndex";
@@ -47,7 +48,7 @@ export interface GenerateCoverLetterInput {
  * random per-request delimiter (D20).
  */
 export async function generateCoverLetter(
-  client: Pick<Anthropic, "messages">,
+  client: MessagesClient,
   env: Pick<Env, "ANTHROPIC_MODEL_FAST">,
   input: GenerateCoverLetterInput
 ): Promise<CoverLetterDraft> {

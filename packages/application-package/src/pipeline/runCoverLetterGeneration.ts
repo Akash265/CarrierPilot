@@ -20,14 +20,14 @@ export interface RunCoverLetterGenerationResult {
  * gap mentions (missingTermMentions, D106) and the review flag they raise (D101) → D44 → locked insert.
  */
 export async function runCoverLetterGeneration(db: DbClient, opts: PrepareApplicationContextOptions): Promise<RunCoverLetterGenerationResult> {
-  const { userId, jobId, anthropicClient, env } = opts;
+  const { userId, jobId, anthropicFor, env } = opts;
   const { job, snapshot, research, requirements, evidence } = await prepareApplicationContext(db, opts);
   // D101: every missing required term (not capped) -- a later paragraph naming one needs the user's review.
   const gapTerms = computeGapTerms(requirements, snapshot.catalog);
 
   let guard: CoverLetterGuardResult;
   try {
-    const draft = await generateCoverLetter(anthropicClient, env, { jobTitle: job.title, companyName: job.companyName, evidence });
+    const draft = await generateCoverLetter(anthropicFor("cover_letter_generation"), env, { jobTitle: job.title, companyName: job.companyName, evidence });
     guard = applyCoverLetterGuard(evidence, draft);
     // D106: the cause is stored per paragraph so the review banner can name it.
     const mentions = findGapTermMentions(guard.paragraphs, gapTerms);

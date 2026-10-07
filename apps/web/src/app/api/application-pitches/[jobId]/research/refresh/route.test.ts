@@ -1,7 +1,7 @@
 // apps/web/src/app/api/application-pitches/[jobId]/research/refresh/route.test.ts
 import { describe, it, expect, vi, beforeAll, beforeEach, afterAll } from "vitest";
 import type postgres from "postgres";
-import { openAdminDb, wipeMatchingData, insertJob } from "../../../../../../test/jobsDb";
+import { openAdminDb, wipeMatchingData, insertJob, insertAiSpend, aiCallRows } from "../../../../../../test/jobsDb";
 
 vi.mock("@ai-career/config", () => ({
   loadEnv: () => ({
@@ -14,6 +14,8 @@ vi.mock("@ai-career/config", () => ({
     EMBEDDING_PROVIDER: "voyage",
     VOYAGE_API_KEY: "voyage-test",
     VOYAGE_EMBEDDING_MODEL: "voyage-3.5",
+    AI_MONTHLY_BUDGET_USD: 5,
+    AI_BUDGET_WARN_PERCENT: 80,
   }),
 }));
 vi.mock("@ai-career/application-package", async (importOriginal) => {
@@ -75,4 +77,21 @@ describe("POST /api/application-pitches/[jobId]/research/refresh", () => {
     expect(res.status).toBe(502);
     expect((await res.json()).error).toMatch(/existing research was kept/i);
   });
+
+  it("hands research a company_research client; a budget block answers 429 and is recorded", async () => {
+    const jobId = await insertJob(admin, USER, {});
+    await insertAiSpend(admin, USER, 5);
+    // Drive the real tracked client the route built: the gate blocks before the SDK is contacted.
+    vi.mocked(ensureCompanyResearch).mockImplementation(async (_db, _userId, client) => {
+      await client.messages.create({ model: "test-research-model", max_tokens: 1, messages: [{ role: "user", content: "x" }] });
+      throw new Error("unreachable: the budget gate should have thrown");
+    });
+
+    const res = await refresh(jobId);
+
+    expect(res.status).toBe(429);
+    expect((await res.json()).code).toBe("ai_budget_exceeded");
+    expect(await aiCallRows(admin, USER)).toContainEqual({ operation: "company_research", outcome: "blocked", error_code: "budget_exceeded" });
+  });
 });
+

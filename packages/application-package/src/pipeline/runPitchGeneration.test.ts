@@ -19,11 +19,18 @@ import { runCompanyResearch } from "../research/runCompanyResearch";
 import { generatePitch, PitchGenerationValidationError, type GeneratePitchInput } from "../pitch/generatePitch";
 import { ensureJobRequirements, JobRequirementExtractionValidationError } from "@ai-career/resume-optimization";
 import { runPitchGeneration, PitchGenerationError } from "./runPitchGeneration";
+import { AiBudgetExceededError } from "@ai-career/ai";
 import type { PitchDraft } from "../pitch/pitchSchema";
 
 const USER = "00000000-0000-0000-0000-0000000000c7";
 const ENV = { ANTHROPIC_MODEL_FAST: "fast-model", ANTHROPIC_MODEL_RESEARCH: "research-model", COMPANY_RESEARCH_MAX_SEARCHES: 5 };
 const CLIENT = {} as Pick<Anthropic, "messages">;
+// One distinct fake per operation (Phase 11a), so tests can see which label each call was handed.
+const LABELLED = new Map<string, Pick<Anthropic, "messages">>();
+const CLIENT_FOR = (operation: string) => {
+  if (!LABELLED.has(operation)) LABELLED.set(operation, { ...CLIENT });
+  return LABELLED.get(operation)!;
+};
 let testDb: TestDb;
 
 /** Cites the first evidence item of each required kind -- the ids only exist at runtime. */
@@ -80,7 +87,7 @@ async function seed(opts: { match?: boolean; eligible?: boolean; profile?: boole
   return job.id as string;
 }
 
-const run = (jobId: string) => runPitchGeneration(testDb.db, { userId: USER, jobId, anthropicClient: CLIENT, env: ENV });
+const run = (jobId: string) => runPitchGeneration(testDb.db, { userId: USER, jobId, anthropicFor: CLIENT_FOR, env: ENV });
 
 describe("runPitchGeneration", () => {
   it("throws no_match when there is no job_matches row", async () => {
@@ -184,5 +191,29 @@ describe("runPitchGeneration", () => {
 
   it("is a PitchGenerationError subclass of Error", () => {
     expect(new PitchGenerationError("no_match")).toBeInstanceOf(Error);
+  });
+
+  it("hands research, requirements and the pitch each the client labelled with its own operation", async () => {
+    const jobId = await seed();
+    await run(jobId);
+    expect(vi.mocked(runCompanyResearch).mock.calls[0][0]).toBe(CLIENT_FOR("company_research"));
+    expect(vi.mocked(ensureJobRequirements).mock.calls[0][2]).toBe(CLIENT_FOR("job_requirements_extraction"));
+    expect(vi.mocked(generatePitch).mock.calls[0][0]).toBe(CLIENT_FOR("pitch_generation"));
+  });
+
+  it("lets a budget block from the pitch call propagate unchanged (not mapped to unknown)", async () => {
+    const jobId = await seed();
+    const blocked = new AiBudgetExceededError(20, 20, new Date("2026-11-01T00:00:00Z"));
+    vi.mocked(generatePitch).mockRejectedValueOnce(blocked);
+    await expect(run(jobId)).rejects.toBe(blocked);
+  });
+
+  it("lets a budget block from company research propagate without caching a failed research row", async () => {
+    const jobId = await seed();
+    const blocked = new AiBudgetExceededError(20, 20, new Date("2026-11-01T00:00:00Z"));
+    vi.mocked(runCompanyResearch).mockRejectedValueOnce(blocked);
+    await expect(run(jobId)).rejects.toBe(blocked);
+    const rows = await testDb.adminSql`SELECT status FROM company_research WHERE user_id = ${USER}`;
+    expect(rows).toEqual([]);
   });
 });
