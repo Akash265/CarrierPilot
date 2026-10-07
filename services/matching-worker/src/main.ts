@@ -1,7 +1,7 @@
 import IORedis from "ioredis";
 import { loadEnv } from "@ai-career/config";
 import { DbUsageSink, closeDbClient, createDbClient, loadRedactionValues } from "@ai-career/db";
-import { createLogger, initProcessLogging } from "@ai-career/logging";
+import { createLogger, initProcessLogging, throttleErrorLog } from "@ai-career/logging";
 import { createShutdown, startHeartbeat } from "@ai-career/monitoring";
 import { createAnthropicFor, withLangfuseExport, type AiUsageSink } from "@ai-career/ai";
 import { createMatchingWorker } from "./worker";
@@ -36,7 +36,7 @@ async function main(): Promise<void> {
   worker.on("completed", (job) => log.info("matching_completed", { jobId: job.id }));
   worker.on("failed", (job, error) => log.error("matching_failed", { jobId: job?.id, ...failureFields(error) }));
   // Redis connection errors are re-emitted here; with no listener the worker would crash with Node's raw print.
-  worker.on("error", (error) => log.error("worker_error", { error }));
+  worker.on("error", throttleErrorLog(log, "worker_error"));
   log.info("worker_started");
 
   // Runs once however many signals arrive, exits 0, and is cut off with exit 1 if a step hangs (Redis unreachable).

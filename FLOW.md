@@ -1580,8 +1580,10 @@ createLogger({ service }).error(event, fields)        packages/logging/src/logge
  ├─ below the process level (configureLogging / initProcessLogging; default info)? → nothing written
  ├─ sanitize(fields, defaultRedactor())                packages/logging/src/sanitize.ts
  │    strings → Redactor.redact (D9 values, then the email pattern) → truncate 500
- │    Error   → { name, code? (code-shaped), causeName?, frames ≤ 8 repo-relative }   -- message lines skipped by count,
-              never emitted; name, causeName and frames scrubbed too (D173)
+ │    Error   → { name, code? (code-shaped), causeName?, frames ≤ 8 repo-relative }   -- frames read only after the exact
+              "<name>: <message>" header (no match → no frames); name/causeName identifier-shaped or "Error";
+              frames scrubbed (D173, D175)
+ │    top-level `error` that is not an Error → { name: "NonError", type }  (a rejected string/object can carry content) (D175)
  │    objects ≤ depth 3, arrays ≤ 50, cycles "[circular]", Date → ISO, bigint → string
  └─ JSON line { ts, level, service, event, ...fields } → stderr (warn/error) | stdout (debug/info); never throws
 ```
@@ -1600,6 +1602,7 @@ web: refreshWebRedactions()                 apps/web/src/lib/webLogging.ts   (fi
                                             then refreshIfStale, ≤ once a minute, one short-lived DB connection per load)
      invalidateWebRedactions()              ← saveConfirmedProfile after a successful save (next error reloads)        (D174)
 refresher: each load ≤ 2 s (RedactionLoadTimeout); every attempt, failed or not, starts the 60 s window     (D174)
+           a timed-out load still applies when it lands, unless a newer load already succeeded (numbered loads) (D175)
 ```
 
 ### 17c. An error escaping a route
@@ -1624,9 +1627,11 @@ worker main.ts → (right after Redis opens) startHeartbeat(connection, "<worker
                   SET careerpilot:worker:<worker> {startedAt, beatAt, pid, stoppedAt:null}  now + every interval
 shutdown = createShutdown({ logger, steps })     packages/monitoring/src/shutdown.ts   (D174)
   SIGINT/SIGTERM (any number) → steps once: worker.close → heartbeat.stop() (SET ... stoppedAt, ≤ 2 s) → connection.quit → db
-  → exit 0 | step throws → shutdown_failed, exit 1 | still waiting after 8 s → shutdown_timed_out, exit 1
+  → exit 0 | step throws → shutdown_failed, exit 1 | still waiting after 8 s → shutdown_timed_out, exit 1   (D175: 8 s, ref'd)
+worker.on("error", throttleErrorLog(log, "worker_error"))   packages/logging/src/throttle.ts                  (D175)
+  first error logged in full; the rest counted for 60 s → one worker_error_suppressed { count, windowMs }
 
-GET /api/status                               apps/web/src/app/api/status/route.ts → loadStatus(env)   apps/web/src/lib/status/loadStatus.ts
+GET /api/status                               apps/web/src/app/api/status/route.ts → loadStatus(env, now, checks?)   apps/web/src/lib/status/loadStatus.ts
  ├─ loadEnv() throws → 200 unavailableReport() (status_config_invalid logged)          (D174)
  ├─ in parallel: database SELECT 1 (5 s) and the Redis steps below                     (D174)
  ├─ database: SELECT 1 (5 s)                  → ok | unavailable

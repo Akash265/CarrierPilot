@@ -3,3 +3,4 @@ export { Redactor } from "./redactor";
 export { sanitize, serializeError, type SerializedError } from "./sanitize";
 export { createRedactionRefresher, type RedactionRefresher, type RefresherOptions } from "./refresher";
 export { initProcessLogging, type ProcessLoggingOptions } from "./processLogging";
+export { throttleErrorLog, type ThrottleOptions } from "./throttle";

@@ -2,7 +2,7 @@ import IORedis from "ioredis";
 import { Queue } from "bullmq";
 import { loadEnv } from "@ai-career/config";
 import { closeDbClient, createDbClient, loadRedactionValues } from "@ai-career/db";
-import { createLogger, initProcessLogging } from "@ai-career/logging";
+import { createLogger, initProcessLogging, throttleErrorLog } from "@ai-career/logging";
 import { createShutdown, startHeartbeat } from "@ai-career/monitoring";
 import { INGEST_QUEUE_NAME, createAdapterFor, type IngestJobData } from "@ai-career/ingestion";
 import { reconcileSchedules } from "./reconcile";
@@ -39,7 +39,7 @@ async function main(): Promise<void> {
   worker.on("completed", (job) => log.info("ingest_completed", { jobId: job.id }));
   worker.on("failed", (job, error) => log.error("ingest_failed", { jobId: job?.id, ...failureFields(error) }));
   // Redis connection errors are re-emitted here; with no listener the worker would crash with Node's raw print.
-  worker.on("error", (error) => log.error("worker_error", { error }));
+  worker.on("error", throttleErrorLog(log, "worker_error"));
 
   const everyMs = env.INGEST_INTERVAL_MINUTES * 60_000;
   const reconcile = async (refresh: boolean) => {
