@@ -40,6 +40,7 @@ export interface RunMatchingEnv {
   ANTHROPIC_MODEL_FAST: string;
   EMBEDDING_PROVIDER: "voyage" | "self-hosted";
   VOYAGE_API_KEY?: string;
+  VOYAGE_API_BASE?: string;
   VOYAGE_EMBEDDING_MODEL: string;
   MATCHING_EXPLAIN_TOP_N: number;
   MATCHING_EXPERIENCE_GRACE_YEARS: number;

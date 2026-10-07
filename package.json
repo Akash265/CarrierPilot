@@ -9,7 +9,8 @@
     "lint": "turbo run lint",
     "typecheck": "turbo run typecheck",
     "test": "turbo run test",
-    "retention:run": "pnpm --filter @ai-career/maintenance-worker retention:run"
+    "retention:run": "pnpm --filter @ai-career/maintenance-worker retention:run",
+    "e2e": "pnpm --filter @ai-career/e2e e2e"
   },
   "devDependencies": {
     "turbo": "^2.3.0",

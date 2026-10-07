@@ -28,7 +28,7 @@ export interface EmbedDeps {
   clock?: () => number;
 }
 
-const VOYAGE_URL = "https://api.voyageai.com/v1/embeddings";
+const DEFAULT_VOYAGE_API_BASE = "https://api.voyageai.com";
 const MAX_ATTEMPTS = 3;
 const BASE_DELAY_MS = 500;
 const MAX_RETRY_AFTER_MS = 30_000;
@@ -56,7 +56,7 @@ function voyageErrorCode(error: unknown): string {
  * row per call, labelled with `usage.operation`. Empty input returns [] without a call or a row.
  */
 export async function embedTexts(
-  env: Pick<Env, "EMBEDDING_PROVIDER" | "VOYAGE_API_KEY" | "VOYAGE_EMBEDDING_MODEL"> & BudgetEnv,
+  env: Pick<Env, "EMBEDDING_PROVIDER" | "VOYAGE_API_KEY" | "VOYAGE_EMBEDDING_MODEL"> & BudgetEnv & { VOYAGE_API_BASE?: string },
   texts: string[],
   usage: EmbedUsage,
   deps: EmbedDeps = {}
@@ -68,6 +68,8 @@ export async function embedTexts(
   const fetchFn = deps.fetchFn ?? ((url: string, init: RequestInit) => fetch(url, init));
   const sleep = deps.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
   const random = deps.random ?? Math.random;
+  // Operator-controlled, never user input (like GREENHOUSE_API_BASE); E2E points it at a local stand-in (D183).
+  const url = `${(env.VOYAGE_API_BASE ?? DEFAULT_VOYAGE_API_BASE).replace(/\/+$/, "")}/v1/embeddings`;
 
   return trackAiCall(
     {
@@ -78,7 +80,7 @@ export async function embedTexts(
       for (let attempt = 1; ; attempt++) {
         let response: Response;
         try {
-          response = await fetchFn(VOYAGE_URL, {
+          response = await fetchFn(url, {
             method: "POST",
             headers: { Authorization: `Bearer ${env.VOYAGE_API_KEY}`, "Content-Type": "application/json" },
             body: JSON.stringify({ input: texts, model: env.VOYAGE_EMBEDDING_MODEL }),
