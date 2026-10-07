@@ -1,7 +1,7 @@
 import { and, eq, inArray, isNotNull } from "drizzle-orm";
 import Anthropic from "@anthropic-ai/sdk";
 import { schema, withUserContext, type DbClient } from "@ai-career/db";
-import type { AiUsageSink } from "@ai-career/ai";
+import { AiBudgetExceededError, type AiUsageSink, type AnthropicFor } from "@ai-career/ai";
 import { evaluateEligibility } from "../eligibility/evaluateEligibility";
 import { scoreSkills } from "../scoring/scoreSkills";
 import { scoreExperience } from "../scoring/scoreExperience";
@@ -50,7 +50,8 @@ export interface RunMatchingEnv {
 
 export interface RunMatchingOptions {
   userId: string;
-  anthropicClient: Pick<Anthropic, "messages">;
+  /** One labelled, budget-checked Anthropic client per operation (Phase 11a). */
+  anthropicFor: AnthropicFor;
   /** Where this run's embedding calls are recorded and budget-checked (Phase 11a). */
   usageSink: AiUsageSink;
   env: RunMatchingEnv;
@@ -82,7 +83,7 @@ interface ScoredJob {
  * after recording it -- same shape as packages/ingestion's `runIngestion`.
  */
 export async function runMatching(db: DbClient, opts: RunMatchingOptions): Promise<MatchingRunSummary> {
-  const { userId, env, anthropicClient, usageSink } = opts;
+  const { userId, env, anthropicFor, usageSink } = opts;
   const now = opts.now ?? (() => new Date());
   const inUserContext = <T>(fn: (tx: DbClient) => Promise<T>) => withUserContext(db, userId, fn);
 
@@ -246,11 +247,12 @@ export async function runMatching(db: DbClient, opts: RunMatchingOptions): Promi
       })
     );
     const toExplain = stale.slice(0, env.MATCHING_EXPLAIN_TOP_N);
+    const explainClient = anthropicFor("match_explanation");
 
     for (const item of toExplain) {
       try {
         const referenceDate = item.job.postedAt ?? item.job.firstSeenAt;
-        const draft = await generateMatchExplanation(anthropicClient, env, {
+        const draft = await generateMatchExplanation(explainClient, env, {
           jobTitle: item.job.title,
           companyName: item.job.companyName,
           overallScore: item.overallScore,
@@ -269,6 +271,9 @@ export async function runMatching(db: DbClient, opts: RunMatchingOptions): Promi
         );
         counters.explained++;
       } catch (error) {
+        // Over the monthly AI budget (Phase 11a): every remaining explanation would be blocked too, so stop
+        // explaining and finish the run -- the scores are complete, only narratives are missing.
+        if (error instanceof AiBudgetExceededError) break;
         // A malformed response (MatchExplanationValidationError) or a transient Anthropic API failure
         // (rate limit, 5xx, network -- Anthropic.APIError) leaves the row's deterministic scores intact
         // and moves on to the next job -- never blocks the run (design doc §4 step 6). Anything else is

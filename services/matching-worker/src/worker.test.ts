@@ -17,7 +17,7 @@ const ENV: RunMatchingEnv = {
   MATCHING_EXPLAIN_TOP_N: 0, MATCHING_EXPERIENCE_GRACE_YEARS: 1, MATCHING_FRESHNESS_HALF_LIFE_HOURS: 168, MATCHING_EXPLANATION_TTL_DAYS: 7,
   AI_MONTHLY_BUDGET_USD: 20,
 };
-const usageSinkFor = vi.fn(() => NoopUsageSink);
+const aiFor = vi.fn(() => ({ usageSink: NoopUsageSink, anthropicFor: () => anthropicClient }));
 const anthropicClient: Pick<Anthropic, "messages"> = { messages: { create: vi.fn() } as unknown as Anthropic["messages"] };
 
 let t: TestDb;
@@ -30,7 +30,7 @@ beforeAll(async () => {
   queue = new Queue<MatchingJobData>(queueName, { connection });
   events = new QueueEvents(queueName, { connection });
   await events.waitUntilReady();
-  worker = createMatchingWorker({ connection, db: t.db, anthropicClient, usageSinkFor, env: ENV, queueName });
+  worker = createMatchingWorker({ connection, db: t.db, aiFor, env: ENV, queueName });
   await worker.waitUntilReady();
 });
 beforeEach(() => wipeUser(t.adminSql, USER));
@@ -63,7 +63,7 @@ describe("matching worker", () => {
 
     const runs = await t.adminSql`SELECT status FROM matching_runs WHERE user_id = ${USER}`;
     expect(runs).toEqual([{ status: "completed" }]);
-    expect(usageSinkFor).toHaveBeenCalledWith(USER);
+    expect(aiFor).toHaveBeenCalledWith(USER);
   });
 
   it("does not retry a permanent failure (no active career goal)", async () => {
