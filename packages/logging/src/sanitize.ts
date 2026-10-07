@@ -9,7 +9,6 @@ const MAX_DEPTH = 3;
 const MAX_ARRAY = 50;
 const MAX_STRING = 500;
 const MAX_FRAMES = 8;
-const MAX_NAME = 100;
 const MAX_FRAME = 200;
 const CODE = /^[A-Za-z0-9_:.-]{1,40}$/;
 
@@ -36,15 +35,20 @@ function relativeLocation(location: string): string {
 }
 
 /**
- * V8 stacks start with "<Name>: <message>", and every line of a multi-line message comes before the first frame.
- * Those lines are skipped by count -- the message is measured, never emitted -- so a message line shaped like a
- * frame ("    at Jane Doe:2019") can never be mistaken for one (final-review fix, D173).
+ * V8 stacks start with a header -- "<name>: <message>", or just the name or the message when the other is empty --
+ * followed by "    at ..." frame lines. That exact header text is skipped (the message is matched, never emitted), so a
+ * message or name line shaped like a frame ("    at Jane Doe:2019") can never be read as one. Fail closed: if the
+ * stack does not start with the error's own header followed by a line break (a custom stack, or a message changed
+ * after the stack was captured), no frames are emitted at all (D173, D175).
  */
-function framesOf(stack: string | undefined, message: unknown, redactor: Redactor): string[] {
+function framesOf(stack: string | undefined, name: unknown, message: unknown, redactor: Redactor): string[] {
   if (!stack) return [];
+  const n = typeof name === "string" ? name : "";
+  const m = typeof message === "string" ? message : "";
+  const header = n && m ? `${n}: ${m}` : n || m;
+  if (!stack.startsWith(header) || (stack.length > header.length && stack[header.length] !== "\n")) return [];
   const frames: string[] = [];
-  const headerLines = Math.max(1, typeof message === "string" && message.length > 0 ? message.split("\n").length : 1);
-  for (const line of stack.split("\n").slice(headerLines)) {
+  for (const line of stack.slice(header.length).split("\n")) {
     const at = line.trim().match(/^at (.+)$/);
     if (!at) continue;
     const location = (at[1].match(/\(([^()]+)\)\s*$/)?.[1] ?? at[1]).trim();
@@ -57,14 +61,23 @@ function framesOf(stack: string | undefined, message: unknown, redactor: Redacto
 
 const cap = (text: string, max: number) => (text.length > max ? `${text.slice(0, max)}…[truncated]` : text);
 
-/** Name, cause name and frames all go through the redactor: a name or a path can be built from content too. */
+const IDENTIFIER = /^[A-Za-z_$][\w$.]{0,99}$/;
+
+/**
+ * An error or cause name is kept only if it is identifier-shaped and holds no D9 value (class names always are);
+ * anything else -- spaces, newlines, an email, a profile value -- becomes "Error" (D175).
+ */
+function safeName(name: unknown, redactor: Redactor): string {
+  return typeof name === "string" && IDENTIFIER.test(name) && redactor.redact(name) === name ? name : "Error";
+}
+
+/** Frames go through the redactor too: a path can contain a profile value. */
 export function serializeError(error: Error, redactor: Redactor = new Redactor()): SerializedError {
-  const name = typeof error.name === "string" && error.name ? error.name : "Error";
-  const out: SerializedError = { name: cap(redactor.redact(name), MAX_NAME), frames: framesOf(error.stack, error.message, redactor) };
+  const out: SerializedError = { name: safeName(error.name, redactor), frames: framesOf(error.stack, error.name, error.message, redactor) };
   const code = (error as { code?: unknown }).code;
   if (typeof code === "string" && CODE.test(code)) out.code = code;
   const cause = (error as { cause?: unknown }).cause;
-  if (isErrorLike(cause)) out.causeName = cap(redactor.redact(String(cause.name)), MAX_NAME);
+  if (isErrorLike(cause)) out.causeName = safeName(cause.name, redactor);
   // Key order for readable lines: name, code, causeName, frames.
   return { name: out.name, ...(out.code ? { code: out.code } : {}), ...(out.causeName ? { causeName: out.causeName } : {}), frames: out.frames };
 }
@@ -107,6 +120,12 @@ function sanitizeValue(value: unknown, redactor: Redactor, depth: number, ancest
 function sanitizeFields(fields: Record<string, unknown>, redactor: Redactor, depth: number, ancestors: Set<object>): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const [key, raw] of Object.entries(fields)) {
+    // Convention: a top-level `error` field holds a thrown or rejected value. One that is not an Error (a rejected
+    // string, a plain `{ message, body }` object) can carry content, so only its type is logged (D175).
+    if (depth === 0 && key === "error" && raw !== undefined && !isErrorLike(raw)) {
+      out[key] = { name: "NonError", type: raw === null ? "null" : Array.isArray(raw) ? "array" : typeof raw };
+      continue;
+    }
     const value = sanitizeValue(raw, redactor, depth + 1, ancestors);
     if (value !== undefined) out[key] = value;
   }
