@@ -1,4 +1,11 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
+
+const { envState } = vi.hoisted(() => ({ envState: { current: {} as Record<string, unknown> } }));
+vi.mock("@ai-career/config", () => ({ loadEnv: () => envState.current }));
+const BASE_ENV = { REDIS_URL: "redis://localhost:6379" };
+beforeEach(() => {
+  envState.current = { ...BASE_ENV };
+});
 
 vi.mock("@ai-career/db", () => ({
   createDbClient: () => ({
@@ -24,6 +31,16 @@ describe("GET /api/health", () => {
     expect(body).toEqual({
       status: "ok",
       checks: { database: true, redis: true },
+      aiUsage: { langfuseEnabled: false, langfuseExportFailures: 0 },
     });
+  });
+
+  it("reports Langfuse export as enabled when it is configured, without affecting status", async () => {
+    envState.current = {
+      ...BASE_ENV, LANGFUSE_HOST: "https://cloud.langfuse.com", LANGFUSE_PUBLIC_KEY: "pk", LANGFUSE_SECRET_KEY: "sk",
+    };
+    const res = await GET();
+    expect(res.status).toBe(200);
+    expect((await res.json()).aiUsage).toEqual({ langfuseEnabled: true, langfuseExportFailures: 0 });
   });
 });

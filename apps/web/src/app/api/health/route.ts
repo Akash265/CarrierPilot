@@ -3,6 +3,7 @@ import { createDbClient, closeDbClient } from "@ai-career/db";
 import { sql } from "drizzle-orm";
 import Redis from "ioredis";
 import { loadEnv } from "@ai-career/config";
+import { getLangfuseExportFailures, isLangfuseConfigured } from "@ai-career/ai";
 
 export async function GET() {
   const env = loadEnv();
@@ -40,5 +41,8 @@ export async function GET() {
   }
 
   const status = checks.database && checks.redis ? "ok" : "degraded";
-  return NextResponse.json({ status, checks }, { status: status === "ok" ? 200 : 503 });
+  // Phase 11a: informational only -- Langfuse is optional, so its health never changes `status`. The
+  // failure count is this web process's own exports since it started (each worker process has its own).
+  const aiUsage = { langfuseEnabled: isLangfuseConfigured(env), langfuseExportFailures: getLangfuseExportFailures() };
+  return NextResponse.json({ status, checks, aiUsage }, { status: status === "ok" ? 200 : 503 });
 }
