@@ -1,6 +1,7 @@
 import { sql } from "drizzle-orm";
 import {
   pgTable, pgEnum, uuid, text, integer, boolean, jsonb, timestamp, uniqueIndex, check, type AnyPgColumn,
+  index,
 } from "drizzle-orm/pg-core";
 import { jobs } from "./jobs";
 import { companyResearch, companyResearchStatusEnum } from "./companyResearch";
@@ -43,5 +44,9 @@ export const coverLetters = pgTable(
       "cover_letters_paragraphs_four_or_five",
       sql`CASE WHEN jsonb_typeof(${t.paragraphs}) = 'array' THEN jsonb_array_length(${t.paragraphs}) BETWEEN 4 AND 5 ELSE false END`
     ),
+    // Phase 11c (D181): one index per foreign key, so a change to the parent row never scans this table.
+    companyResearchIdFkIdx: index("cover_letters_company_research_id_idx").on(t.companyResearchId).where(sql`${t.companyResearchId} IS NOT NULL`),
+    jobIdFkIdx: index("cover_letters_job_id_idx").on(t.jobId),
+    parentCoverLetterIdFkIdx: index("cover_letters_parent_cover_letter_id_idx").on(t.parentCoverLetterId).where(sql`${t.parentCoverLetterId} IS NOT NULL`),
   })
 );

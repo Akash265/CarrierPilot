@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { pgTable, pgEnum, uuid, real, timestamp, uniqueIndex } from "drizzle-orm/pg-core";
+import { pgTable, pgEnum, uuid, real, timestamp, uniqueIndex, index } from "drizzle-orm/pg-core";
 import { jobs } from "./jobs";
 
 export const duplicateCandidateStatusEnum = pgEnum("duplicate_candidate_status", ["pending", "same", "different"]);
@@ -26,5 +26,7 @@ export const jobDuplicateCandidates = pgTable(
   },
   (t) => ({
     pairUniq: uniqueIndex("job_duplicate_candidates_pair_uniq").on(t.jobIdA, t.jobIdB),
+    // Phase 11c (D181): one index per foreign key, so a change to the parent row never scans this table.
+    jobIdBFkIdx: index("job_duplicate_candidates_job_id_b_idx").on(t.jobIdB),
   })
 );

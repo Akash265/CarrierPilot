@@ -58,5 +58,10 @@ export const generatedDocuments = pgTable(
         AND (${t.coverLetterId} IS NULL OR ${t.kind}::text = 'cover_letter')
         AND (${t.interviewPreparationId} IS NULL OR ${t.kind}::text = 'interview_prep')`
     ),
+    // Phase 11c (D181): one index per foreign key, so a change to the parent row never scans this table.
+    applicationPitchIdFkIdx: index("generated_documents_application_pitch_id_idx").on(t.applicationPitchId).where(sql`${t.applicationPitchId} IS NOT NULL`),
+    coverLetterIdFkIdx: index("generated_documents_cover_letter_id_idx").on(t.coverLetterId).where(sql`${t.coverLetterId} IS NOT NULL`),
+    interviewPreparationIdFkIdx: index("generated_documents_interview_preparation_id_idx").on(t.interviewPreparationId).where(sql`${t.interviewPreparationId} IS NOT NULL`),
+    resumeOptimizationIdFkIdx: index("generated_documents_resume_optimization_id_idx").on(t.resumeOptimizationId).where(sql`${t.resumeOptimizationId} IS NOT NULL`),
   })
 );

@@ -58,5 +58,10 @@ export const applications = pgTable(
       "applications_names_not_blank",
       sql`char_length(btrim(${t.companyName})) > 0 AND char_length(btrim(${t.jobTitle})) > 0`
     ),
+    // Phase 11c (D181): one index per foreign key, so a change to the parent row never scans this table.
+    applicationPitchIdFkIdx: index("applications_application_pitch_id_idx").on(t.applicationPitchId).where(sql`${t.applicationPitchId} IS NOT NULL`),
+    coverLetterIdFkIdx: index("applications_cover_letter_id_idx").on(t.coverLetterId).where(sql`${t.coverLetterId} IS NOT NULL`),
+    jobIdFkIdx: index("applications_job_id_idx").on(t.jobId).where(sql`${t.jobId} IS NOT NULL`),
+    resumeOptimizationIdFkIdx: index("applications_resume_optimization_id_idx").on(t.resumeOptimizationId).where(sql`${t.resumeOptimizationId} IS NOT NULL`),
   })
 );
