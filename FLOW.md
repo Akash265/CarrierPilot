@@ -1497,3 +1497,76 @@ MatchesClient.tsx
 - **Fit/threshold constants** (ridge λ, Newton iteration cap/tolerance, the leave-one-out log-loss epsilon, the raises/lowers contribution threshold and cap, the weak-factor odds-ratio cutoff): named constants in `packages/insights/src/model/*.ts` (`RIDGE_LAMBDA`, `MAX_ITERATIONS`, `STEP_TOLERANCE`, `LOG_LOSS_EPSILON`, `CONTRIBUTION_THRESHOLD`, `MAX_NAMED_FACTORS`) and `apps/web/src/app/insights/InsightsClient.tsx` (`WEAK_ODDS_RATIO`) -- never inline magic numbers.
 - **Factor display names:** `FACTOR_LABELS` in `packages/insights/src/model/predictResponse.ts` (keep in sync with the factor chip labels on `/matches`).
 - **The blend formula / weight cap:** `blendWeight`/`blendedScore` in `packages/insights/src/model/{trainResponseModel,predictResponse}.ts`.
+
+## 16. Phase 11a — AI Usage Observability & Cost Control
+
+### 16a. One tracked Anthropic call
+
+```
+caller (route / pipeline / worker)
+ ├─ usageSink = createUsageSink(db, env)                 apps/web/src/lib/aiUsage/createUsageSink.ts
+ │     = withLangfuseExport(new DbUsageSink(db, DEFAULT_USER_ID), env)     (matching worker: per job, for job.data.userId)
+ ├─ anthropicFor = createAnthropicFor(env, usageSink)    packages/ai/src/usage/anthropicFor.ts   (one SDK client, ANTHROPIC_API_KEY)
+ └─ generator(anthropicFor("<operation>"), env, input)   e.g. generatePitch -- unchanged prompt/parse code, typed MessagesClient
+      └─ messages.create(body)  → trackAiCall(ctx, call)                    packages/ai/src/usage/track.ts
+           1. checkBudget(sink, env, now)                                   packages/ai/src/usage/budget.ts
+                ceiling 0 → skip; spend = sink.spendSinceUsd(utcMonthStart(now))  → DbUsageSink: SUM(estimated_cost_usd) under RLS
+                spend >= ceiling → record { outcome: blocked, error_code: budget_exceeded, cost 0 } → throw AiBudgetExceededError
+                spend query throws → record { blocked, budget_check_failed } → rethrow (fail closed)
+           2. call(): SDK messages.create (SDK's own 2 retries) → usage from message.usage
+                throws → record { api_error, error_code: anthropicErrorCode(e) } → rethrow the original error
+           3. estimateCostUsd("anthropic", message.model, usage)            packages/ai/src/usage/prices.ts
+           4. record { ok, tokens, web searches, latency, cost, price_known }  → safeRecord: a failed insert logs
+                {"event":"ai_usage_record_failed",...} and never fails the call
+                └─ DbUsageSink.record → INSERT ai_calls (RLS: SELECT/INSERT policies only)
+                └─ withLangfuseExport: after the insert, void POST {LANGFUSE_HOST}/api/public/otel/v1/traces (3 s timeout,
+                   failures → process counter in GET /api/health)                 packages/ai/src/usage/langfuse.ts
+```
+
+Operations by caller: `resume_extraction` (`POST /api/profile/resume`), `career_goal_parse` (`POST /api/career-goal/parse`),
+`job_requirements_extraction` + `resume_optimization` (`runResumeOptimization`), `company_research` + `job_requirements_extraction`
+(`prepareApplicationContext`, and the research-refresh route), `pitch_generation` / `cover_letter_generation` /
+`interview_prep_generation` (their `run*Generation`), `match_explanation` (`runMatching`).
+
+### 16b. One tracked Voyage call
+
+```
+embedTexts(env, texts, { sink, operation })              packages/ai/src/embeddings.ts
+ ├─ texts empty → [] (no call, no row); provider not voyage → EmbeddingProviderNotImplementedError (no row)
+ └─ trackAiCall(...)  -- same gate / record / export as 16a, provider "voyage"
+      └─ up to 3 attempts: network error, 429, 5xx → sleep(retry-after s ≤ 30 s, else 500ms·2^(n-1) ±20%) → retry
+         other 4xx or 3rd failure → VoyageRequestError("Voyage embeddings request failed: <status>")
+```
+
+Operations by caller: `profile_fact_embedding` (`saveConfirmedProfile`), `goal_embedding` (`ensureGoalEmbedding`, from
+`confirmCareerGoal` and `runMatching`), `job_embedding` (`ensureJobEmbeddings`, from `runMatching`), `resume_similarity_embedding`
+(`runResumeOptimization`). All four keep D56's degrade rule: any error, including a budget block, leaves the embedding null.
+
+### 16c. Where `AiBudgetExceededError` ends up
+
+```
+POST /api/profile/resume            → resume_documents.extraction_status=failed, extraction_error=ai_budget_exceeded → 429
+POST /api/career-goal/parse         → career_goals.parse_status=failed, parse_error=ai_budget_exceeded → 429
+POST /api/resume-optimizations/[jobId]/run, /api/application-pitches/[jobId]/run, .../research/refresh,
+     /api/cover-letters/[jobId]/run, /api/interview-preps/[jobId]/run
+                                    → passes through the pipelines' APIError→"unknown" mapping (not an APIError) → 429
+                                      budgetExceededResponse(error)   apps/web/src/lib/aiUsage/budgetResponse.ts
+                                      { error: "Monthly AI budget reached ($X of $Y). Raise AI_MONTHLY_BUDGET_USD or wait until <date> (UTC).",
+                                        code: "ai_budget_exceeded", spentUsd, ceilingUsd, resetsAt }
+runMatching explanation loop        → break; run completes with every score stored
+ensureJobEmbeddings chunk loop      → break; remaining jobs counted as failed
+ensureCompanyResearch               → propagates before any company_research write (nothing cached)
+```
+
+### 16d. Reading usage
+
+```
+GET /api/usage                          apps/web/src/app/api/usage/route.ts
+ ├─ SELECT ai_calls WHERE created_at >= utcMonthStart(now)   (withUserContext)
+ └─ summarizeUsage(rows, env, now)      apps/web/src/lib/aiUsage/summarizeUsage.ts  → spend, state, byOperation, byModel,
+                                        unknownPriceModels, recentFailures (20)
+/usage           → UsageClient fetches GET /api/usage            apps/web/src/app/usage/UsageClient.tsx
+/ (home)         → AiUsageLink fetches GET /api/usage; badge at warn/over   apps/web/src/app/AiUsageLink.tsx
+GET /api/health  → + aiUsage { langfuseEnabled, langfuseExportFailures }    apps/web/src/app/api/health/route.ts
+```
+

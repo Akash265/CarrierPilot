@@ -254,3 +254,15 @@ never exceeds 50%. The model, its honesty check and which factors it found
 are explained on `/insights`. No AI calls; the model is rebuilt from your
 data on read and retrained only when that data or its settings change
 (an in-process cache), never stored.
+
+Phase 11a (AI Usage & Cost Control) complete: every Anthropic and Voyage call
+is recorded (feature, model, tokens, estimated cost, outcome — never prompt
+or response text) and checked against a monthly budget first.
+`AI_MONTHLY_BUDGET_USD` (default $20; 0 = no ceiling) caps estimated spend
+per UTC month: past it, new AI calls are blocked and AI actions say so until
+the month resets or you raise the ceiling. `/usage` shows spend by feature
+and model and recent failed or blocked calls; the home page flags the link
+from `AI_BUDGET_WARN_PERCENT` (default 80%). Costs are estimates from a
+built-in price table, not your invoice. Optionally set `LANGFUSE_HOST`,
+`LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY` (all three) to also send that
+metadata to Langfuse Cloud or a self-hosted Langfuse.

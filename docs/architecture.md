@@ -1,6 +1,6 @@
 # Architecture — AI Career Intelligence & Application Platform
 
-Status: **Phases 0–9 are implemented** (foundation, candidate profile, career goal, job intelligence, hybrid matching, ATS resume optimization, company research + Hiring Manager Pitch, document export, cover letter + interview preparation, application tracker, guarded browser autofill). This document describes the agreed architecture as of 2026-09-06. See `DECISIONS.md` for the rationale behind each choice. Update this file as implementation reveals deviations — it must describe what's actually built, not an aspiration.
+Status: **Phases 0–10 and 11a are implemented** (foundation, candidate profile, career goal, job intelligence, hybrid matching, ATS resume optimization, company research + Hiring Manager Pitch, document export, cover letter + interview preparation, application tracker, guarded browser autofill, outcome analytics, personal response model, AI usage tracking + monthly budget ceiling). This document describes the agreed architecture as of 2026-09-06. See `DECISIONS.md` for the rationale behind each choice. Update this file as implementation reveals deviations — it must describe what's actually built, not an aspiration.
 
 ## 1. Product framing
 
@@ -39,7 +39,10 @@ MINIO (local) / R2 (optional cloud) — encrypted object storage
 ANTHROPIC (generation) + VOYAGE AI (embeddings)   — D7
  │
  ▼
-LANGFUSE — observability + cost/budget alerting   — D8
+AI USAGE (ai_calls table, monthly budget gate) — D154/D155
+ │
+ ▼
+LANGFUSE — optional, metadata-only OTLP export    — D160
 ```
 
 ## 3. Data sourcing boundary ([D3](../DECISIONS.md))
@@ -154,7 +157,7 @@ Task-to-tier mapping (model **version resolved by role via env var, not hardcode
 | Company research | Anthropic research tier (`ANTHROPIC_MODEL_RESEARCH`) + server-side web search; only API-cited text kept | on-demand, cached per company, manual refresh |
 | Hiring Manager Pitch | Anthropic, fast/cheap tier + deterministic citation guard | on-demand (user action on a match) |
 
-Caching: embedding cache (permanent, content-hash keyed), match-reason cache (7-day TTL, job+resume-version keyed), optimized resume/pitch (generated once, lazily, only when the user acts). Monthly spend ceiling enforced via Langfuse alerting.
+Caching: embedding cache (permanent, content-hash keyed), match-reason cache (7-day TTL, job+resume-version keyed), optimized resume/pitch (generated once, lazily, only when the user acts). Monthly spend ceiling: enforced in-app before every AI call from the local `ai_calls` table, not via Langfuse alerting as first planned (§21, [D154](../DECISIONS.md), [D155](../DECISIONS.md)).
 
 `EMBEDDING_PROVIDER` env var: `voyage` (default) or a self-hosted BGE/E5 endpoint for fully offline operation.
 
@@ -167,7 +170,7 @@ Caching: embedding cache (permanent, content-hash keyed), match-reason cache (7-
 - `career_goal_constraints` is the single source of truth for search-relevant preferences. `candidate_profiles` therefore keeps only contact fields, `years_of_experience` and `work_authorization_notes`; its earlier work-mode, salary-expectation, visa, preferred-role and industry columns and the `company_preferences` table were dropped ([D21](../DECISIONS.md)).
 - `job_sources`, `ingestion_runs`, `raw_job_postings`, `jobs`, `job_postings`, `job_duplicate_candidates` (Phase 4, [D35](../DECISIONS.md)/[D36](../DECISIONS.md)). `jobs` is derived from its postings by a pure merge; salary uses the D6 raw + normalized + currency + period + `is_parsed` shape (implemented as `salary_raw`, `salary_min`, `salary_max`, `salary_currency`, `salary_period`, `salary_is_parsed`, with the min/max annualized).
 
-Everything else (job_requirements, resume_optimizations, ats_evaluations, plus the original core tables) follows spec §19 as written. `learning_features` belongs to Phase 10 and is not built yet. `application_pitches` deviates from spec §19's one-line description; see §14 and [D71](../DECISIONS.md). `generated_documents` is not in spec §19 at all; see §15 and [D81](../DECISIONS.md). `applications` and `application_events` (Phase 9) deviate from spec §19 by having no `application_outcomes` table at all ([D117](../DECISIONS.md)) and a nullable `job_id` for external applications ([D113](../DECISIONS.md)); see §17.
+Everything else (job_requirements, resume_optimizations, ats_evaluations, plus the original core tables) follows spec §19 as written. `learning_features` was never built: Phase 10 computes outcomes on read instead ([D140](../DECISIONS.md)). `ai_calls` (Phase 11a) is not in spec §19: one append-only, content-free row per AI call; see §21 and [D159](../DECISIONS.md). `application_pitches` deviates from spec §19's one-line description; see §14 and [D71](../DECISIONS.md). `generated_documents` is not in spec §19 at all; see §15 and [D81](../DECISIONS.md). `applications` and `application_events` (Phase 9) deviate from spec §19 by having no `application_outcomes` table at all ([D117](../DECISIONS.md)) and a nullable `job_id` for external applications ([D113](../DECISIONS.md)); see §17.
 
 ## 9. Security & privacy
 
@@ -493,3 +496,12 @@ call order and DECISIONS.md D127–D136 the rationale behind each piece.
   - **Factor drift.** A factor's stored value reflects the matching code's scoring logic at the moment the application was created; if that scoring logic changes later, old and new factor values in the training data are not strictly comparable. No scorer-version field is recorded yet.
   - **Correlated factors.** The ridge penalty keeps the fit numerically stable but splits credit between factors that move together; the direction and rough strength shown for each factor are not a precise, independent effect.
   - **Interview-tier model.** Not built. The response tier was chosen because it has enough positives to gate and evaluate meaningfully at personal scale; an interview-tier model would need far more decided applications than most users will have.
+
+## 21. AI Usage Observability & Cost Control (Phase 11a)
+
+- **What it is.** Every Anthropic `messages.create` and every Voyage embedding request goes through one tracked path that checks a monthly budget first and then records one `ai_calls` row: operation, provider, model, tokens, web searches, latency, estimated cost, outcome (`ok` / `api_error` / `blocked`) and a short error code — never prompt or response text ([D154](../DECISIONS.md), [D157](../DECISIONS.md)). `/usage` shows this month's spend against the ceiling, by feature and by model, plus recent failed and blocked calls; the home page badges its link at the warn threshold and when the budget is reached ([D162](../DECISIONS.md)).
+- **How.** `packages/ai/src/usage/` holds the sink interface, the price table, the budget gate, `createAnthropicFor` (a labelled, tracked client per operation) and the Langfuse exporter; `embedTexts` takes a required `{ sink, operation }`. Generators accept only `MessagesClient` (non-streaming `create`), so untracked SDK features do not compile. `packages/db`'s `DbUsageSink` writes and sums `ai_calls` under RLS. Web routes build the sink per request (`apps/web/src/lib/aiUsage/createUsageSink.ts`); the matching worker builds it per job for the job's user.
+- **Budget.** `AI_MONTHLY_BUDGET_USD` (default $20, 0 = none) over the UTC month; at or over it every new call is blocked before reaching the provider, user actions answer 429 with a readable message, and the gate fails closed if spend cannot be read ([D155](../DECISIONS.md)). Background work degrades: embeddings keep D56's "degrade, never block" rule, and matching stops explaining but completes the run ([D158](../DECISIONS.md)).
+- **Costs are estimates** from `packages/ai/src/usage/prices.ts`; an unknown model is priced at the highest known rate and named on `/usage` ([D156](../DECISIONS.md)).
+- **Langfuse (optional).** With all three `LANGFUSE_*` variables set, each recorded call is also sent as one OpenTelemetry span to Langfuse's OTLP endpoint, metadata only, fire-and-forget; `GET /api/health` reports whether export is on and how many exports this process has failed ([D160](../DECISIONS.md)).
+- **Known gaps.** Check-then-call can overshoot the ceiling by the cost of calls already in flight. Prices are a hand-maintained table. The export failure counter is per process and resets on restart. Schema-validation failures are not a separate outcome. Logging (D9 scrubbing), rate limiting, an index audit and automated E2E in CI are Phase 11b–11d.
