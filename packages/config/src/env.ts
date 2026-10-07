@@ -1,5 +1,8 @@
 import { z } from "zod";
 
+/** An empty or whitespace-only value (e.g. `AI_MONTHLY_BUDGET_USD=` in .env) counts as unset, so it gets the default. */
+const blankAsUnset = (value: unknown) => (typeof value === "string" && value.trim() === "" ? undefined : value);
+
 const envSchema = z
   .object({
     NODE_ENV: z.enum(["development", "test", "production"]),
@@ -56,6 +59,14 @@ const envSchema = z
     BROWSER_EXECUTABLE_PATH: z.string().min(1).optional(),
     BROWSER_HEADLESS: z.enum(["true", "false"]).default("false").transform((v) => v === "true"),
     BROWSER_SESSION_TIMEOUT_MIN: z.coerce.number().int().min(1).max(240).default(30),
+    // Phase 11a AI cost control (design §5). Monthly ceiling on ESTIMATED AI spend in USD; 0 = no ceiling.
+    // Blank must fall back to the default: z.coerce.number("") is 0, which would silently mean "unlimited".
+    AI_MONTHLY_BUDGET_USD: z.preprocess(blankAsUnset, z.coerce.number().finite().min(0).default(20)),
+    AI_BUDGET_WARN_PERCENT: z.preprocess(blankAsUnset, z.coerce.number().int().min(1).max(100).default(80)),
+    // Phase 11a optional Langfuse export (design §6): metadata only. All three or none (checked below).
+    LANGFUSE_HOST: z.preprocess(blankAsUnset, z.string().url().regex(/^https?:\/\//i, "must be an http(s) URL").optional()),
+    LANGFUSE_PUBLIC_KEY: z.preprocess(blankAsUnset, z.string().min(1).optional()),
+    LANGFUSE_SECRET_KEY: z.preprocess(blankAsUnset, z.string().min(1).optional()),
   })
   .superRefine((val, ctx) => {
     if (val.EMBEDDING_PROVIDER === "voyage" && !val.VOYAGE_API_KEY) {
@@ -64,6 +75,17 @@ const envSchema = z
         path: ["VOYAGE_API_KEY"],
         message: "VOYAGE_API_KEY is required when EMBEDDING_PROVIDER=voyage",
       });
+    }
+    const langfuse = { LANGFUSE_HOST: val.LANGFUSE_HOST, LANGFUSE_PUBLIC_KEY: val.LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY: val.LANGFUSE_SECRET_KEY };
+    const missing = Object.entries(langfuse).filter(([, v]) => v === undefined).map(([k]) => k);
+    if (missing.length > 0 && missing.length < 3) {
+      for (const key of missing) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: [key],
+          message: "set all of LANGFUSE_HOST, LANGFUSE_PUBLIC_KEY and LANGFUSE_SECRET_KEY, or none of them",
+        });
+      }
     }
   });
 
