@@ -1229,4 +1229,11 @@ No browser console errors and no HTTP responses ≥400 across the run.
 **Alternatives considered:** A separate `usage_reported` column (a migration for a rare case the error code already marks). Keeping $0 and only rewording the page (leaves the ceiling unenforced in exactly the failure it describes).
 **What it affects:** `packages/ai/src/usage/track.ts`, `packages/ai/src/usage/anthropicFor.ts`, `packages/ai/src/embeddings.ts`, `apps/web/src/lib/aiUsage/summarizeUsage.ts`, `apps/web/src/app/usage/UsageClient.tsx`.
 
+### D165. The adversarial salary tests' time budget is 4000 ms, not 1000 ms (CI fix)
+**Decision:** `packages/ingestion/src/normalize/salary.test.ts` asserts each adversarial extraction finishes within `ADVERSARIAL_BUDGET_MS = 4000` instead of a literal 1000 ms.
+**Why:** CI failed `finishes quickly and finds no salary in repeated '$1'` at 1163 ms. Measured locally, `extractSalary` is linear and capped: '$1' repeated 25k/50k/100k/200k times takes 26/52/103/104 ms (the input is truncated at 200,000 characters), so the CI time was runner contention (turbo runs all 17 packages' suites in parallel), not a regression. The test's purpose is catching a stall from catastrophic backtracking, which costs seconds to minutes; 4000 ms still fails that, leaves ~38x headroom over the local worst case, and stays under Vitest's 5 s per-test timeout so the assertion -- not a timeout -- reports a real stall.
+**Accepted:** No wall-clock budget can distinguish linear from mildly quadratic code here: a deliberately quadratic native `indexOf` scan of the same 200k characters takes ~300 ms locally, under either budget. Catching that would need a work-counting test, not a timer.
+**Alternatives considered:** Raising Vitest's timeout and the budget further (hides stalls longer for no gain). A scaling-ratio test (time(n) vs time(n/4)) -- also contention-sensitive at millisecond scale. Running the ingestion suite serially in CI (slows every run to fix one assertion).
+**What it affects:** `packages/ingestion/src/normalize/salary.test.ts`.
+
 *Entries are appended chronologically. Do not edit or delete past entries when a decision is later reversed — add a new entry that supersedes it and cross-reference the original.*
