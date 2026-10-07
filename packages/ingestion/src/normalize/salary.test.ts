@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { extractSalary } from "./salary";
+import { STALL_BUDGET_MS } from "../testing/budget";
 
 const parsed = (text: string, ctx?: { countryCode?: string | null }) => {
   const r = extractSalary(text, ctx);
@@ -117,15 +118,7 @@ describe("extractSalary — ambiguity and absence", () => {
   });
 });
 
-/**
- * Wall-clock budget for one adversarial extraction. It exists to catch a *stall* -- catastrophic regex backtracking on
- * hostile posting text, which takes seconds to minutes -- not to benchmark. Measured 2026-10-07: the slowest case
- * here ('$1' x 100k, which hits the 200k-char input cap) takes ~105 ms on a dev laptop and took 1163 ms on the CI
- * runner while turbo ran all 17 packages' suites in parallel, so the previous 1000 ms budget failed CI on contention
- * alone. 4000 ms leaves ~38x headroom over the local time and stays under Vitest's 5 s per-test timeout, so a real
- * stall is still reported by this assertion rather than by a timeout.
- */
-const ADVERSARIAL_BUDGET_MS = 4000;
+// Stall budget shared by the package's adversarial tests: see ../testing/budget.ts (D165, D176).
 
 describe("extractSalary — adversarial input (posting text is untrusted)", () => {
   // A quadratic regex on hostile text would stall the ingestion worker. None of these strings contains a
@@ -155,7 +148,7 @@ describe("extractSalary — adversarial input (posting text is untrusted)", () =
     expect(() => {
       result = extractSalary(text);
     }).not.toThrow();
-    expect(performance.now() - started).toBeLessThan(ADVERSARIAL_BUDGET_MS);
+    expect(performance.now() - started).toBeLessThan(STALL_BUDGET_MS);
     expect(result).toEqual(NO_SALARY);
   });
 
@@ -172,7 +165,7 @@ describe("extractSalary — adversarial input (posting text is untrusted)", () =
   it.each(dense)("stays bounded on dense candidates, and does not confidently parse once truncated: %s", (_label, text) => {
     const started = performance.now();
     const result = extractSalary(text);
-    expect(performance.now() - started).toBeLessThan(ADVERSARIAL_BUDGET_MS);
+    expect(performance.now() - started).toBeLessThan(STALL_BUDGET_MS);
     expect(result).toMatchObject({ min: null, max: null, currency: null, period: null, isParsed: false });
     expect(result.raw).toContain("$10k");
   });

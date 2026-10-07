@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { normalizeRecord } from "./normalizeRecord";
 import { NormalizeError, type SourceRef } from "../types";
 import { greenhouseJobFixture, leverPostingFixture } from "../fixtures";
+import { STALL_BUDGET_MS } from "../testing/budget";
 
 const greenhouse: SourceRef = { id: "s1", kind: "greenhouse", label: "gitlab", config: { slug: "gitlab" } };
 const lever: SourceRef = { id: "s2", kind: "lever", label: "acme", config: { slug: "acme", companyName: "Acme" } };
@@ -127,7 +128,7 @@ describe("normalizeRecord — adversarial input (end to end)", () => {
       const { job, ms } = timed(() =>
         normalizeRecord(greenhouse, { externalId: "1", payload: { id: 1, title: "Engineer", content: text } }),
       );
-      expect(ms).toBeLessThan(1000);
+      expect(ms).toBeLessThan(STALL_BUDGET_MS);
       expect(job.title).toBe("Engineer");
       expect(job.companyName).toBe("gitlab");
       expect(job.descriptionText).toHaveLength(textLength);
@@ -147,7 +148,7 @@ describe("normalizeRecord — adversarial input (end to end)", () => {
           },
         }),
       );
-      expect(ms).toBeLessThan(1000);
+      expect(ms).toBeLessThan(STALL_BUDGET_MS);
       expect(job.title).toBe("Engineer");
       expect(job.companyName).toBe("Acme");
       expect(job.descriptionText).toHaveLength(leverLength);
@@ -162,7 +163,7 @@ describe("normalizeRecord — adversarial input (end to end)", () => {
           payload: { title: "Engineer", company: "Acme", description: text, salary: text.slice(0, 200) },
         }),
       );
-      expect(ms).toBeLessThan(1000);
+      expect(ms).toBeLessThan(STALL_BUDGET_MS);
       expect(job.title).toBe("Engineer");
       expect(job.companyName).toBe("Acme");
       expect(job.descriptionText).toHaveLength(textLength);
@@ -174,7 +175,7 @@ describe("normalizeRecord — adversarial input (end to end)", () => {
       expect(() =>
         normalizeRecord(upload, { externalId: "1", payload: { title: "Engineer", company: "Acme", salary: text } }),
       ).toThrow(NormalizeError);
-      expect(performance.now() - start).toBeLessThan(1000);
+      expect(performance.now() - start).toBeLessThan(STALL_BUDGET_MS);
     });
   }
 });
@@ -416,7 +417,7 @@ describe("normalizeRecord — identity field length caps", () => {
     const loc = "L".repeat(HUGE);
     for (const run of [() => ghJob({ location: { name: loc } }), () => leverJob({ categories: { location: loc } })]) {
       const { value: job, ms } = timed(run);
-      expect(ms).toBeLessThan(1000);
+      expect(ms).toBeLessThan(STALL_BUDGET_MS);
       expect(job.locationRaw).toBe("L".repeat(CAP));
       expect(job.locationKey).toBe("l".repeat(CAP));
     }
@@ -433,7 +434,7 @@ describe("normalizeRecord — identity field length caps", () => {
     const title = "T".repeat(HUGE);
     for (const run of [() => ghJob({ title }), () => leverJob({ text: title })]) {
       const { value: job, ms } = timed(run);
-      expect(ms).toBeLessThan(1000);
+      expect(ms).toBeLessThan(STALL_BUDGET_MS);
       expect(job.title).toBe("T".repeat(CAP));
       expect(job.titleKey).toBe("t".repeat(CAP));
     }
@@ -443,7 +444,7 @@ describe("normalizeRecord — identity field length caps", () => {
     const company = "C".repeat(HUGE);
     for (const run of [() => ghJob({ company_name: company }), () => leverJob({}, { slug: "acme", companyName: company })]) {
       const { value: job, ms } = timed(run);
-      expect(ms).toBeLessThan(1000);
+      expect(ms).toBeLessThan(STALL_BUDGET_MS);
       expect(job.companyName).toBe("C".repeat(CAP));
       expect(job.companyKey).toBe("c".repeat(CAP));
     }

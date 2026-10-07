@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { extractMinExperience } from "./experience";
+import { STALL_BUDGET_MS } from "../testing/budget";
 
 describe("extractMinExperience", () => {
   it("reads 'N+ years of experience' and keeps the sentence as evidence", () => {
@@ -55,11 +56,11 @@ describe("extractMinExperience — adversarial input (posting text is untrusted)
     ["1M letters", "a".repeat(1_000_000)],
   ];
 
-  it.each(cases)("%s finishes in under a second and finds nothing", (_name, input) => {
+  it.each(cases)("%s finishes quickly and finds nothing", (_name, input) => {
     const started = performance.now();
     const result = extractMinExperience(input);
     const elapsed = performance.now() - started;
-    expect(elapsed).toBeLessThan(1000);
+    expect(elapsed).toBeLessThan(STALL_BUDGET_MS);
     expect(result).toEqual({ years: null, evidence: null });
   });
 
@@ -69,7 +70,7 @@ describe("extractMinExperience — adversarial input (posting text is untrusted)
     const started = performance.now();
     const result = extractMinExperience("5+ years of experience ".repeat(8_700));
     const elapsed = performance.now() - started;
-    expect(elapsed).toBeLessThan(3000);
+    expect(elapsed).toBeLessThan(STALL_BUDGET_MS);
     expect(result.years).toBe(5);
     expect(result.evidence).toMatch(/^5\+ years of experience 5\+ years of experience/);
     expect(result.evidence!.length).toBeLessThan(200);
@@ -79,7 +80,7 @@ describe("extractMinExperience — adversarial input (posting text is untrusted)
     const started = performance.now();
     const result = extractMinExperience("experience: 5 years ".repeat(10_000));
     const elapsed = performance.now() - started;
-    expect(elapsed).toBeLessThan(3000);
+    expect(elapsed).toBeLessThan(STALL_BUDGET_MS);
     expect(result.years).toBe(5);
     expect(result.evidence).toMatch(/^experience: 5 years experience: 5 years/);
     expect(result.evidence!.length).toBeLessThan(200);
@@ -97,11 +98,11 @@ describe("extractMinExperience — long whitespace runs (posting text is untrust
     ["'years' + 199k spaces + 'experience'", "years" + " ".repeat(199_000) + "experience"],
   ];
 
-  it.each(cases)("%s finishes in under a second and finds nothing", (_name, input) => {
+  it.each(cases)("%s finishes quickly and finds nothing", (_name, input) => {
     const started = performance.now();
     const result = extractMinExperience(input);
     const elapsed = performance.now() - started;
-    expect(elapsed).toBeLessThan(1000);
+    expect(elapsed).toBeLessThan(STALL_BUDGET_MS);
     expect(result).toEqual({ years: null, evidence: null });
   });
 

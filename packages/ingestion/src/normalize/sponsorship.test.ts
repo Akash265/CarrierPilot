@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { extractSponsorship } from "./sponsorship";
+import { STALL_BUDGET_MS } from "../testing/budget";
 
 describe("extractSponsorship", () => {
   it("detects not_offered phrasings", () => {
@@ -98,19 +99,19 @@ describe("extractSponsorship — adversarial input (posting text is untrusted)",
     ["1M letters", "a".repeat(1_000_000)],
   ];
 
-  it.each(cases)("%s finishes in under a second and finds nothing", (_name, input) => {
+  it.each(cases)("%s finishes quickly and finds nothing", (_name, input) => {
     const started = performance.now();
     const result = extractSponsorship(input);
     const elapsed = performance.now() - started;
-    expect(elapsed).toBeLessThan(1000);
+    expect(elapsed).toBeLessThan(STALL_BUDGET_MS);
     expect(result).toEqual({ value: "unknown", evidence: null, conflict: false });
   });
 
-  it("dense repeated negations finish in under a second and stay not_offered", () => {
+  it("dense repeated negations finish quickly and stay not_offered", () => {
     const started = performance.now();
     const result = extractSponsorship("We cannot sponsor work visas. ".repeat(6_000));
     const elapsed = performance.now() - started;
-    expect(elapsed).toBeLessThan(1000);
+    expect(elapsed).toBeLessThan(STALL_BUDGET_MS);
     expect(result.value).toBe("not_offered");
     expect(result.conflict).toBe(false);
   });

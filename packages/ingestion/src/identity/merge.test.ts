@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { mergePostings, comparePostings, type PostingForMerge } from "./merge";
 import { makeNormalized } from "../testing/factories";
 import type { NormalizedJob, SourceKind } from "../types";
+import { STALL_BUDGET_MS } from "../testing/budget";
 
 const at = (iso: string) => new Date(iso);
 function posting(
@@ -218,7 +219,7 @@ describe("mergePostings", () => {
     const started = performance.now();
     const merged = mergePostings(postings);
     const elapsed = performance.now() - started;
-    expect(elapsed).toBeLessThan(1500);
+    expect(elapsed).toBeLessThan(STALL_BUDGET_MS);
     expect(merged.status).toBe("open");
     expect(merged.firstSeenAt).toEqual(new Date(first));
     // Largest even index below 200,000 is 199,998 (199,998 % 3 === 0 -> greenhouse, top rank).
@@ -226,7 +227,7 @@ describe("mergePostings", () => {
     expect(merged.fieldProvenance.identity).toBe("p199998");
   });
 
-  it("merges 5,000 postings for one job without throwing, in under a second, with exact results", () => {
+  it("merges 5,000 postings for one job without throwing quickly, with exact results", () => {
     const kinds: SourceKind[] = ["greenhouse", "lever", "upload"];
     const base = Date.UTC(2026, 5, 1);
     const postings: PostingForMerge[] = [];
@@ -242,7 +243,7 @@ describe("mergePostings", () => {
     const started = performance.now();
     const merged = mergePostings(postings);
     const elapsed = performance.now() - started;
-    expect(elapsed).toBeLessThan(1000);
+    expect(elapsed).toBeLessThan(STALL_BUDGET_MS);
     expect(merged.status).toBe("open");
     expect(merged.firstSeenAt).toEqual(new Date(Date.UTC(2026, 0, 1)));
     // Newest open sighting: the largest even index below 5000 is 4998.

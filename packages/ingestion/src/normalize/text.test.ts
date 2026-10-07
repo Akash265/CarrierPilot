@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { decodeEntities, hasUnsafeText, htmlToText, escapedHtmlToText, MAX_HTML_CHARS } from "./text";
 import { greenhouseJobFixture } from "../fixtures";
+import { STALL_BUDGET_MS } from "../testing/budget";
 
 describe("decodeEntities", () => {
   it("decodes named, decimal and hex entities and leaves unknown ones alone", () => {
@@ -33,28 +34,28 @@ describe("htmlToText on hostile input (untrusted posting content)", () => {
   it("does not go quadratic on a long run of '<' with no '>'", () => {
     const input = "<".repeat(200_000);
     let out = "";
-    expect(elapsedMs(() => (out = htmlToText(input)))).toBeLessThan(1000);
+    expect(elapsedMs(() => (out = htmlToText(input)))).toBeLessThan(STALL_BUDGET_MS);
     expect(out.length).toBeGreaterThan(0);
   });
 
   it("does not go quadratic on many unclosed <script openers", () => {
     const input = "<script".repeat(200_000);
     let out = "x";
-    expect(elapsedMs(() => (out = htmlToText(input)))).toBeLessThan(1000);
+    expect(elapsedMs(() => (out = htmlToText(input)))).toBeLessThan(STALL_BUDGET_MS);
     expect(out).toBe("");
   });
 
   it("does not go quadratic on many unclosed <br or <li openers", () => {
     for (const opener of ["<br", "<li", "</p", "< "]) {
       const input = opener.repeat(200_000);
-      expect(elapsedMs(() => htmlToText(input))).toBeLessThan(1000);
+      expect(elapsedMs(() => htmlToText(input))).toBeLessThan(STALL_BUDGET_MS);
     }
   });
 
   it("does not go quadratic on many closed <script>...</script> pairs", () => {
     const input = "<script>a</script>".repeat(50_000) + "<p>Hi</p>";
     let out = "";
-    expect(elapsedMs(() => (out = htmlToText(input)))).toBeLessThan(1000);
+    expect(elapsedMs(() => (out = htmlToText(input)))).toBeLessThan(STALL_BUDGET_MS);
     expect(out).toBe("Hi");
   });
 

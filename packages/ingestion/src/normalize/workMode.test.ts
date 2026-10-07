@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { detectWorkMode } from "./workMode";
+import { STALL_BUDGET_MS } from "../testing/budget";
 
 describe("detectWorkMode", () => {
   it("prefers the structured value", () => {
@@ -39,11 +40,11 @@ describe("detectWorkMode — adversarial input (location is untrusted)", () => {
     ["1M letters", "a".repeat(1_000_000), "unknown"],
   ];
 
-  it.each(cases)("%s in a location finishes in under a second", (_name, input, expected) => {
+  it.each(cases)("%s in a location finishes quickly", (_name, input, expected) => {
     const started = performance.now();
     const result = detectWorkMode({ location: input });
     const elapsed = performance.now() - started;
-    expect(elapsed).toBeLessThan(1000);
+    expect(elapsed).toBeLessThan(STALL_BUDGET_MS);
     expect(result).toBe(expected);
   });
 });
