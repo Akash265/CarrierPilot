@@ -35,6 +35,8 @@ async function main(): Promise<void> {
   const worker = createIngestWorker({ connection, db, userId: env.DEFAULT_USER_ID, adapterFor });
   worker.on("completed", (job) => log.info("ingest_completed", { jobId: job.id }));
   worker.on("failed", (job, error) => log.error("ingest_failed", { jobId: job?.id, ...failureFields(error) }));
+  // Redis connection errors are re-emitted here; with no listener the worker would crash with Node's raw print.
+  worker.on("error", (error) => log.error("worker_error", { error }));
 
   const everyMs = env.INGEST_INTERVAL_MINUTES * 60_000;
   const reconcile = async (refresh: boolean) => {

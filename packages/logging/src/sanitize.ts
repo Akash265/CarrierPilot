@@ -1,4 +1,4 @@
-import type { Redactor } from "./redactor";
+import { Redactor } from "./redactor";
 
 /**
  * Phase 11b design §3.2. Turns log fields into JSON-safe values that can never carry content: strings are scrubbed
@@ -9,6 +9,8 @@ const MAX_DEPTH = 3;
 const MAX_ARRAY = 50;
 const MAX_STRING = 500;
 const MAX_FRAMES = 8;
+const MAX_NAME = 100;
+const MAX_FRAME = 200;
 const CODE = /^[A-Za-z0-9_:.-]{1,40}$/;
 
 export interface SerializedError {
@@ -33,27 +35,36 @@ function relativeLocation(location: string): string {
   return path.slice(path.lastIndexOf("/") + 1);
 }
 
-function framesOf(stack: string | undefined): string[] {
+/**
+ * V8 stacks start with "<Name>: <message>", and every line of a multi-line message comes before the first frame.
+ * Those lines are skipped by count -- the message is measured, never emitted -- so a message line shaped like a
+ * frame ("    at Jane Doe:2019") can never be mistaken for one (final-review fix, D173).
+ */
+function framesOf(stack: string | undefined, message: unknown, redactor: Redactor): string[] {
   if (!stack) return [];
   const frames: string[] = [];
-  // The first line is "<Name>: <message>" -- skipped by only reading "at ..." lines.
-  for (const line of stack.split("\n")) {
+  const headerLines = Math.max(1, typeof message === "string" && message.length > 0 ? message.split("\n").length : 1);
+  for (const line of stack.split("\n").slice(headerLines)) {
     const at = line.trim().match(/^at (.+)$/);
     if (!at) continue;
     const location = (at[1].match(/\(([^()]+)\)\s*$/)?.[1] ?? at[1]).trim();
     if (location.startsWith("node:") || location.includes("node_modules") || !/:\d+(:\d+)?$/.test(location)) continue;
-    frames.push(relativeLocation(location));
+    frames.push(cap(redactor.redact(relativeLocation(location)), MAX_FRAME));
     if (frames.length === MAX_FRAMES) break;
   }
   return frames;
 }
 
-export function serializeError(error: Error): SerializedError {
-  const out: SerializedError = { name: typeof error.name === "string" && error.name ? error.name : "Error", frames: framesOf(error.stack) };
+const cap = (text: string, max: number) => (text.length > max ? `${text.slice(0, max)}…[truncated]` : text);
+
+/** Name, cause name and frames all go through the redactor: a name or a path can be built from content too. */
+export function serializeError(error: Error, redactor: Redactor = new Redactor()): SerializedError {
+  const name = typeof error.name === "string" && error.name ? error.name : "Error";
+  const out: SerializedError = { name: cap(redactor.redact(name), MAX_NAME), frames: framesOf(error.stack, error.message, redactor) };
   const code = (error as { code?: unknown }).code;
   if (typeof code === "string" && CODE.test(code)) out.code = code;
   const cause = (error as { cause?: unknown }).cause;
-  if (isErrorLike(cause)) out.causeName = cause.name;
+  if (isErrorLike(cause)) out.causeName = cap(redactor.redact(String(cause.name)), MAX_NAME);
   // Key order for readable lines: name, code, causeName, frames.
   return { name: out.name, ...(out.code ? { code: out.code } : {}), ...(out.causeName ? { causeName: out.causeName } : {}), frames: out.frames };
 }
@@ -75,7 +86,7 @@ function sanitizeValue(value: unknown, redactor: Redactor, depth: number, ancest
     case "symbol":
       return undefined;
   }
-  if (isErrorLike(value)) return serializeError(value);
+  if (isErrorLike(value)) return serializeError(value, redactor);
   if (value instanceof Date) return Number.isNaN(value.getTime()) ? null : value.toISOString();
   const obj = value as object;
   if (ancestors.has(obj)) return "[circular]";

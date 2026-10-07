@@ -25,6 +25,8 @@ async function main(): Promise<void> {
   const worker = createMaintenanceWorker({ connection, db, storage, userId: env.DEFAULT_USER_ID, retentionDays: env.RETENTION_DAYS });
   worker.on("completed", (job, result) => log.info("maintenance_completed", { jobId: job.id, name: job.name, ...result }));
   worker.on("failed", (job, error) => log.error("maintenance_failed", { jobId: job?.id, name: job?.name, error }));
+  // Redis connection errors are re-emitted here; with no listener the worker would crash with Node's raw print.
+  worker.on("error", (error) => log.error("worker_error", { error }));
   await scheduleRetention(queue);
   // Phase 11b: /status shows this worker running while it beats, and stopped after a clean shutdown.
   const heartbeat = await startHeartbeat(connection, "maintenance");

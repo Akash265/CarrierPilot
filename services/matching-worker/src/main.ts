@@ -32,6 +32,8 @@ async function main(): Promise<void> {
   const worker = createMatchingWorker({ connection, db, aiFor, env });
   worker.on("completed", (job) => log.info("matching_completed", { jobId: job.id }));
   worker.on("failed", (job, error) => log.error("matching_failed", { jobId: job?.id, ...failureFields(error) }));
+  // Redis connection errors are re-emitted here; with no listener the worker would crash with Node's raw print.
+  worker.on("error", (error) => log.error("worker_error", { error }));
   // Phase 11b: /status shows this worker running while it beats, and stopped after a clean shutdown.
   const heartbeat = await startHeartbeat(connection, "matching");
   log.info("worker_started");

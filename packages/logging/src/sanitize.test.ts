@@ -109,3 +109,41 @@ describe("sanitize", () => {
     expect(sanitize({ "Jane Doe": 1 }, redactor)).toEqual({ "Jane Doe": 1 });
   });
 });
+
+describe("serializeError never emits message text (final-review fix)", () => {
+  it("skips every line of a multi-line message, even lines shaped like stack frames", () => {
+    const message = "bad row\n    at Jane Doe, jane@example.com:2019\n    at Acme Corp Berlin:2021";
+    const e = new Error(message);
+    e.stack = [`Error: ${message}`, "    at parse (/r/packages/ingestion/src/parse.ts:10:3)"].join("\n");
+    const out = serializeError(e, redactor);
+    expect(out.frames).toEqual(["packages/ingestion/src/parse.ts:10:3"]);
+    expect(JSON.stringify(out)).not.toMatch(/Jane Doe|jane@example\.com|Acme Corp/);
+  });
+
+  it("skips the message lines even when the stack's first line does not repeat the message verbatim", () => {
+    const e = new Error("line one\n    at Secret Place:42");
+    e.stack = ["CustomPrefix: line one", "    at Secret Place:42", "    at run (/r/services/x/src/main.ts:5:1)"].join("\n");
+    expect(serializeError(e, redactor).frames).toEqual(["services/x/src/main.ts:5:1"]);
+  });
+
+  it("scrubs the error's name and its cause's name", () => {
+    const e = errorWithStack("Jane Doe secret", "Jane Doe secret: x", { cause: errorWithStack("jane@example.com", "x") });
+    const out = serializeError(e, redactor);
+    expect(out.name).toBe("[REDACTED] secret");
+    expect(out.causeName).toBe("[REDACTED_EMAIL]");
+  });
+
+  it("scrubs a profile value that appears inside a real frame's path", () => {
+    const e = errorWithStack("Error", "Error: x\n    at f (/home/Jane Doe/project/packages/a/src/f.ts:1:2)");
+    expect(serializeError(e, redactor).frames).toEqual(["packages/a/src/f.ts:1:2"]);
+    const odd = errorWithStack("Error", "Error: x\n    at f (/Jane Doe/f.ts:1:2)");
+    expect(serializeError(odd, redactor).frames).toEqual(["f.ts:1:2"]);
+    const weird = errorWithStack("Error", "Error: x\n    at Jane Doe.method (Jane Doe:1:2)");
+    expect(serializeError(weird, redactor).frames).toEqual(["[REDACTED]:1:2"]);
+  });
+
+  it("is used by sanitize with the logger's redactor", () => {
+    const e = errorWithStack("Jane Doe", "Jane Doe: x");
+    expect(sanitize({ error: e }, redactor)).toEqual({ error: { name: "[REDACTED]", frames: [] } });
+  });
+});

@@ -1580,7 +1580,8 @@ createLogger({ service }).error(event, fields)        packages/logging/src/logge
  ├─ below the process level (configureLogging / initProcessLogging; default info)? → nothing written
  ├─ sanitize(fields, defaultRedactor())                packages/logging/src/sanitize.ts
  │    strings → Redactor.redact (D9 values, then the email pattern) → truncate 500
- │    Error   → { name, code? (code-shaped), causeName?, frames ≤ 8 repo-relative }   -- message never read
+ │    Error   → { name, code? (code-shaped), causeName?, frames ≤ 8 repo-relative }   -- message lines skipped by count,
+              never emitted; name, causeName and frames scrubbed too (D173)
  │    objects ≤ depth 3, arrays ≤ 50, cycles "[circular]", Date → ISO, bigint → string
  └─ JSON line { ts, level, service, event, ...fields } → stderr (warn/error) | stdout (debug/info); never throws
 ```
@@ -1591,6 +1592,7 @@ createLogger({ service }).error(event, fields)        packages/logging/src/logge
 worker main.ts (all four) / runOnce.ts
  └─ initProcessLogging({ level: env.LOG_LEVEL, load: () => loadRedactionValues(db, DEFAULT_USER_ID), logger })
       packages/logging/src/processLogging.ts → createRedactionRefresher(defaultRedactor(), load)   packages/logging/src/refresher.ts
+      ├─ installs uncaughtException / unhandledRejection handlers once → log message-free, exit 1 (D173)
       ├─ await refresh()                    -- before the first line; a failed load logs redaction_refresh_failed, keeps old values
       └─ startInterval(60 s) → stop()       -- called in shutdown
       loadRedactionValues                   packages/db/src/redactionValues.ts  (candidate_profiles under RLS)

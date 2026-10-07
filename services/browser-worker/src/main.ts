@@ -38,6 +38,8 @@ async function main(): Promise<void> {
   });
   worker.on("completed", (job, result) => log.info("autofill_completed", { sessionId: job.data.sessionId, result }));
   worker.on("failed", (job, error) => log.error("autofill_failed", { sessionId: job?.data.sessionId, error }));
+  // Redis connection errors are re-emitted here; with no listener the worker would crash with Node's raw print.
+  worker.on("error", (error) => log.error("worker_error", { error }));
   // Phase 11b: /status shows this worker running while it beats, and stopped after a clean shutdown.
   const heartbeat = await startHeartbeat(connection, "browser");
   log.info("worker_started", { sweptSessions: swept, removedTempDirs, headless: env.BROWSER_HEADLESS });
