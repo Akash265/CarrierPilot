@@ -1,6 +1,6 @@
 # Phase 11c + 11d — Security Hardening, Rate Limiting, Index Audit, CI E2E & Docs: Design
 
-Status: Draft for user review (2026-10-07). Combined spec + task list (one document, at the user's request to minimise overhead).
+Status: Implemented and merged to main (merge 9e4292f, 2026-10-07); see DECISIONS D177–D183 for what changed during the build and the final review (e.g. `HOST` became `APP_HOST`, the index-audit script became a catalog test, E2E runs inside the existing CI job). Combined spec + task list (one document, at the user's request to minimise overhead).
 
 Spec sources: project spec §21 (Phase 11 — Observability & Production Hardening), CLAUDE.md §9 (privacy/security), §10 (testing), §16 (documentation). Decisions start at D177.
 
