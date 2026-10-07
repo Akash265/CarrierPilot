@@ -13,6 +13,10 @@
 import { createServer } from "node:http";
 
 const PORT = Number(process.env.PORT ?? 4012);
+// Phase 11a: real responses always carry token usage, and the AI-usage tracking prices calls from it. A fake
+// without it would make every call look unpriced. Overridable so an E2E can reach a budget ceiling quickly.
+const FAKE_INPUT_TOKENS = Number(process.env.FAKE_INPUT_TOKENS ?? 1200);
+const FAKE_OUTPUT_TOKENS = Number(process.env.FAKE_OUTPUT_TOKENS ?? 300);
 
 const FAKE_INPUTS: Record<string, unknown> = {
   record_match_explanation: {
@@ -67,6 +71,7 @@ const server = createServer((req, res) => {
         ],
         model: parsed.model,
         stop_reason: "tool_use",
+        usage: { input_tokens: FAKE_INPUT_TOKENS, output_tokens: FAKE_OUTPUT_TOKENS },
       })
     );
   });
