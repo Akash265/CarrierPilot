@@ -236,8 +236,8 @@ Inputs the spec implies but a reader might not expect to be handled; each is pin
 
 - [ ] **Step 1: Apply the patch** — `git apply --index docs/superpowers/plans/2026-10-07-phase-11b-logging-monitoring/task-12-impl.patch`
 - [ ] **Step 2: CI-order checks** — `pnpm install --frozen-lockfile && pnpm --filter @ai-career/db db:migrate && pnpm lint && pnpm --filter web build && pnpm typecheck && pnpm turbo run test --force && git diff main --check` → lint 0 warnings; 19/19 packages pass; no whitespace errors.
-- [ ] **Step 3: E2E stack** (test database; no matching worker running):
-  1. From `apps/web`: `PORT=3112 STATUS_STALE_AFTER_MS=5000 DATABASE_URL=postgres://career_intel_app:career_intel_app@localhost:5432/career_intel_test pnpm start > /tmp/webA.log 2>&1 &`
+- [ ] **Step 3: E2E stack** (test database; no matching worker running). Since D174 the stale threshold must exceed `HEARTBEAT_INTERVAL_MS`, so the E2E sets both low (the script sets the worker's interval itself):
+  1. From `apps/web`: `PORT=3112 HEARTBEAT_INTERVAL_MS=1000 STATUS_STALE_AFTER_MS=5000 DATABASE_URL=postgres://career_intel_app:career_intel_app@localhost:5432/career_intel_test pnpm start > /tmp/webA.log 2>&1 &`
   2. From `apps/web`: `PORT=3113 DATABASE_URL=postgres://career_intel_app:career_intel_app@localhost:5999/career_intel_test pnpm start > /tmp/webB.log 2>&1 &` (a closed port: every DB route fails).
   3. In a scratch directory with `npm install playwright-core`: copy `e2e.mjs`, run `REPO=<repo root> BASE_URL=http://localhost:3112 BROKEN_URL=http://localhost:3113 BROKEN_LOG=/tmp/webB.log node e2e.mjs <screenshot-dir>` → 12 checks `"ok":true`, then `{"done":true}`. `/tmp/webB.log` contains only Next's startup lines and JSON log lines (no raw error print).
 - [ ] **Step 4: Clean up** — stop both web instances (`pkill -f "next start"`); the script stops the worker it started.

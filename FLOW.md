@@ -1598,6 +1598,8 @@ worker main.ts (all four) / runOnce.ts
       loadRedactionValues                   packages/db/src/redactionValues.ts  (candidate_profiles under RLS)
 web: refreshWebRedactions()                 apps/web/src/lib/webLogging.ts   (first call: configureLogging(LOG_LEVEL) + refresher;
                                             then refreshIfStale, ≤ once a minute, one short-lived DB connection per load)
+     invalidateWebRedactions()              ← saveConfirmedProfile after a successful save (next error reloads)        (D174)
+refresher: each load ≤ 2 s (RedactionLoadTimeout); every attempt, failed or not, starts the 60 s window     (D174)
 ```
 
 ### 17c. An error escaping a route
@@ -1618,11 +1620,15 @@ guard: apps/web/src/lib/http/allRoutesWrapped.test.ts
 ### 17d. Heartbeats and /status
 
 ```
-worker main.ts → startHeartbeat(connection, "<worker>")      packages/monitoring/src/heartbeat.ts
-                  SET careerpilot:worker:<worker> {startedAt, beatAt, pid, stoppedAt:null}  now + every 30 s
-shutdown (runs once: `stopping` guard) → worker.close → heartbeat.stop() (SET ... stoppedAt) → connection.quit
+worker main.ts → (right after Redis opens) startHeartbeat(connection, "<worker>", { intervalMs: HEARTBEAT_INTERVAL_MS })
+                  SET careerpilot:worker:<worker> {startedAt, beatAt, pid, stoppedAt:null}  now + every interval
+shutdown = createShutdown({ logger, steps })     packages/monitoring/src/shutdown.ts   (D174)
+  SIGINT/SIGTERM (any number) → steps once: worker.close → heartbeat.stop() (SET ... stoppedAt, ≤ 2 s) → connection.quit → db
+  → exit 0 | step throws → shutdown_failed, exit 1 | still waiting after 10 s → shutdown_timed_out, exit 1
 
 GET /api/status                               apps/web/src/app/api/status/route.ts → loadStatus(env)   apps/web/src/lib/status/loadStatus.ts
+ ├─ loadEnv() throws → 200 unavailableReport() (status_config_invalid logged)          (D174)
+ ├─ in parallel: database SELECT 1 (5 s) and the Redis steps below                     (D174)
  ├─ database: SELECT 1 (5 s)                  → ok | unavailable
  ├─ Redis: lazyConnect → connect() → ping (5 s each); failure → redis unavailable, workers [], queues []
  ├─ readWorkerStatus(redis, now, { staleAfterMs: STATUS_STALE_AFTER_MS })   packages/monitoring/src/status.ts → workerState()

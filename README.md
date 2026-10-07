@@ -274,5 +274,6 @@ address) — set `LOG_LEVEL` to `debug`, `info` (default), `warn` or `error`.
 An unexpected server error now answers "Something went wrong (request
 <id>)" and the same id appears in the server log. `/status` shows whether
 each worker is running, stopped or stale (no heartbeat for
-`STATUS_STALE_AFTER_MS`, default 90 s) and what is waiting or failed in
+`STATUS_STALE_AFTER_MS`, default 90 s; it must be longer than
+`HEARTBEAT_INTERVAL_MS`, the 30 s beat) and what is waiting or failed in
 each queue.

@@ -1,7 +1,8 @@
 // Phase 11b E2E checks. Copy into a scratch directory where `npm install playwright-core` was run, then:
 //   REPO=<repo root> BASE_URL=http://localhost:3112 BROKEN_URL=http://localhost:3113 BROKEN_LOG=<that instance's log> \
 //   node e2e.mjs [screenshot-dir]
-// Expects: web on BASE_URL with STATUS_STALE_AFTER_MS=5000 (career_intel_test), a second web instance on BROKEN_URL whose
+// Expects: web on BASE_URL with HEARTBEAT_INTERVAL_MS=1000 and STATUS_STALE_AFTER_MS=5000 (career_intel_test; the
+// stale threshold must exceed the beat interval, D174), a second web instance on BROKEN_URL whose
 // DATABASE_URL points at a closed port, its stdout+stderr written to BROKEN_LOG, and no matching worker running. This
 // script starts/stops the matching worker itself (one `node --import tsx` process, so its pid is the worker's).
 import { chromium } from "playwright-core";
@@ -41,6 +42,7 @@ function workerEnv() {
     if (m && env[m[1]] === undefined) env[m[1]] = m[2];
   }
   env.DATABASE_URL = "postgres://career_intel_app:career_intel_app@localhost:5432/career_intel_test";
+  env.HEARTBEAT_INTERVAL_MS = "1000";
   return env;
 }
 function startWorker() {
