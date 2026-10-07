@@ -1639,3 +1639,70 @@ GET /api/status                               apps/web/src/app/api/status/route.
  ├─ readWorkerStatus(redis, now, { staleAfterMs: STATUS_STALE_AFTER_MS })   packages/monitoring/src/status.ts → workerState()
  └─ readQueueStatus(redis, QUEUES)            getJobCounts + getFailed(0,0); failedReason only if failureCode() accepts it
 /status → StatusClient fetches GET /api/status on load, every 30 s and on Refresh (newest response wins)
+
+## 18. Phase 11c–11d — Request Gate, Rate Limits, Job Errors, E2E
+
+### 18a. Every request (D177, D179)
+
+```
+browser / client
+ └─ next start -H $HOST (127.0.0.1)                 apps/web/package.json
+     └─ proxy(request)                               apps/web/src/proxy.ts   (all paths but _next/static, _next/image, favicon.ico)
+          config ??= gateConfig()                    lib/security/gate.ts → loadEnv(); invalid config → still requires a set token
+          checkRequest({ method, pathname, search, headers }, config)
+           ├─ Host not loopback / ALLOWED_HOSTS      → 421 { error: "Unknown host" }
+           ├─ unsafe method + foreign Origin / null / Sec-Fetch-Site cross-site|same-site → 403
+           ├─ no token configured, exempt path (/unlock, /api/unlock, /api/health) or valid cookie/Bearer → NextResponse.next()
+           ├─ /api/*                                 → 401 { error: "Access token required" }
+           └─ page                                   → 307 /unlock?next=<path+query>
+     └─ next.config.ts headers()                     nosniff, DENY, same-origin, Permissions-Policy, CSP frame-ancestors 'none'
+        experimental.proxyClientMaxBodySize = MAX_UPLOAD_BYTES + slack   lib/http/uploadLimits.ts
+startup: instrumentation.register() → lib/security/startupCheck.ts → warn exposed_without_token if HOST not loopback and no token
+```
+
+### 18b. Unlock
+
+```
+/unlock (page.tsx: safeNextPath(next)) → UnlockForm → POST /api/unlock { token }
+ └─ withRouteErrors → withRateLimit("unlock", 5/min) → handleUnlock(request, gateConfig(), log)   lib/security/unlock.ts
+      no token configured → 404 | bad body → 400 | sameSecret() false → 401 + log unlock_failed {}
+      ok → 204 + Set-Cookie cp_access=HMAC(token) HttpOnly SameSite=Strict Path=/ 30 d (Secure on https)
+ → window.location.assign(next)
+```
+
+### 18c. A costly route (D178)
+
+```
+export const POST = withRouteErrors("/api/x", withRateLimit("ai" | "jobs", "/api/x", handlePOST))
+ └─ withRateLimit                                    apps/web/src/lib/http/rateLimit.ts
+      limit = RATE_LIMIT_{AI,JOBS}_PER_MINUTE (0 → skip)
+      redisStore.hit("careerpilot:rl:/api/x:<minute>")  MULTI INCR + PEXPIRE, 500 ms timeout
+       ├─ store error → rate_limit_unavailable (throttled) → handler      (fail open)
+       ├─ count > limit → 429 { error, retryAfterSeconds } + Retry-After
+       └─ handler(...args)
+guard: apps/web/src/lib/http/rateLimitedRoutes.test.ts
+```
+
+### 18d. A failing worker job (D180)
+
+```
+BullMQ Worker processor (services/*/src/worker.ts)
+ └─ try { pipeline } catch (error) { throw contentFreeJobError(error) }   packages/monitoring/src/jobError.ts
+      message already a code (no_active_goal, …)    → unchanged
+      DrizzleQueryError / PostgresError              → Error("database_error:<sqlstate>", { cause })
+      anything else                                  → Error("job_failed:<code|class>", { cause }); UnrecoverableError keeps its name
+ └─ BullMQ stores message + stack in Redis (content-free) → /status shows it via failureCode()
+ └─ worker.on("failed") → log.error(... { error })  → serializeError: name, code (own or cause's SQLSTATE), causeName, frames
+```
+
+### 18e. `pnpm e2e` (D182, D183)
+
+```
+e2e/run.mjs
+ ├─ e2eEnv(): .env under process.env, then overrides (test DB, REDIS db 1, user …e01, fake AI keys + bases, token, low limits)
+ ├─ wipeE2eState(): refuse non-*_test DB; delete user …e01 rows (session_replication_role=replica); delete bull:* careerpilot:* in db 1
+ ├─ start: fakeProviders.mjs :4012 | web :3100 | web-broken :3101 (DB port 5999) | job-ingestion | matching-worker   (process groups)
+ ├─ runSmoke(ctx)                                      e2e/smoke.mjs (playwright-core, headless Chrome)
+ └─ stopAll(): SIGTERM groups, SIGKILL after 10 s; exit 0 | 1
+CI: .github/workflows/ci.yml test job → pnpm test → playwright-core install chromium → pnpm e2e → upload e2e/.out on failure
+```
