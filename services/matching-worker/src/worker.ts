@@ -1,3 +1,4 @@
+import { contentFreeJobError } from "@ai-career/monitoring";
 import { Worker, UnrecoverableError, type ConnectionOptions } from "bullmq";
 import type { DbClient } from "@ai-career/db";
 import type { AiUsageSink, AnthropicFor } from "@ai-career/ai";
@@ -33,7 +34,7 @@ export function createMatchingWorker(deps: MatchingWorkerDeps): Worker<MatchingJ
         if (error instanceof MatchingError && error.errorClass === "no_active_goal") {
           throw new UnrecoverableError(error.errorClass);
         }
-        throw error;
+        throw contentFreeJobError(error);
       }
     },
     { connection: deps.connection, concurrency: 1 }

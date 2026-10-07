@@ -1,3 +1,4 @@
+import { contentFreeJobError } from "@ai-career/monitoring";
 import { Worker, UnrecoverableError, type ConnectionOptions, type Queue } from "bullmq";
 import type { DbClient } from "@ai-career/db";
 import { runRetentionSweep, type RetentionStorage, type RetentionSweepResult } from "@ai-career/applications";
@@ -18,8 +19,12 @@ export function createMaintenanceWorker(deps: MaintenanceWorkerDeps): Worker<unk
   return new Worker<unknown, RetentionSweepResult>(
     deps.queueName ?? MAINTENANCE_QUEUE_NAME,
     async (job) => {
-      if (job.name !== RETENTION_JOB_NAME) throw new UnrecoverableError(`unknown maintenance job: ${job.name}`);
-      return runRetentionSweep({ db: deps.db, storage: deps.storage, userId: deps.userId, retentionDays: deps.retentionDays });
+      try {
+        if (job.name !== RETENTION_JOB_NAME) throw new UnrecoverableError("unknown_maintenance_job");
+        return await runRetentionSweep({ db: deps.db, storage: deps.storage, userId: deps.userId, retentionDays: deps.retentionDays });
+      } catch (error) {
+        throw contentFreeJobError(error);
+      }
     },
     { connection: deps.connection, concurrency: 1 }
   );

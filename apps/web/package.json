@@ -26,7 +26,7 @@
     "@ai-career/resume-optimization": "workspace:*",
     "@ai-career/storage": "workspace:*",
     "bullmq": "^5.34.0",
-    "drizzle-orm": "^0.36.0",
+    "drizzle-orm": "^0.45.3",
     "ioredis": "^5.4.0",
     "next": "16.3.8",
     "pdfkit": "^0.20.2",

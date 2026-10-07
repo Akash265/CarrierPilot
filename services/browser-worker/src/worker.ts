@@ -1,3 +1,4 @@
+import { contentFreeJobError } from "@ai-career/monitoring";
 import { Worker, type ConnectionOptions } from "bullmq";
 import { BROWSER_QUEUE_NAME, type BrowserJobData } from "@ai-career/browser";
 import { runSession, type RunSessionDeps, type RunSessionResult } from "./runSession";
@@ -15,7 +16,13 @@ export interface BrowserWorkerDeps extends RunSessionDeps {
 export function createBrowserWorker(deps: BrowserWorkerDeps): Worker<BrowserJobData, RunSessionResult> {
   return new Worker<BrowserJobData, RunSessionResult>(
     deps.queueName ?? BROWSER_QUEUE_NAME,
-    (job) => runSession(deps, job.data),
+    async (job) => {
+      try {
+        return await runSession(deps, job.data);
+      } catch (error) {
+        throw contentFreeJobError(error);
+      }
+    },
     { connection: deps.connection, concurrency: 1, lockDuration: 60_000 }
   );
 }

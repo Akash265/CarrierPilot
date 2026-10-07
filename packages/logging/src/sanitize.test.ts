@@ -45,6 +45,17 @@ describe("serializeError", () => {
     expect(serializeError(errorWithFrames("Error", [], { code: 42 }))).not.toHaveProperty("code");
   });
 
+  it("takes the code from the cause when the error has none (drizzle-orm wraps the driver's error, D180)", () => {
+    const cause = errorWithFrames("PostgresError", [], { code: "23505" }, "secret");
+    expect(serializeError(errorWithFrames("DrizzleQueryError", [], { cause }, "Failed query: x params: Jane"))).toMatchObject({
+      name: "DrizzleQueryError", code: "23505", causeName: "PostgresError",
+    });
+    const own = errorWithFrames("Error", [], { code: "E_OWN", cause });
+    expect(serializeError(own).code).toBe("E_OWN");
+    const odd = errorWithFrames("Error", [], { cause: errorWithFrames("PostgresError", [], { code: "jane doe" }) });
+    expect(serializeError(odd)).not.toHaveProperty("code");
+  });
+
   it("caps frames at 8", () => {
     const frames = Array.from({ length: 12 }, (_, i) => `f${i} (/r/packages/a/src/f.ts:${i + 1}:1)`);
     expect(serializeError(errorWithFrames("Error", frames)).frames).toHaveLength(8);

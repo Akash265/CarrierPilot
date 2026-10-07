@@ -42,7 +42,7 @@ describe("maintenance worker", () => {
 
   it("fails an unknown job name without retrying", async () => {
     const job = await queue.add("mystery", {}, { attempts: 3 });
-    await expect(job.waitUntilFinished(events, 15_000)).rejects.toThrow(/unknown maintenance job/);
+    await expect(job.waitUntilFinished(events, 15_000)).rejects.toThrow(/^unknown_maintenance_job$/);
     expect((await queue.getJob(job.id!))?.attemptsMade).toBe(1);
   });
 
