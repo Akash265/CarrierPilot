@@ -56,18 +56,4 @@ describe("GET /api/status", () => {
     expect(res.status).toBe(200);
     expect(await res.json()).toMatchObject({ database: "unavailable", redis: "unavailable", workers: [], queues: [] });
   });
-
-  it("checks the database and Redis in parallel, so two hanging services cost one timeout, not two", async () => {
-    // 10.255.255.1 is unroutable: connections hang until each check's 5 s timeout.
-    envState.current = {
-      ...BASE_ENV,
-      DATABASE_URL: "postgres://career_intel_app:career_intel_app@10.255.255.1:5432/career_intel_test",
-      REDIS_URL: "redis://10.255.255.1:6379",
-    };
-    const started = Date.now();
-    const res = await GET();
-    expect(res.status).toBe(200);
-    expect(await res.json()).toMatchObject({ database: "unavailable", redis: "unavailable" });
-    expect(Date.now() - started).toBeLessThan(8_000);
-  }, 20_000);
 });

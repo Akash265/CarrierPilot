@@ -75,9 +75,16 @@ export function unavailableReport(now: Date = new Date()): StatusReport {
  * Phase 11b design §5.3. Never throws: an unreachable database or Redis -- or a client that cannot even be created
  * from the configured URL -- is reported as "unavailable" (Redis down means no worker or queue status can be read).
  * The two checks run in parallel, so two hanging services cost one timeout. Redis is opened fail-fast, like the
- * enqueue helpers, so an outage answers within the timeout instead of hanging.
+ * enqueue helpers, so an outage answers within the timeout instead of hanging. `checks` is injectable for tests.
  */
-export async function loadStatus(env: StatusEnv, now: Date = new Date()): Promise<StatusReport> {
-  const [database, redisPart] = await Promise.all([checkDatabase(env), checkRedis(env, now)]);
+export interface StatusChecks {
+  checkDatabase: (env: StatusEnv) => Promise<StatusReport["database"]>;
+  checkRedis: (env: StatusEnv, now: Date) => Promise<RedisPart>;
+}
+
+export async function loadStatus(
+  env: StatusEnv, now: Date = new Date(), checks: StatusChecks = { checkDatabase, checkRedis }
+): Promise<StatusReport> {
+  const [database, redisPart] = await Promise.all([checks.checkDatabase(env), checks.checkRedis(env, now)]);
   return { checkedAt: now.toISOString(), database, ...redisPart };
 }
