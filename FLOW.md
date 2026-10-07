@@ -1514,6 +1514,7 @@ caller (route / pipeline / worker)
                 spend >= ceiling → record { outcome: blocked, error_code: budget_exceeded, cost 0 } → throw AiBudgetExceededError
                 spend query throws → record { blocked, budget_check_failed } → rethrow (fail closed)
            2. call(): SDK messages.create (SDK's own 2 retries) → usage from message.usage
+                (no usage block → outputTokens = body.max_tokens, row error_code usage_estimated -- D164)
                 throws → record { api_error, error_code: anthropicErrorCode(e) } → rethrow the original error
            3. estimateCostUsd("anthropic", message.model, usage)            packages/ai/src/usage/prices.ts
            4. record { ok, tokens, web searches, latency, cost, price_known }  → safeRecord: a failed insert logs

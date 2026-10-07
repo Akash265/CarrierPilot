@@ -22,6 +22,7 @@ function summary(over: Partial<UsageSummary> = {}): UsageSummary {
       { model: "claude-haiku-4-5-20251001", calls: 30, costUsd: 0.3 },
     ],
     unknownPriceModels: [],
+    usageEstimatedCalls: 0,
     recentFailures: [],
     ...over,
   };
@@ -74,6 +75,14 @@ describe("UsageClient", () => {
     render(<UsageClient />);
     expect(await screen.findByText("$3.50 this month · no monthly ceiling")).toBeInTheDocument();
     expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
+  });
+
+  it("says how many calls had their usage estimated", async () => {
+    serve(summary({ usageEstimatedCalls: 3 }));
+    render(<UsageClient />);
+    expect(
+      await screen.findByText("3 calls did not report token usage; their cost is estimated from the request size.")
+    ).toBeInTheDocument();
   });
 
   it("names models priced at the fallback rate", async () => {

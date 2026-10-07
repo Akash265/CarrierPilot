@@ -92,9 +92,11 @@ export async function embedTexts(
           const body = (await response.json()) as { data: { embedding: number[] }[]; usage?: { total_tokens?: number } };
           const totalTokens = body.usage?.total_tokens;
           const usageReported = typeof totalTokens === "number";
+          // No usage reported: estimate ~4 characters per token from the input, so the call is never free.
+          const inputTokens = usageReported ? totalTokens : Math.ceil(texts.reduce((n, t) => n + t.length, 0) / 4);
           return {
             result: body.data.map((item) => item.embedding),
-            usage: { inputTokens: usageReported ? totalTokens : 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0, webSearchRequests: 0 },
+            usage: { inputTokens, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0, webSearchRequests: 0 },
             usageReported,
           };
         }

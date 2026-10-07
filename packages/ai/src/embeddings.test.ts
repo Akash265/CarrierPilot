@@ -63,10 +63,13 @@ describe("embedTexts", () => {
     expect(JSON.stringify(sink.events)).not.toContain("SENTINEL");
   });
 
-  it("flags priceKnown false when Voyage reports no token usage", async () => {
+  it("never records a call without usage as free: it estimates 4 characters per token and says it estimated", async () => {
     const sink = recordingSink();
-    await embedTexts(ENV, ["t"], { sink, operation: "goal_embedding" }, deps([okResponse([[1]], null)]));
-    expect(sink.events[0]).toMatchObject({ inputTokens: 0, estimatedCostUsd: 0, priceKnown: false, outcome: "ok" });
+    await embedTexts(ENV, ["x".repeat(3000), "y".repeat(1001)], { sink, operation: "goal_embedding" }, deps([okResponse([[1], [2]], null)]));
+    // 4001 characters -> ceil(4001 / 4) = 1001 tokens at $0.06/MTok = 60.06 µ$ -> $0.00006
+    expect(sink.events[0]).toMatchObject({
+      inputTokens: 1001, estimatedCostUsd: 0.00006, priceKnown: true, outcome: "ok", errorCode: "usage_estimated",
+    });
   });
 
   it("retries a 429 then succeeds: two attempts, one row, backoff 500ms", async () => {

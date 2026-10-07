@@ -37,6 +37,8 @@ export interface UsageSummary {
   byOperation: OperationUsage[];
   byModel: { model: string; calls: number; costUsd: number }[];
   unknownPriceModels: string[];
+  /** Calls whose provider reported no token usage; their cost was estimated from the request (error_code usage_estimated). */
+  usageEstimatedCalls: number;
   recentFailures: { createdAt: string; operation: string; model: string; outcome: string; errorCode: string | null }[];
 }
 
@@ -96,6 +98,7 @@ export function summarizeUsage(
       .sort(byCostThenName((x) => x.model))
       .map(({ micro: m, ...x }) => ({ ...x, costUsd: fromMicro(m) })),
     unknownPriceModels: [...unknown].sort(),
+    usageEstimatedCalls: rows.filter((r) => r.outcome === "ok" && r.errorCode === "usage_estimated").length,
     recentFailures: rows
       .filter((r) => r.outcome !== "ok")
       .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())

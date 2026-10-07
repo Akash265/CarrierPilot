@@ -37,7 +37,8 @@ export interface UsageCounts {
 /**
  * One row of `ai_calls`. Carries metadata only -- never prompt text, response text, or any profile field
  * (CLAUDE.md §9). `errorCode` is a short code (e.g. `anthropic:429`, `voyage:503`, `network`), never an
- * error message, because provider messages can echo request content.
+ * error message, because provider messages can echo request content. An `ok` row may carry `usage_estimated`: the
+ * provider reported no token usage, so the tokens are a conservative estimate from the request.
  */
 export interface AiCallEvent extends UsageCounts {
   id: string;

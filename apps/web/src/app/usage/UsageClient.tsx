@@ -78,6 +78,12 @@ export function UsageClient() {
         </p>
       )}
 
+      {data.usageEstimatedCalls > 0 && (
+        <p className="rounded bg-amber-100 px-2 py-1 text-sm">
+          {`${data.usageEstimatedCalls} ${data.usageEstimatedCalls === 1 ? "call" : "calls"} did not report token usage; their cost is estimated from the request size.`}
+        </p>
+      )}
+
       {data.byOperation.length === 0 ? (
         <p className="text-sm text-gray-600">No AI calls yet this month.</p>
       ) : (

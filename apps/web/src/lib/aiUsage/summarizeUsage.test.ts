@@ -30,6 +30,7 @@ describe("summarizeUsage", () => {
       byOperation: [],
       byModel: [],
       unknownPriceModels: [],
+      usageEstimatedCalls: 0,
       recentFailures: [],
     });
   });
@@ -80,6 +81,14 @@ describe("summarizeUsage", () => {
   it("lists models priced at the conservative fallback rate, once each", () => {
     const rows = [row({ model: "claude-future-9", priceKnown: false }), row({ model: "claude-future-9", priceKnown: false }), row()];
     expect(summarizeUsage(rows, ENV, NOW).unknownPriceModels).toEqual(["claude-future-9"]);
+  });
+
+  it("counts calls whose usage was estimated, without calling their (known) model unpriced", () => {
+    const rows = [row({ errorCode: "usage_estimated" }), row({ errorCode: "usage_estimated", model: "voyage-3.5" }), row()];
+    const summary = summarizeUsage(rows, ENV, NOW);
+    expect(summary.usageEstimatedCalls).toBe(2);
+    expect(summary.unknownPriceModels).toEqual([]);
+    expect(summary.recentFailures).toEqual([]);
   });
 
   it("returns the 20 most recent failed or blocked calls, newest first, with codes only", () => {

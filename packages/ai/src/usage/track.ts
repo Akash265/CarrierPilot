@@ -19,7 +19,11 @@ export interface TrackContext {
 export interface TrackedResult<T> {
   result: T;
   usage: UsageCounts;
-  /** False when the provider response carried no usage block: cost is then unknown, flagged via priceKnown. */
+  /**
+   * False when the provider response carried no usage block. `usage` must then hold a conservative estimate from
+   * the request (never zeros), so the call still counts toward the ceiling; the row says so with
+   * error_code "usage_estimated".
+   */
   usageReported: boolean;
   /** The model that served the call, when the response says so. */
   servedModel?: string;
@@ -89,9 +93,9 @@ export async function trackAiCall<T>(ctx: TrackContext, call: () => Promise<Trac
     ...tracked.usage,
     latencyMs,
     estimatedCostUsd: costUsd,
-    priceKnown: priceKnown && tracked.usageReported,
+    priceKnown,
     outcome: "ok",
-    errorCode: null,
+    errorCode: tracked.usageReported ? null : "usage_estimated",
   });
   return tracked.result;
 }

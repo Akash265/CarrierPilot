@@ -102,11 +102,14 @@ describe("createAnthropicFor", () => {
     expect(sink.events[0]).toMatchObject({ cacheReadTokens: 0, cacheCreationTokens: 0, webSearchRequests: 0, priceKnown: true });
   });
 
-  it("flags priceKnown false when the response carries no usage at all", async () => {
+  it("never records a call without a usage block as free: it charges max_tokens of output and says it estimated", async () => {
     const sink = recordingSink();
     const client = fakeClient(async () => message(null));
     await createAnthropicFor(ENV, sink, { client })("match_explanation").messages.create(PARAMS);
-    expect(sink.events[0]).toMatchObject({ inputTokens: 0, outputTokens: 0, estimatedCostUsd: 0, priceKnown: false, outcome: "ok" });
+    // PARAMS.max_tokens = 100 output tokens at Haiku's $5/MTok = $0.0005; the model is in the table, so priceKnown stays true.
+    expect(sink.events[0]).toMatchObject({
+      inputTokens: 0, outputTokens: 100, estimatedCostUsd: 0.0005, priceKnown: true, outcome: "ok", errorCode: "usage_estimated",
+    });
   });
 
   it("records an api_error with a status code and rethrows the provider's original error", async () => {

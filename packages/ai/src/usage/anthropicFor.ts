@@ -32,9 +32,12 @@ export function anthropicErrorCode(error: unknown): string {
   return "error";
 }
 
-function usageOf(message: Anthropic.Message): { usage: UsageCounts; usageReported: boolean } {
+/** A response without usage is charged its full output allowance (max_tokens), so it can never look free. */
+function usageOf(message: Anthropic.Message, maxTokens: number): { usage: UsageCounts; usageReported: boolean } {
   const u = message.usage;
-  if (!u) return { usage: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0, webSearchRequests: 0 }, usageReported: false };
+  if (!u) {
+    return { usage: { inputTokens: 0, outputTokens: maxTokens, cacheReadTokens: 0, cacheCreationTokens: 0, webSearchRequests: 0 }, usageReported: false };
+  }
   return {
     usage: {
       inputTokens: u.input_tokens ?? 0,
@@ -61,7 +64,7 @@ export function createAnthropicFor(
           { sink, env, operation, provider: "anthropic", model: body.model, clock, errorCodeOf: anthropicErrorCode },
           async () => {
             const message = options === undefined ? await client.messages.create(body) : await client.messages.create(body, options);
-            return { result: message, ...usageOf(message), servedModel: message.model || undefined };
+            return { result: message, ...usageOf(message, body.max_tokens), servedModel: message.model || undefined };
           }
         ),
     },
