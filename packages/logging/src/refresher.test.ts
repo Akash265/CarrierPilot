@@ -105,6 +105,51 @@ describe("createRedactionRefresher", () => {
     expect(load).toHaveBeenCalledTimes(2);
   });
 
+  it("still applies a load that lands after the timeout", async () => {
+    vi.useFakeTimers();
+    try {
+      const redactor = new Redactor();
+      let release!: (v: string[]) => void;
+      const load = vi.fn(() => new Promise<string[]>((r) => (release = r)));
+      const refresher = createRedactionRefresher(redactor, load, { logger: silentLogger(), loadTimeoutMs: 100 });
+
+      const pending = refresher.refresh();
+      await vi.advanceTimersByTimeAsync(100);
+      await pending;
+      expect(redactor.redact("Jane Doe")).toBe("Jane Doe");
+      release(["Jane Doe"]);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(redactor.redact("Jane Doe")).toBe("[REDACTED]");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not let a timed-out load overwrite a newer load that already succeeded", async () => {
+    vi.useFakeTimers();
+    try {
+      const redactor = new Redactor();
+      let releaseSlow!: (v: string[]) => void;
+      const load = vi.fn()
+        .mockImplementationOnce(() => new Promise<string[]>((r) => (releaseSlow = r)))
+        .mockResolvedValueOnce(["Bob Jones"]);
+      const refresher = createRedactionRefresher(redactor, load, { logger: silentLogger(), loadTimeoutMs: 100 });
+
+      const slow = refresher.refresh();
+      await vi.advanceTimersByTimeAsync(100);
+      await slow;
+      await refresher.refresh();
+      expect(redactor.redact("Bob Jones")).toBe("[REDACTED]");
+
+      releaseSlow(["Jane Doe"]);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(redactor.redact("Bob Jones")).toBe("[REDACTED]");
+      expect(redactor.redact("Jane Doe")).toBe("Jane Doe");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("invalidate makes the next refreshIfStale reload at once (e.g. after a profile edit)", async () => {
     const load = vi.fn(async () => ["Jane Doe"]);
     const refresher = createRedactionRefresher(new Redactor(), load, { logger: silentLogger(), maxAgeMs: 60_000, now: () => 0 });

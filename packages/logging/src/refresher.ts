@@ -48,13 +48,24 @@ export function createRedactionRefresher(redactor: Redactor, load: () => Promise
   // An invalidate that lands while a load is in flight may predate the change that load read, so it must survive it.
   let invalidatedDuringLoad = false;
   let inFlight: Promise<void> | null = null;
+  // Each load is numbered. A load that times out still applies its values when it lands, unless a newer load has
+  // already succeeded -- otherwise one slow query would keep the redactor on stale values until the next refresh.
+  let started = 0;
+  let applied = 0;
 
   const refresh = (): Promise<void> => {
     if (inFlight) return inFlight;
     invalidatedDuringLoad = false;
     inFlight = (async () => {
+      const seq = ++started;
       try {
-        redactor.setValues(await withTimeout(load(), loadTimeoutMs));
+        const loaded = load().then((values) => {
+          if (seq > applied) {
+            applied = seq;
+            redactor.setValues(values);
+          }
+        });
+        await withTimeout(loaded, loadTimeoutMs);
       } catch (error) {
         opts.logger.error("redaction_refresh_failed", { error });
       } finally {
