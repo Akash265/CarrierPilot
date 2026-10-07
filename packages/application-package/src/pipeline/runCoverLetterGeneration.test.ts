@@ -23,6 +23,12 @@ import type { CoverLetterDraft } from "../coverLetter/coverLetterSchema";
 const USER = "00000000-0000-0000-0000-000000000012";
 const ENV = { ANTHROPIC_MODEL_FAST: "fast-model", ANTHROPIC_MODEL_RESEARCH: "research-model", COMPANY_RESEARCH_MAX_SEARCHES: 5 };
 const CLIENT = {} as Pick<Anthropic, "messages">;
+// One distinct fake per operation (Phase 11a), so tests can see which label each call was handed.
+const LABELLED = new Map<string, Pick<Anthropic, "messages">>();
+const CLIENT_FOR = (operation: string) => {
+  if (!LABELLED.has(operation)) LABELLED.set(operation, { ...CLIENT });
+  return LABELLED.get(operation)!;
+};
 let testDb: TestDb;
 
 function groundedDraft(input: GenerateCoverLetterInput): CoverLetterDraft {
@@ -82,7 +88,7 @@ async function seed(opts: { match?: boolean; eligible?: boolean; profile?: boole
   return job.id as string;
 }
 
-const run = (jobId: string) => runCoverLetterGeneration(testDb.db, { userId: USER, jobId, anthropicClient: CLIENT, env: ENV });
+const run = (jobId: string) => runCoverLetterGeneration(testDb.db, { userId: USER, jobId, anthropicFor: CLIENT_FOR, env: ENV });
 
 describe("runCoverLetterGeneration", () => {
   it("maps the gates to no_match / not_eligible / no_profile, the last before any paid research", async () => {
@@ -191,5 +197,12 @@ describe("runCoverLetterGeneration", () => {
     const jobId = await seed();
     const [a, b] = await Promise.all([run(jobId), run(jobId)]);
     expect([a.coverLetter.version, b.coverLetter.version].sort()).toEqual([1, 2]);
+  });
+
+  it("hands the cover-letter call the client labelled cover_letter_generation", async () => {
+    const jobId = await seed();
+    await run(jobId);
+    expect(vi.mocked(generateCoverLetter).mock.calls[0][0]).toBe(CLIENT_FOR("cover_letter_generation"));
+    expect(vi.mocked(runCompanyResearch).mock.calls[0][0]).toBe(CLIENT_FOR("company_research"));
   });
 });

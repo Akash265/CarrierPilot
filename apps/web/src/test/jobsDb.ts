@@ -354,3 +354,18 @@ export async function aiCallRows(adminSql: postgres.Sql, userId: string) {
   return adminSql<{ operation: string; outcome: string; error_code: string | null }[]>`
     SELECT operation, outcome, error_code FROM ai_calls WHERE user_id = ${userId} ORDER BY created_at, operation`;
 }
+
+/** Phase 11a: one work-experience bullet, so the resume snapshot has evidence and generation gets past no_profile. */
+export async function insertResumeEvidence(adminSql: postgres.Sql, userId: string): Promise<void> {
+  const [exp] = await adminSql`
+    INSERT INTO work_experiences (user_id, company, title, display_order) VALUES (${userId}, 'Acme', 'Engineer', 0) RETURNING id`;
+  await adminSql`
+    INSERT INTO work_experience_bullets (user_id, work_experience_id, text, display_order)
+    VALUES (${userId}, ${exp.id}, 'Built a data pipeline', 0)`;
+}
+
+export async function wipeResumeEvidence(adminSql: postgres.Sql, userId: string): Promise<void> {
+  await adminSql`DELETE FROM work_experience_bullets WHERE user_id = ${userId}`;
+  await adminSql`DELETE FROM work_experiences WHERE user_id = ${userId}`;
+}
+
