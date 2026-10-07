@@ -30,40 +30,54 @@ function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
 }
 
 async function checkDatabase(env: StatusEnv): Promise<"ok" | "unavailable"> {
-  const db = createDbClient(env);
+  let db: ReturnType<typeof createDbClient> | null = null;
   try {
+    db = createDbClient(env);
     await withTimeout(db.execute(sql`SELECT 1`), TIMEOUT_MS);
     return "ok";
   } catch {
     return "unavailable";
   } finally {
-    await withTimeout(closeDbClient(db), 1000).catch(() => undefined);
+    if (db) await withTimeout(closeDbClient(db), 1000).catch(() => undefined);
   }
 }
 
-/**
- * Phase 11b design §5.3. Never throws: an unreachable database or Redis is reported as "unavailable" (Redis down
- * means no worker or queue status can be read). Redis is opened fail-fast, like the enqueue helpers, so an outage
- * answers within the timeout instead of hanging.
- */
-export async function loadStatus(env: StatusEnv, now: Date = new Date()): Promise<StatusReport> {
-  const database = await checkDatabase(env);
-  const connection = new IORedis(env.REDIS_URL, {
-    lazyConnect: true, maxRetriesPerRequest: 1, enableOfflineQueue: false, connectTimeout: 3000, retryStrategy: () => null,
-  });
-  // Emits 'error' while Redis is unreachable; without a listener that would crash the process.
-  connection.on("error", () => undefined);
+type RedisPart = Pick<StatusReport, "redis" | "workers" | "queues">;
+
+async function checkRedis(env: StatusEnv, now: Date): Promise<RedisPart> {
+  let connection: IORedis | null = null;
   try {
+    connection = new IORedis(env.REDIS_URL, {
+      lazyConnect: true, maxRetriesPerRequest: 1, enableOfflineQueue: false, connectTimeout: 3000, retryStrategy: () => null,
+    });
+    // Emits 'error' while Redis is unreachable; without a listener that would crash the process.
+    connection.on("error", () => undefined);
     // Connect explicitly first: with the offline queue disabled, a command sent before the socket is ready is
     // rejected rather than queued.
     await withTimeout(connection.connect(), TIMEOUT_MS);
     await withTimeout(connection.ping(), TIMEOUT_MS);
     const workers = await withTimeout(readWorkerStatus(connection, now, { staleAfterMs: env.STATUS_STALE_AFTER_MS }), TIMEOUT_MS);
     const queues = await withTimeout(readQueueStatus(connection, QUEUES), TIMEOUT_MS);
-    return { checkedAt: now.toISOString(), database, redis: "ok", workers, queues };
+    return { redis: "ok", workers, queues };
   } catch {
-    return { checkedAt: now.toISOString(), database, redis: "unavailable", workers: [], queues: [] };
+    return { redis: "unavailable", workers: [], queues: [] };
   } finally {
-    connection.disconnect();
+    connection?.disconnect();
   }
+}
+
+/** What /status shows when nothing can be checked at all (e.g. the configuration itself is invalid). */
+export function unavailableReport(now: Date = new Date()): StatusReport {
+  return { checkedAt: now.toISOString(), database: "unavailable", redis: "unavailable", workers: [], queues: [] };
+}
+
+/**
+ * Phase 11b design §5.3. Never throws: an unreachable database or Redis -- or a client that cannot even be created
+ * from the configured URL -- is reported as "unavailable" (Redis down means no worker or queue status can be read).
+ * The two checks run in parallel, so two hanging services cost one timeout. Redis is opened fail-fast, like the
+ * enqueue helpers, so an outage answers within the timeout instead of hanging.
+ */
+export async function loadStatus(env: StatusEnv, now: Date = new Date()): Promise<StatusReport> {
+  const [database, redisPart] = await Promise.all([checkDatabase(env), checkRedis(env, now)]);
+  return { checkedAt: now.toISOString(), database, ...redisPart };
 }
