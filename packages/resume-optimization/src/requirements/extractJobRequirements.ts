@@ -1,5 +1,6 @@
 import { randomBytes } from "node:crypto";
 import type Anthropic from "@anthropic-ai/sdk";
+import type { MessagesClient } from "@ai-career/ai";
 import type { Env } from "@ai-career/config";
 import { JobRequirementExtractionSchema, type JobRequirementExtractionDraft } from "./jobRequirementExtractionSchema";
 
@@ -29,7 +30,7 @@ export class JobRequirementExtractionValidationError extends Error {}
  * random-delimiter defense as packages/ai/src/extractCareerGoal.ts (D20).
  */
 export async function extractJobRequirements(
-  client: Pick<Anthropic, "messages">,
+  client: MessagesClient,
   env: Pick<Env, "ANTHROPIC_MODEL_FAST">,
   jobTitle: string,
   descriptionText: string

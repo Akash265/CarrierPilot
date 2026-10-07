@@ -1,5 +1,6 @@
 import { randomBytes } from "node:crypto";
 import type Anthropic from "@anthropic-ai/sdk";
+import type { MessagesClient } from "@ai-career/ai";
 import type { Env } from "@ai-career/config";
 import { OptimizeResumeSchema, type OptimizeResumeDraft } from "./optimizeResumeSchema";
 import type { EvidenceCatalogEntry } from "./buildResumeSnapshot";
@@ -51,7 +52,7 @@ export interface OptimizeResumeInput {
  * out for "already reviewed once."
  */
 export async function optimizeResume(
-  client: Pick<Anthropic, "messages">,
+  client: MessagesClient,
   env: Pick<Env, "ANTHROPIC_MODEL_FAST">,
   input: OptimizeResumeInput
 ): Promise<OptimizeResumeDraft> {

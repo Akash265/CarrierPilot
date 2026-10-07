@@ -1,7 +1,7 @@
 import { eq } from "drizzle-orm";
-import type Anthropic from "@anthropic-ai/sdk";
 import { schema, type DbClient } from "@ai-career/db";
 import type { Env } from "@ai-career/config";
+import type { MessagesClient } from "@ai-career/ai";
 import { extractJobRequirements } from "./extractJobRequirements";
 
 const { jobRequirements } = schema;
@@ -22,7 +22,7 @@ export interface JobForRequirements {
 export async function ensureJobRequirements(
   tx: DbClient,
   env: Pick<Env, "ANTHROPIC_MODEL_FAST">,
-  anthropicClient: Pick<Anthropic, "messages">,
+  anthropicClient: MessagesClient,
   job: JobForRequirements
 ): Promise<(typeof jobRequirements.$inferSelect)[]> {
   const existing = await tx.select().from(jobRequirements).where(eq(jobRequirements.jobId, job.id));
