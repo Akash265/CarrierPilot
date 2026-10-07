@@ -74,6 +74,18 @@ const envSchema = z
     // How often each worker writes its heartbeat. STATUS_STALE_AFTER_MS must be longer (checked below), or a running
     // worker would read as "stale" between two beats; keep both the same for the web app and the workers.
     HEARTBEAT_INTERVAL_MS: z.preprocess(blankAsUnset, z.coerce.number().int().min(1000).default(30_000)),
+    // Phase 11c (D177). The interface the web app listens on (read by apps/web's start/dev scripts); 127.0.0.1 keeps
+    // it off the network. Extra Host header values the request gate accepts besides localhost (comma-separated).
+    HOST: z.preprocess(blankAsUnset, z.string().min(1).default("127.0.0.1")),
+    ALLOWED_HOSTS: z.preprocess(
+      blankAsUnset,
+      z.string().default("").transform((v) => v.split(",").map((h) => h.trim().toLowerCase()).filter(Boolean)),
+    ),
+    // When set, every page and API route needs this token (cookie from /unlock, or a Bearer header).
+    APP_ACCESS_TOKEN: z.preprocess(blankAsUnset, z.string().min(32, "must be at least 32 characters").optional()),
+    // Phase 11c (D178). Requests per minute for routes that call the AI / start background work; 0 = no limit.
+    RATE_LIMIT_AI_PER_MINUTE: z.preprocess(blankAsUnset, z.coerce.number().int().min(0).default(10)),
+    RATE_LIMIT_JOBS_PER_MINUTE: z.preprocess(blankAsUnset, z.coerce.number().int().min(0).default(20)),
   })
   .superRefine((val, ctx) => {
     if (val.EMBEDDING_PROVIDER === "voyage" && !val.VOYAGE_API_KEY) {

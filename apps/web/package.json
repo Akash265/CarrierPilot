@@ -3,9 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "dotenv -e ../../.env -- next dev",
+    "dev": "dotenv -e ../../.env -- sh -c 'next dev -H \"${HOST:-127.0.0.1}\"'",
     "build": "NODE_ENV=production dotenv -e ../../.env -- next build",
-    "start": "NODE_ENV=production dotenv -e ../../.env -- next start",
+    "start": "NODE_ENV=production dotenv -e ../../.env -- sh -c 'next start -H \"${HOST:-127.0.0.1}\"'",
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
     "test": "NODE_ENV=test dotenv -e ../../.env -- vitest run"
