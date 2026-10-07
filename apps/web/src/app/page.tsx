@@ -33,6 +33,9 @@ export default function Home() {
           7. Insights — see which applications get responses
         </Link>
         <AiUsageLink />
+        <Link href="/status" className="underline">
+          9. System status — workers and queues
+        </Link>
       </nav>
     </main>
   );
