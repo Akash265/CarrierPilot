@@ -3,7 +3,7 @@ import { Queue } from "bullmq";
 import { loadEnv } from "@ai-career/config";
 import { closeDbClient, createDbClient, loadRedactionValues } from "@ai-career/db";
 import { createLogger, initProcessLogging, throttleErrorLog } from "@ai-career/logging";
-import { createShutdown, startHeartbeat } from "@ai-career/monitoring";
+import { createShutdown, originalJobError, startHeartbeat } from "@ai-career/monitoring";
 import { createStorageClient } from "@ai-career/storage";
 import { createRetentionStorage } from "./storageAdapter";
 import { createMaintenanceWorker, scheduleRetention } from "./worker";
@@ -27,7 +27,10 @@ async function main(): Promise<void> {
 
   const worker = createMaintenanceWorker({ connection, db, storage, userId: env.DEFAULT_USER_ID, retentionDays: env.RETENTION_DAYS });
   worker.on("completed", (job, result) => log.info("maintenance_completed", { jobId: job.id, name: job.name, ...result }));
-  worker.on("failed", (job, error) => log.error("maintenance_failed", { jobId: job?.id, name: job?.name, error }));
+  worker.on("failed", (job, rawError) => {
+    const error = originalJobError(rawError);
+    log.error("maintenance_failed", { jobId: job?.id, name: job?.name, error });
+  });
   // Redis connection errors are re-emitted here; with no listener the worker would crash with Node's raw print.
   worker.on("error", throttleErrorLog(log, "worker_error"));
   await scheduleRetention(queue);

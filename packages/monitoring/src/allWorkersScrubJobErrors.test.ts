@@ -12,5 +12,8 @@ describe("every worker stores only content-free job errors", () => {
     expect(source).toContain('import { contentFreeJobError } from "@ai-career/monitoring";');
     expect(source).toContain("throw contentFreeJobError(error);");
     expect(source, "no other rethrow").not.toMatch(/^\s*throw error;/m);
+    // The failed handler logs the error the job actually threw (real frames, SQLSTATE), not the stored wrapper.
+    const main = readFileSync(path.join(REPO, `services/${svc}/src/main.ts`), "utf8");
+    expect(main).toMatch(/worker\.on\("failed", \(job, rawError\) => \{\n\s+const error = originalJobError\(rawError\);/);
   });
 });

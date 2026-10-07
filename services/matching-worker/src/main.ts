@@ -2,7 +2,7 @@ import IORedis from "ioredis";
 import { loadEnv } from "@ai-career/config";
 import { DbUsageSink, closeDbClient, createDbClient, loadRedactionValues } from "@ai-career/db";
 import { createLogger, initProcessLogging, throttleErrorLog } from "@ai-career/logging";
-import { createShutdown, startHeartbeat } from "@ai-career/monitoring";
+import { createShutdown, originalJobError, startHeartbeat } from "@ai-career/monitoring";
 import { createAnthropicFor, withLangfuseExport, type AiUsageSink } from "@ai-career/ai";
 import { createMatchingWorker } from "./worker";
 
@@ -34,7 +34,10 @@ async function main(): Promise<void> {
 
   const worker = createMatchingWorker({ connection, db, aiFor, env });
   worker.on("completed", (job) => log.info("matching_completed", { jobId: job.id }));
-  worker.on("failed", (job, error) => log.error("matching_failed", { jobId: job?.id, ...failureFields(error) }));
+  worker.on("failed", (job, rawError) => {
+    const error = originalJobError(rawError);
+    log.error("matching_failed", { jobId: job?.id, ...failureFields(error) });
+  });
   // Redis connection errors are re-emitted here; with no listener the worker would crash with Node's raw print.
   worker.on("error", throttleErrorLog(log, "worker_error"));
   log.info("worker_started");

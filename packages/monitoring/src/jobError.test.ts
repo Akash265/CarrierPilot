@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { contentFreeJobError } from "./jobError";
+import { contentFreeJobError, originalJobError } from "./jobError";
+import { serializeError } from "@ai-career/logging";
 import { failureCode } from "./workerState";
 
 const named = (name: string, message: string, extra: Record<string, unknown> = {}) => Object.assign(Object.assign(new Error(message), { name }), extra);
@@ -35,5 +36,23 @@ describe("contentFreeJobError", () => {
     expect(out.name).toBe("UnrecoverableError");
     expect(out.message).toBe("job_failed:unrecoverableerror");
     expect(failureCode(out.message)).not.toBeNull();
+  });
+});
+
+describe("originalJobError (what the worker logs, D180 review fix)", () => {
+  it("unwraps an error made by contentFreeJobError, so the log keeps the real frames and the SQLSTATE", () => {
+    const pg = named("PostgresError", "secret value", { code: "22P02" });
+    const drizzle = named("DrizzleQueryError", "Failed query: params: Jane", { cause: pg });
+    drizzle.stack = "DrizzleQueryError: Failed query: params: Jane\n    at runMatching (/r/packages/matching/src/pipeline/runMatching.ts:42:7)";
+    const logged = serializeError(originalJobError(contentFreeJobError(drizzle)) as Error);
+    expect(logged).toEqual({ name: "DrizzleQueryError", code: "22P02", causeName: "PostgresError", frames: ["packages/matching/src/pipeline/runMatching.ts:42:7"] });
+  });
+
+  it("returns any other error unchanged, including one whose cause it did not set", () => {
+    const own = named("UnrecoverableError", "no_active_goal");
+    expect(originalJobError(contentFreeJobError(own))).toBe(own);
+    const withCause = named("Error", "x y", { cause: new Error("inner") });
+    expect(originalJobError(withCause)).toBe(withCause);
+    expect(originalJobError("str")).toBe("str");
   });
 });

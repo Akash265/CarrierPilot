@@ -1,6 +1,8 @@
 import { failureCode } from "./workerState";
 
 const DB_ERRORS = new Set(["DrizzleQueryError", "PostgresError"]);
+/** Marks the errors this module makes, so originalJobError unwraps those and nothing else. */
+const WRAPPED = Symbol("contentFreeJobError");
 const RAW_CODE = /^[A-Za-z0-9_]{1,20}$/;
 
 const codeOf = (e: { code?: unknown } | undefined) => (typeof e?.code === "string" && RAW_CODE.test(e.code) ? e.code.toLowerCase() : null);
@@ -20,5 +22,15 @@ export function contentFreeJobError(error: unknown): Error {
   const detail = codeOf(e) ?? codeOf(cause) ?? (e ? e.name.toLowerCase().replace(/[^a-z0-9_]/g, "").slice(0, 40) || null : null);
   const out = new Error(`${isDb ? "database_error" : "job_failed"}${detail ? `:${detail}` : ""}`, { cause: error });
   if (e?.name === "UnrecoverableError") out.name = "UnrecoverableError";
+  Object.defineProperty(out, WRAPPED, { value: true });
   return out;
+}
+
+/**
+ * What a worker's `failed` handler should log (D180 review fix): the error the job actually threw, whose frames point
+ * at the failure and whose cause carries the SQLSTATE -- the logger never writes messages, so this is safe. BullMQ
+ * still stores only the content-free wrapper. Any error this module did not make is returned unchanged.
+ */
+export function originalJobError(error: unknown): unknown {
+  return error instanceof Error && (error as Error & { [WRAPPED]?: boolean })[WRAPPED] ? error.cause : error;
 }
