@@ -1,7 +1,7 @@
 import { and, eq, max, sql } from "drizzle-orm";
 import Anthropic from "@anthropic-ai/sdk";
 import { schema, withUserContext, type DbClient } from "@ai-career/db";
-import { embedTexts } from "@ai-career/ai";
+import { embedTexts, type AiUsageSink } from "@ai-career/ai";
 import { ensureJobRequirements } from "../requirements/ensureJobRequirements";
 import { JobRequirementExtractionValidationError } from "../requirements/extractJobRequirements";
 import { buildResumeSnapshot } from "../optimization/buildResumeSnapshot";
@@ -32,12 +32,15 @@ export interface RunResumeOptimizationEnv {
   EMBEDDING_PROVIDER: "voyage" | "self-hosted";
   VOYAGE_API_KEY?: string;
   VOYAGE_EMBEDDING_MODEL: string;
+  AI_MONTHLY_BUDGET_USD: number;
 }
 
 export interface RunResumeOptimizationOptions {
   userId: string;
   jobId: string;
   anthropicClient: Pick<Anthropic, "messages">;
+  /** Where the similarity-embedding call is recorded and budget-checked (Phase 11a). */
+  usageSink: AiUsageSink;
   env: RunResumeOptimizationEnv;
 }
 
@@ -62,7 +65,7 @@ export async function runResumeOptimization(
   db: DbClient,
   opts: RunResumeOptimizationOptions
 ): Promise<RunResumeOptimizationResult> {
-  const { userId, jobId, anthropicClient, env } = opts;
+  const { userId, jobId, anthropicClient, usageSink, env } = opts;
   const inUserContext = <T>(fn: (tx: DbClient) => Promise<T>) => withUserContext(db, userId, fn);
 
   const [match] = await inUserContext((tx) => tx.select().from(jobMatches).where(eq(jobMatches.jobId, jobId)).limit(1));
@@ -124,12 +127,12 @@ export async function runResumeOptimization(
   let semanticSimilarity: number | null = null;
   if (job.embedding !== null && combinedOptimizedText.trim().length > 0) {
     try {
-      const [resumeEmbedding] = await embedTexts(env, [combinedOptimizedText]);
+      const [resumeEmbedding] = await embedTexts(env, [combinedOptimizedText], { sink: usageSink, operation: "resume_similarity_embedding" });
       semanticSimilarity = scoreSemanticSimilarity(job.embedding, resumeEmbedding ?? null);
     } catch {
-      // Same "degrade, never block" rule as ensureJobEmbeddings: a Voyage outage leaves
-      // semanticSimilarity null (computeOverallScore redistributes its weight) rather than failing
-      // the whole optimization.
+      // Same "degrade, never block" rule as ensureJobEmbeddings: a Voyage outage -- or a call blocked by
+      // the monthly AI budget (Phase 11a) -- leaves semanticSimilarity null (computeOverallScore
+      // redistributes its weight) rather than failing the whole optimization.
       semanticSimilarity = null;
     }
   }

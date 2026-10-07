@@ -4,6 +4,7 @@ import { Queue, QueueEvents, type Worker } from "bullmq";
 import type Anthropic from "@anthropic-ai/sdk";
 import { openTestDb, wipeUser, type TestDb } from "@ai-career/matching/testing";
 import { MATCHING_JOB_NAME, matchingJobId, type MatchingJobData, type RunMatchingEnv } from "@ai-career/matching";
+import { NoopUsageSink } from "@ai-career/ai";
 import { createMatchingWorker } from "./worker";
 
 const USER = "00000000-0000-0000-0000-0000000000a9";
@@ -14,7 +15,9 @@ const queueName = `matching-test-${randomUUID()}`;
 const ENV: RunMatchingEnv = {
   ANTHROPIC_MODEL_FAST: "test-model", EMBEDDING_PROVIDER: "voyage", VOYAGE_API_KEY: "k", VOYAGE_EMBEDDING_MODEL: "voyage-3.5",
   MATCHING_EXPLAIN_TOP_N: 0, MATCHING_EXPERIENCE_GRACE_YEARS: 1, MATCHING_FRESHNESS_HALF_LIFE_HOURS: 168, MATCHING_EXPLANATION_TTL_DAYS: 7,
+  AI_MONTHLY_BUDGET_USD: 20,
 };
+const usageSinkFor = vi.fn(() => NoopUsageSink);
 const anthropicClient: Pick<Anthropic, "messages"> = { messages: { create: vi.fn() } as unknown as Anthropic["messages"] };
 
 let t: TestDb;
@@ -27,7 +30,7 @@ beforeAll(async () => {
   queue = new Queue<MatchingJobData>(queueName, { connection });
   events = new QueueEvents(queueName, { connection });
   await events.waitUntilReady();
-  worker = createMatchingWorker({ connection, db: t.db, anthropicClient, env: ENV, queueName });
+  worker = createMatchingWorker({ connection, db: t.db, anthropicClient, usageSinkFor, env: ENV, queueName });
   await worker.waitUntilReady();
 });
 beforeEach(() => wipeUser(t.adminSql, USER));
@@ -60,6 +63,7 @@ describe("matching worker", () => {
 
     const runs = await t.adminSql`SELECT status FROM matching_runs WHERE user_id = ${USER}`;
     expect(runs).toEqual([{ status: "completed" }]);
+    expect(usageSinkFor).toHaveBeenCalledWith(USER);
   });
 
   it("does not retry a permanent failure (no active career goal)", async () => {

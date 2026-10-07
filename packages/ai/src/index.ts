@@ -4,7 +4,7 @@ export { extractText } from "./textExtraction";
 export { ResumeExtractionSchema } from "./extractionSchema";
 export type { ResumeExtractionDraft } from "./extractionSchema";
 export { extractProfileFromResume, createAnthropicClient, ExtractionValidationError } from "./extractProfile";
-export { embedTexts, EmbeddingProviderNotImplementedError } from "./embeddings";
+export { embedTexts, EmbeddingProviderNotImplementedError, VoyageRequestError, type EmbedUsage, type EmbedDeps } from "./embeddings";
 export { parseSalaryFloor } from "./parseSalaryFloor";
 export type { ParsedSalaryFloor } from "./parseSalaryFloor";
 export { CareerGoalExtractionSchema } from "./careerGoalExtractionSchema";

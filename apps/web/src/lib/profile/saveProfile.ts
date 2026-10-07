@@ -3,6 +3,7 @@ import { embedTexts } from "@ai-career/ai";
 import type { Env } from "@ai-career/config";
 import type { ConfirmedProfile } from "./confirmedProfileSchema";
 import { deriveFact, type DerivedFact } from "./deriveFacts";
+import { createUsageSink } from "../aiUsage/createUsageSink";
 
 type ExistingFact = {
   contentHash: string;
@@ -166,11 +167,12 @@ export async function saveConfirmedProfile(
     try {
       newEmbeddings = await embedTexts(
         env,
-        factsNeedingEmbedding.map((f) => f.factText)
+        factsNeedingEmbedding.map((f) => f.factText),
+        { sink: createUsageSink(db, env), operation: "profile_fact_embedding" }
       );
     } catch {
-      // Spec §7: a Voyage failure must not lose the confirmed profile (already
-      // committed above). The affected facts are written with a null embedding
+      // Spec §7: a Voyage failure -- or a call blocked by the monthly AI budget
+      // (Phase 11a) -- must not lose the confirmed profile (already committed above). The affected facts are written with a null embedding
       // -- the column is nullable precisely so they can be back-filled later.
       // The error itself is swallowed rather than logged because it may embed
       // fact text (profile PII) in its message, which §6 forbids logging.

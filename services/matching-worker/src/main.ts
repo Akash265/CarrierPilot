@@ -1,7 +1,7 @@
 import IORedis from "ioredis";
 import { loadEnv } from "@ai-career/config";
-import { closeDbClient, createDbClient } from "@ai-career/db";
-import { createAnthropicClient } from "@ai-career/ai";
+import { DbUsageSink, closeDbClient, createDbClient } from "@ai-career/db";
+import { createAnthropicClient, withLangfuseExport, type AiUsageSink } from "@ai-career/ai";
 import { createMatchingWorker } from "./worker";
 
 const log = (event: string, fields: Record<string, unknown> = {}) =>
@@ -20,7 +20,10 @@ async function main(): Promise<void> {
   const connection = new IORedis(env.REDIS_URL, { maxRetriesPerRequest: null });
   const anthropicClient = createAnthropicClient(env);
 
-  const worker = createMatchingWorker({ connection, db, anthropicClient, env });
+  // Typed as AiUsageSink so the compiler checks DbUsageSink still matches the AI package's interface.
+  const usageSinkFor = (userId: string): AiUsageSink => withLangfuseExport(new DbUsageSink(db, userId), env);
+
+  const worker = createMatchingWorker({ connection, db, anthropicClient, usageSinkFor, env });
   worker.on("completed", (job) => log("matching_completed", { jobId: job.id }));
   worker.on("failed", (job, error) => log("matching_failed", { jobId: job?.id, error: safeErrorLabel(error) }));
   log("worker_started", {});

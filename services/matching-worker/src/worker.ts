@@ -1,12 +1,15 @@
 import { Worker, UnrecoverableError, type ConnectionOptions } from "bullmq";
 import type Anthropic from "@anthropic-ai/sdk";
 import type { DbClient } from "@ai-career/db";
+import type { AiUsageSink } from "@ai-career/ai";
 import { MATCHING_QUEUE_NAME, MatchingError, runMatching, type MatchingJobData, type RunMatchingEnv } from "@ai-career/matching";
 
 export interface MatchingWorkerDeps {
   connection: ConnectionOptions;
   db: DbClient;
   anthropicClient: Pick<Anthropic, "messages">;
+  /** Builds the AI usage sink for the user a job runs for (Phase 11a): ai_calls rows are per user. */
+  usageSinkFor: (userId: string) => AiUsageSink;
   env: RunMatchingEnv;
   /** Overridable so tests use an isolated queue. */
   queueName?: string;
@@ -23,7 +26,12 @@ export function createMatchingWorker(deps: MatchingWorkerDeps): Worker<MatchingJ
     deps.queueName ?? MATCHING_QUEUE_NAME,
     async (job) => {
       try {
-        await runMatching(deps.db, { userId: job.data.userId, anthropicClient: deps.anthropicClient, env: deps.env });
+        await runMatching(deps.db, {
+          userId: job.data.userId,
+          anthropicClient: deps.anthropicClient,
+          usageSink: deps.usageSinkFor(job.data.userId),
+          env: deps.env,
+        });
       } catch (error) {
         if (error instanceof MatchingError && error.errorClass === "no_active_goal") {
           throw new UnrecoverableError(error.errorClass);

@@ -6,7 +6,8 @@ import { drizzle } from "drizzle-orm/postgres-js";
 import { migrate } from "drizzle-orm/postgres-js/migrator";
 import { embedTexts } from "@ai-career/ai";
 
-vi.mock("@ai-career/ai", () => ({
+vi.mock("@ai-career/ai", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@ai-career/ai")>()),
   embedTexts: vi.fn(async (_env: unknown, texts: string[]) => texts.map(() => new Array(1024).fill(0.01))),
 }));
 
@@ -90,6 +91,9 @@ describe("POST /api/profile/confirm", () => {
     embedMock.mockRejectedValueOnce(new Error("Voyage down"));
     const firstRes = await POST(makeRequest(profileWithNewSkill));
     expect(firstRes.status).toBe(200);
+    expect(embedMock).toHaveBeenLastCalledWith(
+      expect.anything(), ["Rust"], expect.objectContaining({ operation: "profile_fact_embedding" })
+    );
     expect((await firstRes.json()).factsGenerated).toBe(1);
 
     const [rowAfterFailure] = await adminSql`

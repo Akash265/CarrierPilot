@@ -4,6 +4,7 @@ import type { Env } from "@ai-career/config";
 import { ensureGoalEmbedding } from "@ai-career/matching";
 import type { CareerGoalConstraintsInput } from "./careerGoalConstraintsSchema";
 import { lockUserCareerGoals } from "./lockUserCareerGoals";
+import { createUsageSink } from "../aiUsage/createUsageSink";
 
 export class CareerGoalNotFoundError extends Error {}
 
@@ -110,7 +111,8 @@ export async function confirmCareerGoal(
     // itself degrades to a no-op (leaves `embedding` null) on any failure; Phase 5's `runMatching`
     // falls back to generating it lazily on the first "Find Matches" run if this ever didn't run
     // (design doc §10's last item).
-    await withUserContext(db, env.DEFAULT_USER_ID, (tx) => ensureGoalEmbedding(tx, env, constraintsId));
+    const usageSink = createUsageSink(db, env);
+    await withUserContext(db, env.DEFAULT_USER_ID, (tx) => ensureGoalEmbedding(tx, env, constraintsId, usageSink));
   } finally {
     await closeDbClient(db);
   }

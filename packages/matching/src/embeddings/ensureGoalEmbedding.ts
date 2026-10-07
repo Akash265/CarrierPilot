@@ -1,5 +1,5 @@
 import { eq } from "drizzle-orm";
-import { embedTexts } from "@ai-career/ai";
+import { embedTexts, type AiUsageSink } from "@ai-career/ai";
 import { schema, type DbClient } from "@ai-career/db";
 import type { Env } from "@ai-career/config";
 
@@ -9,12 +9,14 @@ const { careerGoalConstraints, careerGoals } = schema;
  * Generates and stores `career_goal_constraints.embedding` if it is not already set. Returns the
  * embedding (existing or freshly generated), or null if generation fails or there is no text to
  * embed. Never throws -- a Voyage outage must not block a matching run (mirrors saveProfile.ts's
- * "degrade to null" rule for profile_facts).
+ * "degrade to null" rule for profile_facts). A call blocked by the monthly AI budget (Phase 11a) degrades
+ * the same way; the blocked call is still recorded in ai_calls.
  */
 export async function ensureGoalEmbedding(
   tx: DbClient,
-  env: Pick<Env, "EMBEDDING_PROVIDER" | "VOYAGE_API_KEY" | "VOYAGE_EMBEDDING_MODEL">,
-  careerGoalConstraintsId: string
+  env: Pick<Env, "EMBEDDING_PROVIDER" | "VOYAGE_API_KEY" | "VOYAGE_EMBEDDING_MODEL" | "AI_MONTHLY_BUDGET_USD">,
+  careerGoalConstraintsId: string,
+  usageSink: AiUsageSink
 ): Promise<number[] | null> {
   const [row] = await tx
     .select({
@@ -35,7 +37,7 @@ export async function ensureGoalEmbedding(
 
   let embedding: number[] | null;
   try {
-    [embedding] = await embedTexts(env, [text]);
+    [embedding] = await embedTexts(env, [text], { sink: usageSink, operation: "goal_embedding" });
   } catch {
     // Swallowed on purpose: the error may echo the goal text (PII), which CLAUDE.md §9 forbids logging.
     return null;

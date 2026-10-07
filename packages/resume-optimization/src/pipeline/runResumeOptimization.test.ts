@@ -12,7 +12,7 @@ vi.mock("../optimization/optimizeResume", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../optimization/optimizeResume")>();
   return { ...actual, optimizeResume: vi.fn() };
 });
-vi.mock("@ai-career/ai", () => ({ embedTexts: vi.fn() }));
+vi.mock("@ai-career/ai", async (importOriginal) => ({ ...(await importOriginal<typeof import("@ai-career/ai")>()), embedTexts: vi.fn() }));
 // Not in the brief's original mock list: ensureJobRequirements (Task 3) always calls the real
 // extractJobRequirements when no fresh job_requirements row exists yet, and this fixture never seeds
 // one -- so without this mock every test past the early-return checks would attempt a real
@@ -23,11 +23,11 @@ vi.mock("../requirements/extractJobRequirements", async (importOriginal) => {
   return { ...actual, extractJobRequirements: vi.fn() };
 });
 import { optimizeResume, OptimizeResumeValidationError } from "../optimization/optimizeResume";
-import { embedTexts } from "@ai-career/ai";
+import { AiBudgetExceededError, NoopUsageSink, embedTexts } from "@ai-career/ai";
 import { extractJobRequirements, JobRequirementExtractionValidationError } from "../requirements/extractJobRequirements";
 
 const USER = "00000000-0000-0000-0000-0000000000f9";
-const ENV = { ANTHROPIC_MODEL_FAST: "test-model", EMBEDDING_PROVIDER: "voyage" as const, VOYAGE_API_KEY: "k", VOYAGE_EMBEDDING_MODEL: "voyage-3.5" };
+const ENV = { ANTHROPIC_MODEL_FAST: "test-model", EMBEDDING_PROVIDER: "voyage" as const, VOYAGE_API_KEY: "k", VOYAGE_EMBEDDING_MODEL: "voyage-3.5", AI_MONTHLY_BUDGET_USD: 20 };
 const FAKE_CLIENT = {} as Pick<Anthropic, "messages">;
 let testDb: TestDb;
 
@@ -68,12 +68,12 @@ async function seedFixture(opts: { eligible?: boolean; hasGoal?: boolean } = {})
 describe("runResumeOptimization", () => {
   it("throws no_match when there is no job_matches row for this job", async () => {
     const { jobId } = await seedFixture({ hasGoal: false });
-    await expect(runResumeOptimization(testDb.db, { userId: USER, jobId, anthropicClient: FAKE_CLIENT, env: ENV })).rejects.toMatchObject({ errorClass: "no_match" });
+    await expect(runResumeOptimization(testDb.db, { userId: USER, jobId, anthropicClient: FAKE_CLIENT, usageSink: NoopUsageSink, env: ENV })).rejects.toMatchObject({ errorClass: "no_match" });
   });
 
   it("throws not_eligible when the match exists but is ineligible", async () => {
     const { jobId } = await seedFixture({ eligible: false });
-    await expect(runResumeOptimization(testDb.db, { userId: USER, jobId, anthropicClient: FAKE_CLIENT, env: ENV })).rejects.toMatchObject({ errorClass: "not_eligible" });
+    await expect(runResumeOptimization(testDb.db, { userId: USER, jobId, anthropicClient: FAKE_CLIENT, usageSink: NoopUsageSink, env: ENV })).rejects.toMatchObject({ errorClass: "not_eligible" });
   });
 
   it("persists a resume_optimizations row and a matching ats_evaluations row on success", async () => {
@@ -82,7 +82,7 @@ describe("runResumeOptimization", () => {
       selectedBullets: [], addedTerms: [], unsupportedClaimsDetected: [], requiresReview: false,
     });
 
-    const result = await runResumeOptimization(testDb.db, { userId: USER, jobId, anthropicClient: FAKE_CLIENT, env: ENV });
+    const result = await runResumeOptimization(testDb.db, { userId: USER, jobId, anthropicClient: FAKE_CLIENT, usageSink: NoopUsageSink, env: ENV });
 
     expect(result.optimization.version).toBe(1);
     expect(result.evaluation.resumeOptimizationId).toBe(result.optimization.id);
@@ -96,8 +96,8 @@ describe("runResumeOptimization", () => {
     const { jobId } = await seedFixture();
     vi.mocked(optimizeResume).mockResolvedValue({ selectedBullets: [], addedTerms: [], unsupportedClaimsDetected: [], requiresReview: false });
 
-    const first = await runResumeOptimization(testDb.db, { userId: USER, jobId, anthropicClient: FAKE_CLIENT, env: ENV });
-    const second = await runResumeOptimization(testDb.db, { userId: USER, jobId, anthropicClient: FAKE_CLIENT, env: ENV });
+    const first = await runResumeOptimization(testDb.db, { userId: USER, jobId, anthropicClient: FAKE_CLIENT, usageSink: NoopUsageSink, env: ENV });
+    const second = await runResumeOptimization(testDb.db, { userId: USER, jobId, anthropicClient: FAKE_CLIENT, usageSink: NoopUsageSink, env: ENV });
 
     expect(first.optimization.version).toBe(1);
     expect(second.optimization.version).toBe(2);
@@ -110,7 +110,7 @@ describe("runResumeOptimization", () => {
       addedTerms: [], unsupportedClaimsDetected: [], requiresReview: false,
     });
 
-    const result = await runResumeOptimization(testDb.db, { userId: USER, jobId, anthropicClient: FAKE_CLIENT, env: ENV });
+    const result = await runResumeOptimization(testDb.db, { userId: USER, jobId, anthropicClient: FAKE_CLIENT, usageSink: NoopUsageSink, env: ENV });
 
     expect(result.optimization.requiresReview).toBe(true);
     expect((result.optimization.rejectedClaims as unknown[]).length).toBe(1);
@@ -124,7 +124,7 @@ describe("runResumeOptimization", () => {
       requiresReview: false,
     });
 
-    const result = await runResumeOptimization(testDb.db, { userId: USER, jobId, anthropicClient: FAKE_CLIENT, env: ENV });
+    const result = await runResumeOptimization(testDb.db, { userId: USER, jobId, anthropicClient: FAKE_CLIENT, usageSink: NoopUsageSink, env: ENV });
 
     expect(result.optimization.requiresReview).toBe(true);
   });
@@ -135,7 +135,7 @@ describe("runResumeOptimization", () => {
       selectedBullets: [], addedTerms: [], unsupportedClaimsDetected: [], requiresReview: true,
     });
 
-    const result = await runResumeOptimization(testDb.db, { userId: USER, jobId, anthropicClient: FAKE_CLIENT, env: ENV });
+    const result = await runResumeOptimization(testDb.db, { userId: USER, jobId, anthropicClient: FAKE_CLIENT, usageSink: NoopUsageSink, env: ENV });
 
     // The self-report can only ADD caution, never remove it -- there's no other signal here that
     // would set requiresReview, so this proves draft.requiresReview alone is still honored.
@@ -147,7 +147,7 @@ describe("runResumeOptimization", () => {
     vi.mocked(optimizeResume).mockRejectedValue(new Anthropic.APIError(429, {}, "rate limited", undefined));
 
     await expect(
-      runResumeOptimization(testDb.db, { userId: USER, jobId, anthropicClient: FAKE_CLIENT, env: ENV })
+      runResumeOptimization(testDb.db, { userId: USER, jobId, anthropicClient: FAKE_CLIENT, usageSink: NoopUsageSink, env: ENV })
     ).rejects.toMatchObject({ errorClass: "unknown" });
   });
 
@@ -156,7 +156,7 @@ describe("runResumeOptimization", () => {
     vi.mocked(optimizeResume).mockRejectedValue(new OptimizeResumeValidationError("bad schema"));
 
     await expect(
-      runResumeOptimization(testDb.db, { userId: USER, jobId, anthropicClient: FAKE_CLIENT, env: ENV })
+      runResumeOptimization(testDb.db, { userId: USER, jobId, anthropicClient: FAKE_CLIENT, usageSink: NoopUsageSink, env: ENV })
     ).rejects.toMatchObject({ errorClass: "unknown" });
   });
 
@@ -165,7 +165,7 @@ describe("runResumeOptimization", () => {
     vi.mocked(extractJobRequirements).mockRejectedValue(new JobRequirementExtractionValidationError("bad schema"));
 
     await expect(
-      runResumeOptimization(testDb.db, { userId: USER, jobId, anthropicClient: FAKE_CLIENT, env: ENV })
+      runResumeOptimization(testDb.db, { userId: USER, jobId, anthropicClient: FAKE_CLIENT, usageSink: NoopUsageSink, env: ENV })
     ).rejects.toMatchObject({ errorClass: "unknown" });
   });
 
@@ -174,7 +174,7 @@ describe("runResumeOptimization", () => {
     vi.mocked(optimizeResume).mockRejectedValue(new TypeError("genuine bug"));
 
     await expect(
-      runResumeOptimization(testDb.db, { userId: USER, jobId, anthropicClient: FAKE_CLIENT, env: ENV })
+      runResumeOptimization(testDb.db, { userId: USER, jobId, anthropicClient: FAKE_CLIENT, usageSink: NoopUsageSink, env: ENV })
     ).rejects.toThrow("genuine bug");
   });
 
@@ -186,8 +186,27 @@ describe("runResumeOptimization", () => {
     });
     vi.mocked(embedTexts).mockRejectedValue(new Error("voyage down"));
 
-    const result = await runResumeOptimization(testDb.db, { userId: USER, jobId, anthropicClient: FAKE_CLIENT, env: ENV });
+    const result = await runResumeOptimization(testDb.db, { userId: USER, jobId, anthropicClient: FAKE_CLIENT, usageSink: NoopUsageSink, env: ENV });
 
     expect(result.evaluation.semanticSimilarity).toBeNull();
   });
+
+  it("labels the similarity embedding call and degrades to a null score when the AI budget blocks it", async () => {
+    const { jobId } = await seedFixture();
+    const vector = `[${new Array(1024).fill(0.01).join(",")}]`;
+    await testDb.adminSql`UPDATE jobs SET embedding = ${vector}::vector WHERE id = ${jobId}`;
+    const [bullet] = await testDb.adminSql`SELECT id FROM work_experience_bullets WHERE user_id = ${USER}`;
+    vi.mocked(optimizeResume).mockResolvedValue({
+      selectedBullets: [{ sourceFactId: bullet.id as string, optimizedText: "Built a data pipeline", changeType: "unchanged", justification: "x" }],
+      addedTerms: [], unsupportedClaimsDetected: [], requiresReview: false,
+    });
+    vi.mocked(embedTexts).mockRejectedValue(new AiBudgetExceededError(20, 20, new Date("2026-11-01T00:00:00Z")));
+    const sink = { spendSinceUsd: async () => 0, record: async () => undefined };
+
+    const result = await runResumeOptimization(testDb.db, { userId: USER, jobId, anthropicClient: FAKE_CLIENT, usageSink: sink, env: ENV });
+
+    expect(embedTexts).toHaveBeenCalledWith(ENV, ["Built a data pipeline"], { sink, operation: "resume_similarity_embedding" });
+    expect(result.evaluation.semanticSimilarity).toBeNull();
+  });
 });
+

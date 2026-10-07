@@ -5,6 +5,7 @@ import { closeDbClient, createDbClient } from "@ai-career/db";
 import { createAnthropicClient } from "@ai-career/ai";
 import { runResumeOptimization, ResumeOptimizationError } from "@ai-career/resume-optimization";
 import { toOptimizationView } from "../../../../../lib/resumeOptimization/serializeOptimization";
+import { createUsageSink } from "../../../../../lib/aiUsage/createUsageSink";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -19,6 +20,7 @@ export async function POST(_request: Request, { params }: { params: Promise<{ jo
       userId: env.DEFAULT_USER_ID,
       jobId,
       anthropicClient: createAnthropicClient(env),
+      usageSink: createUsageSink(db, env),
       env,
     });
     return NextResponse.json({ optimization: toOptimizationView(result.optimization, result.evaluation) }, { status: 201 });

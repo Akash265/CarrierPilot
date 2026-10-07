@@ -5,7 +5,8 @@ import postgres from "postgres";
 import { drizzle } from "drizzle-orm/postgres-js";
 import { migrate } from "drizzle-orm/postgres-js/migrator";
 
-vi.mock("@ai-career/ai", () => ({
+vi.mock("@ai-career/ai", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@ai-career/ai")>()),
   embedTexts: vi.fn(async (_env: unknown, texts: string[]) => texts.map(() => new Array(1024).fill(0.01))),
 }));
 

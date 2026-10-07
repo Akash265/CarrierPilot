@@ -1,6 +1,7 @@
 import { and, eq, inArray, isNotNull } from "drizzle-orm";
 import Anthropic from "@anthropic-ai/sdk";
 import { schema, withUserContext, type DbClient } from "@ai-career/db";
+import type { AiUsageSink } from "@ai-career/ai";
 import { evaluateEligibility } from "../eligibility/evaluateEligibility";
 import { scoreSkills } from "../scoring/scoreSkills";
 import { scoreExperience } from "../scoring/scoreExperience";
@@ -44,11 +45,14 @@ export interface RunMatchingEnv {
   MATCHING_EXPERIENCE_GRACE_YEARS: number;
   MATCHING_FRESHNESS_HALF_LIFE_HOURS: number;
   MATCHING_EXPLANATION_TTL_DAYS: number;
+  AI_MONTHLY_BUDGET_USD: number;
 }
 
 export interface RunMatchingOptions {
   userId: string;
   anthropicClient: Pick<Anthropic, "messages">;
+  /** Where this run's embedding calls are recorded and budget-checked (Phase 11a). */
+  usageSink: AiUsageSink;
   env: RunMatchingEnv;
   now?: () => Date;
 }
@@ -78,7 +82,7 @@ interface ScoredJob {
  * after recording it -- same shape as packages/ingestion's `runIngestion`.
  */
 export async function runMatching(db: DbClient, opts: RunMatchingOptions): Promise<MatchingRunSummary> {
-  const { userId, env, anthropicClient } = opts;
+  const { userId, env, anthropicClient, usageSink } = opts;
   const now = opts.now ?? (() => new Date());
   const inUserContext = <T>(fn: (tx: DbClient) => Promise<T>) => withUserContext(db, userId, fn);
 
@@ -125,10 +129,10 @@ export async function runMatching(db: DbClient, opts: RunMatchingOptions): Promi
     );
     const candidateYears = profile?.yearsOfExperience ?? null;
 
-    const goalEmbedding = await inUserContext((tx) => ensureGoalEmbedding(tx, env, constraints.id));
+    const goalEmbedding = await inUserContext((tx) => ensureGoalEmbedding(tx, env, constraints.id, usageSink));
 
     const initialRows = await inUserContext((tx) => fetchCandidateJobs(tx, goalEmbedding));
-    const embeddingResult = await inUserContext((tx) => ensureJobEmbeddings(tx, env, initialRows.map((r) => r.id)));
+    const embeddingResult = await inUserContext((tx) => ensureJobEmbeddings(tx, env, initialRows.map((r) => r.id), usageSink));
     counters.embedded = embeddingResult.embedded;
     counters.embeddingFailed = embeddingResult.failed;
     // Re-fetch so a job embedded just now is reflected in this run's semantic similarity.

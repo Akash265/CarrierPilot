@@ -4,11 +4,12 @@ import { schema, withUserContext } from "@ai-career/db";
 import { openTestDb, wipeUser, type TestDb } from "../testing/db";
 import { ensureGoalEmbedding } from "./ensureGoalEmbedding";
 
-vi.mock("@ai-career/ai", () => ({ embedTexts: vi.fn() }));
-import { embedTexts } from "@ai-career/ai";
+vi.mock("@ai-career/ai", async (importOriginal) => ({ ...(await importOriginal<typeof import("@ai-career/ai")>()), embedTexts: vi.fn() }));
+import { AiBudgetExceededError, NoopUsageSink, embedTexts } from "@ai-career/ai";
 
 const USER = "00000000-0000-0000-0000-0000000000e1";
-const ENV = { EMBEDDING_PROVIDER: "voyage" as const, VOYAGE_API_KEY: "k", VOYAGE_EMBEDDING_MODEL: "voyage-3.5" };
+const ENV = { EMBEDDING_PROVIDER: "voyage" as const, VOYAGE_API_KEY: "k", VOYAGE_EMBEDDING_MODEL: "voyage-3.5", AI_MONTHLY_BUDGET_USD: 20 };
+const SINK = NoopUsageSink;
 let testDb: TestDb;
 
 // jobs.embedding / career_goal_constraints.embedding are vector(1024) columns (Task 3's migration):
@@ -40,9 +41,9 @@ describe("ensureGoalEmbedding", () => {
   it("embeds targetRoles + skills + rawText and stores the result", async () => {
     vi.mocked(embedTexts).mockResolvedValue([vec(0.1, 0.2, 0.3)]);
     const constraintsId = await seedConstraints();
-    const embedding = await withUserContext(testDb.db, USER, (tx) => ensureGoalEmbedding(tx, ENV, constraintsId));
+    const embedding = await withUserContext(testDb.db, USER, (tx) => ensureGoalEmbedding(tx, ENV, constraintsId, SINK));
     expect(embedding).toEqual(vec(0.1, 0.2, 0.3));
-    expect(embedTexts).toHaveBeenCalledWith(ENV, [expect.stringContaining("Data Engineer")]);
+    expect(embedTexts).toHaveBeenCalledWith(ENV, [expect.stringContaining("Data Engineer")], { sink: SINK, operation: "goal_embedding" });
     const [row] = await withUserContext(testDb.db, USER, (tx) =>
       tx.select().from(schema.careerGoalConstraints).where(eq(schema.careerGoalConstraints.id, constraintsId))
     );
@@ -53,9 +54,9 @@ describe("ensureGoalEmbedding", () => {
   it("returns the existing embedding without calling Voyage again when already set", async () => {
     vi.mocked(embedTexts).mockResolvedValue([vec(0.9, 0.9, 0.9)]);
     const constraintsId = await seedConstraints();
-    await withUserContext(testDb.db, USER, (tx) => ensureGoalEmbedding(tx, ENV, constraintsId));
+    await withUserContext(testDb.db, USER, (tx) => ensureGoalEmbedding(tx, ENV, constraintsId, SINK));
     vi.mocked(embedTexts).mockClear();
-    const second = await withUserContext(testDb.db, USER, (tx) => ensureGoalEmbedding(tx, ENV, constraintsId));
+    const second = await withUserContext(testDb.db, USER, (tx) => ensureGoalEmbedding(tx, ENV, constraintsId, SINK));
     expect(second).toEqual(vec(0.9, 0.9, 0.9));
     expect(embedTexts).not.toHaveBeenCalled();
   });
@@ -63,7 +64,14 @@ describe("ensureGoalEmbedding", () => {
   it("returns null and leaves the row unembedded when Voyage fails, without throwing", async () => {
     vi.mocked(embedTexts).mockRejectedValue(new Error("voyage down"));
     const constraintsId = await seedConstraints();
-    const embedding = await withUserContext(testDb.db, USER, (tx) => ensureGoalEmbedding(tx, ENV, constraintsId));
+    const embedding = await withUserContext(testDb.db, USER, (tx) => ensureGoalEmbedding(tx, ENV, constraintsId, SINK));
+    expect(embedding).toBeNull();
+  });
+
+  it("degrades to null when the monthly AI budget blocks the call", async () => {
+    const constraintsId = await seedConstraints();
+    vi.mocked(embedTexts).mockRejectedValue(new AiBudgetExceededError(20, 20, new Date("2026-11-01T00:00:00Z")));
+    const embedding = await withUserContext(testDb.db, USER, (tx) => ensureGoalEmbedding(tx, ENV, constraintsId, SINK));
     expect(embedding).toBeNull();
   });
 });

@@ -15,7 +15,7 @@ vi.mock("@ai-career/config", () => ({
     VOYAGE_EMBEDDING_MODEL: "voyage-3.5",
   }),
 }));
-vi.mock("@ai-career/ai", () => ({ embedTexts: vi.fn() }));
+vi.mock("@ai-career/ai", async (importOriginal) => ({ ...(await importOriginal<typeof import("@ai-career/ai")>()), embedTexts: vi.fn() }));
 import { embedTexts } from "@ai-career/ai";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -315,7 +315,9 @@ describe("POST /api/career-goal/confirm", () => {
     const [row] = await adminSql`SELECT embedding IS NOT NULL AS has_embedding, embedding_model FROM career_goal_constraints WHERE career_goal_id = ${goalId}`;
     expect(row.has_embedding).toBe(true);
     expect(row.embedding_model).toBe("voyage-3.5");
-    expect(vi.mocked(embedTexts)).toHaveBeenCalled();
+    expect(vi.mocked(embedTexts)).toHaveBeenCalledWith(
+      expect.anything(), expect.any(Array), expect.objectContaining({ operation: "goal_embedding" })
+    );
   });
 
   it("still confirms successfully when embedding generation fails", async () => {
