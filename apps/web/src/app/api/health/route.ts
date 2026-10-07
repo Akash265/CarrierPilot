@@ -5,6 +5,7 @@ import Redis from "ioredis";
 import { loadEnv } from "@ai-career/config";
 import { getLangfuseExportFailures, isLangfuseConfigured } from "@ai-career/ai";
 import { withRouteErrors } from "../../../lib/http/withRouteErrors";
+import { withRateLimit } from "../../../lib/http/rateLimit";
 
 async function handleGET() {
   const env = loadEnv();
@@ -48,4 +49,5 @@ async function handleGET() {
   return NextResponse.json({ status, checks, aiUsage }, { status: status === "ok" ? 200 : 503 });
 }
 
-export const GET = withRouteErrors("/api/health", handleGET);
+// Phase 11c review: needs no token, and each call opens a database and a Redis connection, so it is limited (60/min).
+export const GET = withRouteErrors("/api/health", withRateLimit("health", "/api/health", handleGET));

@@ -44,7 +44,7 @@ function e2eEnv() {
     LANGFUSE_PUBLIC_KEY: "",
     LANGFUSE_SECRET_KEY: "",
     APP_ACCESS_TOKEN: randomBytes(32).toString("hex"),
-    HOST: "127.0.0.1",
+    APP_HOST: "127.0.0.1",
     ALLOWED_HOSTS: "",
     RATE_LIMIT_AI_PER_MINUTE: "3",
     RATE_LIMIT_JOBS_PER_MINUTE: "20",
@@ -91,6 +91,11 @@ async function wipeE2eState(env) {
   const dbName = new URL(env.DATABASE_URL).pathname.slice(1);
   if (!dbName.endsWith("_test")) throw new Error(`refusing to run E2E against "${dbName}": the database name must end in _test`);
   const adminUrl = process.env.E2E_ADMIN_DATABASE_URL ?? `postgres://career_intel:career_intel@localhost:5432/${dbName}`;
+  // The clean-up runs as superuser with FK triggers off, so it must be the same _test database.
+  if (new URL(adminUrl).pathname.slice(1) !== dbName) throw new Error("E2E_ADMIN_DATABASE_URL must name the same database as the E2E DATABASE_URL");
+  // Redis database 0 is the dev workers' queues; the clean-up deletes every bull:* and careerpilot:* key it is pointed at.
+  const redisDb = new URL(env.REDIS_URL).pathname.slice(1) || "0";
+  if (redisDb === "0") throw new Error("refusing to run E2E against Redis database 0: set E2E_REDIS_URL to another database (default /1)");
   const sql = postgres(adminUrl, { max: 1, onnotice: () => undefined });
   try {
     const tables = await sql`SELECT table_name FROM information_schema.columns

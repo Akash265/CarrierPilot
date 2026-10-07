@@ -1646,7 +1646,7 @@ GET /api/status                               apps/web/src/app/api/status/route.
 
 ```
 browser / client
- └─ next start -H $HOST (127.0.0.1)                 apps/web/package.json
+ └─ next start -H $APP_HOST (127.0.0.1)                 apps/web/package.json
      └─ proxy(request)                               apps/web/src/proxy.ts   (all paths but _next/static, _next/image, favicon.ico)
           config ??= gateConfig()                    lib/security/gate.ts → loadEnv(); invalid config → still requires a set token
           checkRequest({ method, pathname, search, headers }, config)
@@ -1657,7 +1657,7 @@ browser / client
            └─ page                                   → 307 /unlock?next=<path+query>
      └─ next.config.ts headers()                     nosniff, DENY, same-origin, Permissions-Policy, CSP frame-ancestors 'none'
         experimental.proxyClientMaxBodySize = MAX_UPLOAD_BYTES + slack   lib/http/uploadLimits.ts
-startup: instrumentation.register() → lib/security/startupCheck.ts → warn exposed_without_token if HOST not loopback and no token
+startup: instrumentation.register() → lib/security/startupCheck.ts → warn exposed_without_token if APP_HOST not loopback and no token
 ```
 
 ### 18b. Unlock
@@ -1666,7 +1666,7 @@ startup: instrumentation.register() → lib/security/startupCheck.ts → warn ex
 /unlock (page.tsx: safeNextPath(next)) → UnlockForm → POST /api/unlock { token }
  └─ withRouteErrors → withRateLimit("unlock", 5/min) → handleUnlock(request, gateConfig(), log)   lib/security/unlock.ts
       no token configured → 404 | bad body → 400 | sameSecret() false → 401 + log unlock_failed {}
-      ok → 204 + Set-Cookie cp_access=HMAC(token) HttpOnly SameSite=Strict Path=/ 30 d (Secure on https)
+      ok → 204 + Set-Cookie cp_access=HMAC(token) HttpOnly SameSite=Lax Path=/ 30 d (Secure on https)
  → window.location.assign(next)
 ```
 
@@ -1676,7 +1676,7 @@ startup: instrumentation.register() → lib/security/startupCheck.ts → warn ex
 export const POST = withRouteErrors("/api/x", withRateLimit("ai" | "jobs", "/api/x", handlePOST))
  └─ withRateLimit                                    apps/web/src/lib/http/rateLimit.ts
       limit = RATE_LIMIT_{AI,JOBS}_PER_MINUTE (0 → skip)
-      redisStore.hit("careerpilot:rl:/api/x:<minute>")  MULTI INCR + PEXPIRE, 500 ms timeout
+      redisStore.hit("careerpilot:rl:/api/x:<minute>")  MULTI INCR + PEXPIRE (both checked), 500 ms timeout
        ├─ store error → rate_limit_unavailable (throttled) → handler      (fail open)
        ├─ count > limit → 429 { error, retryAfterSeconds } + Retry-After
        └─ handler(...args)
@@ -1692,7 +1692,7 @@ BullMQ Worker processor (services/*/src/worker.ts)
       DrizzleQueryError / PostgresError              → Error("database_error:<sqlstate>", { cause })
       anything else                                  → Error("job_failed:<code|class>", { cause }); UnrecoverableError keeps its name
  └─ BullMQ stores message + stack in Redis (content-free) → /status shows it via failureCode()
- └─ worker.on("failed") → log.error(... { error })  → serializeError: name, code (own or cause's SQLSTATE), causeName, frames
+ └─ worker.on("failed", (job, rawError)) → originalJobError(rawError) → log.error(... { error })   real frames + SQLSTATE
 ```
 
 ### 18e. `pnpm e2e` (D182, D183)

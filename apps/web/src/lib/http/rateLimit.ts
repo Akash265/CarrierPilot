@@ -9,7 +9,7 @@ import { log } from "../log";
  * Over the limit → 429 with Retry-After. If the counter cannot be read the request is allowed: the limit only guards
  * against runaway loops, and the 11a monthly AI budget remains the hard stop.
  */
-export type RateLimitBucket = "ai" | "jobs" | "unlock";
+export type RateLimitBucket = "ai" | "jobs" | "unlock" | "health";
 
 export interface CounterStore {
   /** Increments the key's count (expiring it after the window) and returns the new count. */
@@ -25,6 +25,8 @@ export interface RateLimitDeps {
 
 const WINDOW_MS = 60_000;
 const UNLOCK_PER_MINUTE = 5;
+/** /api/health needs no token and opens a DB and a Redis connection per call; monitors poll far slower than this. */
+const HEALTH_PER_MINUTE = 60;
 
 export function makeWithRateLimit(deps: RateLimitDeps) {
   const now = deps.now ?? Date.now;
@@ -76,8 +78,10 @@ export const redisStore: CounterStore = {
       return c;
     })();
     const result = await withTimeout(connection.multi().incr(key).pexpire(key, windowMs + 1000).exec(), 500);
-    const [incr] = result ?? [];
+    const [incr, expire] = result ?? [];
     if (!incr || incr[0]) throw incr?.[0] ?? new Error("rate limit store returned no result");
+    // A key without an expiry would count forever; treat that like an unavailable store (the request is allowed).
+    if (!expire || expire[0]) throw expire?.[0] ?? new Error("rate limit store did not set the expiry");
     return Number(incr[1]);
   },
 };
@@ -88,11 +92,11 @@ function envLimits(): Record<RateLimitBucket, number> {
   if (cachedLimits) return cachedLimits;
   try {
     const env = loadEnv();
-    cachedLimits = { ai: env.RATE_LIMIT_AI_PER_MINUTE, jobs: env.RATE_LIMIT_JOBS_PER_MINUTE, unlock: UNLOCK_PER_MINUTE };
+    cachedLimits = { ai: env.RATE_LIMIT_AI_PER_MINUTE, jobs: env.RATE_LIMIT_JOBS_PER_MINUTE, unlock: UNLOCK_PER_MINUTE, health: HEALTH_PER_MINUTE };
     return cachedLimits;
   } catch {
     // Invalid configuration: the route itself answers for that; only the unlock guard still applies.
-    return { ai: 0, jobs: 0, unlock: UNLOCK_PER_MINUTE };
+    return { ai: 0, jobs: 0, unlock: UNLOCK_PER_MINUTE, health: HEALTH_PER_MINUTE };
   }
 }
 

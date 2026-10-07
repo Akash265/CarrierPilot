@@ -13,13 +13,13 @@ package it calls); the exact schema is the reference, this page is the map.
 - **Errors** are `{ error: string }` with a 4xx status: `400` for an invalid body or query, `404` for an unknown (or malformed) id, `409` for a state conflict.
 - **Unexpected errors** never leak: `500 { error: "Something went wrong (request <id>)…", requestId }` with an `x-request-id` header; the server logs `request_failed` with the same id ([D169](../DECISIONS.md)).
 - **AI budget**: AI routes answer `429 { error, code: "ai_budget_exceeded" }` once the monthly ceiling is reached ([D155](../DECISIONS.md)).
-- **Rate limits** ([D178](../DECISIONS.md)): routes marked *ai* (`RATE_LIMIT_AI_PER_MINUTE`, default 10) or *jobs* (`RATE_LIMIT_JOBS_PER_MINUTE`, default 20) are limited per route per minute; over the limit they answer `429 { error, retryAfterSeconds }` with `Retry-After`. `/api/unlock` allows 5 attempts a minute.
+- **Rate limits** ([D178](../DECISIONS.md)): routes marked *ai* (`RATE_LIMIT_AI_PER_MINUTE`, default 10) or *jobs* (`RATE_LIMIT_JOBS_PER_MINUTE`, default 20) are limited per route per minute; over the limit they answer `429 { error, retryAfterSeconds }` with `Retry-After`. `/api/unlock` allows 5 attempts a minute and `/api/health` 60 a minute.
 
 ## Routes
 
 | Method | Path | Limit | Purpose |
 |---|---|---|---|
-| GET | `/api/health` | | Liveness: database and Redis reachability, Langfuse export status. No token needed. |
+| GET | `/api/health` | health | Liveness: database and Redis reachability, Langfuse export status. No token needed. |
 | GET | `/api/status` | | Worker heartbeats and queue counts for `/status`; always 200 ([D171](../DECISIONS.md)). |
 | GET | `/api/usage` | | Monthly AI spend, budget state and recent calls for `/usage`. |
 | POST | `/api/unlock` | unlock | `{ token }` → `204` and the access cookie, `401` wrong token, `404` when no token is configured. |

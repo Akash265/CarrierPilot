@@ -22,7 +22,7 @@ function setup(over: { limit?: number; store?: CounterStore; now?: () => number 
   const store = over.store ?? memoryStore();
   const withRateLimit = makeWithRateLimit({
     store: () => store,
-    limits: () => ({ ai: over.limit ?? 2, jobs: 5, unlock: 5 }),
+    limits: () => ({ ai: over.limit ?? 2, jobs: 5, unlock: 5, health: 60 }),
     now: over.now ?? (() => 90_000),
     onUnavailable,
   });

@@ -20,9 +20,9 @@ Node 22+, pnpm 9 (`packageManager` pins 9.15.0), Docker (Postgres + pgvector, Re
 
 | Command | Does |
 |---|---|
-| `pnpm dev` | Web app in dev mode on `http://localhost:3000` (bound to `HOST`, default 127.0.0.1) |
+| `pnpm dev` | Web app in dev mode on `http://localhost:3000` (bound to `APP_HOST`, default 127.0.0.1) |
 | `pnpm build` | Production build of the web app (also generates the route types `typecheck` needs) |
-| `pnpm lint` | ESLint, 0 warnings allowed |
+| `pnpm lint` | ESLint (keep it at 0 warnings: checked before every merge, not enforced by the script) |
 | `pnpm typecheck` | `tsc --noEmit` everywhere (after `pnpm build`, or `npx next typegen` in `apps/web`) |
 | `pnpm test` | All Vitest suites through Turbo (`--force` to skip the cache) |
 | `pnpm e2e` | The browser smoke suite against the built app (below) |
@@ -47,7 +47,7 @@ pnpm build && pnpm e2e
 
 ## Running it on your network
 
-The web app listens on `127.0.0.1` only. To open it to other devices set `HOST=0.0.0.0`, list the names you will use in `ALLOWED_HOSTS`, and set `APP_ACCESS_TOKEN` (32+ characters, e.g. `openssl rand -hex 32`); you then unlock once per browser at `/unlock`. Without TLS the cookie travels in clear text, so do this only on a network you trust. Behind a reverse proxy, keep the original `Host` header (e.g. nginx `proxy_set_header Host $host`) so the cross-site check compares the right names ([D177](../DECISIONS.md)).
+The web app listens on `127.0.0.1` only. To open it to other devices set `APP_HOST=0.0.0.0`, list the names you will use in `ALLOWED_HOSTS`, and set `APP_ACCESS_TOKEN` (32+ characters, e.g. `openssl rand -hex 32`); you then unlock once per browser at `/unlock`. Without TLS the cookie travels in clear text, so do this only on a network you trust. Behind a reverse proxy, keep the original `Host` header (e.g. nginx `proxy_set_header Host $host`) so the cross-site check compares the right names ([D177](../DECISIONS.md)).
 
 ## Conventions
 

@@ -21,7 +21,7 @@ export async function handleUnlock(request: Request, cfg: GateConfig, logger: Lo
   const https = new URL(request.url).protocol === "https:" || request.headers.get("x-forwarded-proto") === "https";
   const res = new NextResponse(null, { status: 204 });
   res.cookies.set(ACCESS_COOKIE, accessCookieValue(cfg.token), {
-    httpOnly: true, sameSite: "strict", path: "/", maxAge: THIRTY_DAYS_S, secure: https,
+    httpOnly: true, sameSite: "lax", path: "/", maxAge: THIRTY_DAYS_S, secure: https,
   });
   return res;
 }

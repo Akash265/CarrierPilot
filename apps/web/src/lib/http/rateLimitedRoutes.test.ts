@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
  * Phase 11c design §2.3 (D178): every route that spends AI money (Anthropic or Voyage) or starts background work is
  * rate limited, in the right bucket, inside withRouteErrors; no other route is.
  */
-const LIMITED: Record<string, Record<string, "ai" | "jobs" | "unlock">> = {
+const LIMITED: Record<string, Record<string, "ai" | "jobs" | "unlock" | "health">> = {
   "/api/career-goal/parse": { POST: "ai" },
   "/api/career-goal/confirm": { POST: "ai" },
   "/api/profile/resume": { POST: "ai" },
@@ -23,6 +23,7 @@ const LIMITED: Record<string, Record<string, "ai" | "jobs" | "unlock">> = {
   "/api/job-sources/upload": { POST: "jobs" },
   "/api/automation-sessions": { POST: "jobs" },
   "/api/unlock": { POST: "unlock" },
+  "/api/health": { GET: "health" },
 };
 
 const API_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../app/api");

@@ -285,7 +285,7 @@ each worker is running, stopped or stale (no heartbeat for
 each queue.
 
 Phase 11c (Security Hardening) complete: the web app listens on 127.0.0.1
-only (`HOST`), refuses requests for unknown host names (`ALLOWED_HOSTS`) and
+only (`APP_HOST`), refuses requests for unknown host names (`ALLOWED_HOSTS`) and
 writes coming from other websites, and — if you set `APP_ACCESS_TOKEN` to open
 it to your network — asks for that token once per browser at `/unlock`. Routes
 that spend AI money or start background work are rate limited per minute
@@ -297,6 +297,6 @@ dependency audit's critical and high findings are fixed. Run
 Phase 11d (E2E & Docs) complete: `pnpm build && pnpm e2e` runs a headless
 browser through the whole flow (unlock → profile → goal → jobs → matching →
 application → status pages) against the test database with local stand-ins
-for Anthropic and Voyage, and CI runs it on every push. See
+for Anthropic and Voyage; CI is set up to run it on every push, after the tests. See
 [docs/development.md](docs/development.md), [docs/api.md](docs/api.md) and
 [docs/ai-system.md](docs/ai-system.md).

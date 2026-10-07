@@ -19,10 +19,10 @@ describe("isLoopbackHostname", () => {
 
 describe("isExposedWithoutToken", () => {
   it("is true only when listening beyond loopback with no access token", () => {
-    expect(isExposedWithoutToken({ HOST: "127.0.0.1" })).toBe(false);
-    expect(isExposedWithoutToken({ HOST: "localhost" })).toBe(false);
-    expect(isExposedWithoutToken({ HOST: "0.0.0.0" })).toBe(true);
-    expect(isExposedWithoutToken({ HOST: "192.168.1.20" })).toBe(true);
-    expect(isExposedWithoutToken({ HOST: "0.0.0.0", APP_ACCESS_TOKEN: "x".repeat(32) })).toBe(false);
+    expect(isExposedWithoutToken({ APP_HOST: "127.0.0.1" })).toBe(false);
+    expect(isExposedWithoutToken({ APP_HOST: "localhost" })).toBe(false);
+    expect(isExposedWithoutToken({ APP_HOST: "0.0.0.0" })).toBe(true);
+    expect(isExposedWithoutToken({ APP_HOST: "192.168.1.20" })).toBe(true);
+    expect(isExposedWithoutToken({ APP_HOST: "0.0.0.0", APP_ACCESS_TOKEN: "x".repeat(32) })).toBe(false);
   });
 });

@@ -79,7 +79,7 @@ const envSchema = z
     HEARTBEAT_INTERVAL_MS: z.preprocess(blankAsUnset, z.coerce.number().int().min(1000).default(30_000)),
     // Phase 11c (D177). The interface the web app listens on (read by apps/web's start/dev scripts); 127.0.0.1 keeps
     // it off the network. Extra Host header values the request gate accepts besides localhost (comma-separated).
-    HOST: z.preprocess(blankAsUnset, z.string().min(1).default("127.0.0.1")),
+    APP_HOST: z.preprocess(blankAsUnset, z.string().min(1).default("127.0.0.1")),
     ALLOWED_HOSTS: z.preprocess(
       blankAsUnset,
       z.string().default("").transform((v) => v.split(",").map((h) => h.trim().toLowerCase()).filter(Boolean)),

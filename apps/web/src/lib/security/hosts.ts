@@ -18,6 +18,6 @@ export function isLoopbackHostname(hostname: string): boolean {
 }
 
 /** True when the app listens beyond this machine while no access token protects it. */
-export function isExposedWithoutToken(env: { HOST: string; APP_ACCESS_TOKEN?: string }): boolean {
-  return !isLoopbackHostname(env.HOST) && !env.APP_ACCESS_TOKEN;
+export function isExposedWithoutToken(env: { APP_HOST: string; APP_ACCESS_TOKEN?: string }): boolean {
+  return !isLoopbackHostname(env.APP_HOST) && !env.APP_ACCESS_TOKEN;
 }

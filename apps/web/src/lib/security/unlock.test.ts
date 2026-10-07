@@ -8,14 +8,15 @@ const post = (body: string, url = "http://localhost:3000/api/unlock", headers: R
   new Request(url, { method: "POST", body, headers: { "content-type": "application/json", ...headers } });
 
 describe("handleUnlock", () => {
-  it("sets an HttpOnly, SameSite=Strict cookie holding the token's HMAC, not the token", async () => {
+  it("sets an HttpOnly, SameSite=Lax cookie holding the token's HMAC, not the token", async () => {
     const res = await handleUnlock(post(JSON.stringify({ token: TOKEN })), { allowedHosts: [], token: TOKEN }, logger());
     expect(res.status).toBe(204);
     const cookie = res.headers.get("set-cookie") ?? "";
     expect(cookie).toContain(`cp_access=${accessCookieValue(TOKEN)}`);
     expect(cookie).not.toContain(TOKEN);
     expect(cookie).toMatch(/HttpOnly/i);
-    expect(cookie).toMatch(/SameSite=Strict/i);
+    // Lax, so a link from mail or chat still arrives unlocked; cross-site writes are blocked by the Origin check.
+    expect(cookie).toMatch(/SameSite=Lax/i);
     expect(cookie).toMatch(/Path=\//);
     expect(cookie).toMatch(/Max-Age=2592000/);
     expect(cookie).not.toMatch(/Secure/i);

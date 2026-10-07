@@ -256,20 +256,20 @@ describe("loadEnv", () => {
 
   it("Phase 11c: binds to localhost, no token and default rate limits unless configured", () => {
     const env = loadEnv(validSource);
-    expect(env.HOST).toBe("127.0.0.1");
+    expect(env.APP_HOST).toBe("127.0.0.1");
     expect(env.ALLOWED_HOSTS).toEqual([]);
     expect(env.APP_ACCESS_TOKEN).toBeUndefined();
     expect(env.RATE_LIMIT_AI_PER_MINUTE).toBe(10);
     expect(env.RATE_LIMIT_JOBS_PER_MINUTE).toBe(20);
-    const blank = loadEnv({ ...validSource, HOST: "", ALLOWED_HOSTS: "", APP_ACCESS_TOKEN: "", RATE_LIMIT_AI_PER_MINUTE: "" });
-    expect(blank.HOST).toBe("127.0.0.1");
+    const blank = loadEnv({ ...validSource, APP_HOST: "", ALLOWED_HOSTS: "", APP_ACCESS_TOKEN: "", RATE_LIMIT_AI_PER_MINUTE: "" });
+    expect(blank.APP_HOST).toBe("127.0.0.1");
     expect(blank.APP_ACCESS_TOKEN).toBeUndefined();
     expect(blank.RATE_LIMIT_AI_PER_MINUTE).toBe(10);
   });
 
   it("Phase 11c: parses ALLOWED_HOSTS, accepts a long token and 0 (= no limit) rate limits", () => {
     const env = loadEnv({
-      ...validSource, HOST: "0.0.0.0", ALLOWED_HOSTS: " pilot.lan , 192.168.1.20:3000 ,", APP_ACCESS_TOKEN: "x".repeat(32),
+      ...validSource, APP_HOST: "0.0.0.0", ALLOWED_HOSTS: " pilot.lan , 192.168.1.20:3000 ,", APP_ACCESS_TOKEN: "x".repeat(32),
       RATE_LIMIT_AI_PER_MINUTE: "0", RATE_LIMIT_JOBS_PER_MINUTE: "5",
     });
     expect(env.ALLOWED_HOSTS).toEqual(["pilot.lan", "192.168.1.20:3000"]);
