@@ -17,6 +17,7 @@ import {
 import { createUsageSink } from "../../../../lib/aiUsage/createUsageSink";
 import { budgetExceededResponse } from "../../../../lib/aiUsage/budgetResponse";
 import { withRouteErrors } from "../../../../lib/http/withRouteErrors";
+import { withRateLimit } from "../../../../lib/http/rateLimit";
 
 const MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024;
 
@@ -199,5 +200,5 @@ async function handleDELETE() {
   }
 }
 
-export const POST = withRouteErrors("/api/profile/resume", handlePOST);
+export const POST = withRouteErrors("/api/profile/resume", withRateLimit("ai", "/api/profile/resume", handlePOST));
 export const DELETE = withRouteErrors("/api/profile/resume", handleDELETE);

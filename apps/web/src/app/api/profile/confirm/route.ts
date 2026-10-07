@@ -5,6 +5,7 @@ import { formatValidationError } from "../../../../lib/formatValidationError";
 import { readJsonBody } from "../../../../lib/readJsonBody";
 import { saveConfirmedProfile } from "../../../../lib/profile/saveProfile";
 import { withRouteErrors } from "../../../../lib/http/withRouteErrors";
+import { withRateLimit } from "../../../../lib/http/rateLimit";
 
 async function handlePOST(request: Request) {
   const env = loadEnv();
@@ -20,4 +21,4 @@ async function handlePOST(request: Request) {
   return NextResponse.json({ status: "saved", factsGenerated: result.factsGenerated });
 }
 
-export const POST = withRouteErrors("/api/profile/confirm", handlePOST);
+export const POST = withRouteErrors("/api/profile/confirm", withRateLimit("ai", "/api/profile/confirm", handlePOST));

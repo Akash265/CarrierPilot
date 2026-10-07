@@ -4,6 +4,7 @@ import { closeDbClient, createDbClient, withUserContext } from "@ai-career/db";
 import { UploadParseError, parseUploadFile, storeUpload } from "@ai-career/ingestion";
 import { enqueueIngestion } from "../../../../lib/job-ingestion/enqueue";
 import { withRouteErrors } from "../../../../lib/http/withRouteErrors";
+import { withRateLimit } from "../../../../lib/http/rateLimit";
 
 const MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024;
 // Content-Length covers the whole multipart envelope, so a file at exactly the cap is slightly larger.
@@ -64,4 +65,4 @@ async function handlePOST(request: Request) {
   return NextResponse.json({ sourceId: stored.sourceId, count: stored.count, queued }, { status: 201 });
 }
 
-export const POST = withRouteErrors("/api/job-sources/upload", handlePOST);
+export const POST = withRouteErrors("/api/job-sources/upload", withRateLimit("jobs", "/api/job-sources/upload", handlePOST));

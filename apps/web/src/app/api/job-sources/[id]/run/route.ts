@@ -4,6 +4,7 @@ import { loadEnv } from "@ai-career/config";
 import { closeDbClient, createDbClient, schema, withUserContext } from "@ai-career/db";
 import { enqueueIngestion } from "../../../../../lib/job-ingestion/enqueue";
 import { withRouteErrors } from "../../../../../lib/http/withRouteErrors";
+import { withRateLimit } from "../../../../../lib/http/rateLimit";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -44,4 +45,4 @@ async function handlePOST(_request: Request, { params }: { params: Promise<{ id:
   return NextResponse.json({ status: "queued" }, { status: 202 });
 }
 
-export const POST = withRouteErrors("/api/job-sources/[id]/run", handlePOST);
+export const POST = withRouteErrors("/api/job-sources/[id]/run", withRateLimit("jobs", "/api/job-sources/[id]/run", handlePOST));

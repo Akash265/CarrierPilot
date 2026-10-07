@@ -9,6 +9,7 @@ import { toResearchView } from "../../../../../../lib/applicationPitch/serialize
 import { createUsageSink } from "../../../../../../lib/aiUsage/createUsageSink";
 import { budgetExceededResponse } from "../../../../../../lib/aiUsage/budgetResponse";
 import { withRouteErrors } from "../../../../../../lib/http/withRouteErrors";
+import { withRateLimit } from "../../../../../../lib/http/rateLimit";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const { jobs } = schema;
@@ -43,4 +44,4 @@ async function handlePOST(_request: Request, { params }: { params: Promise<{ job
   }
 }
 
-export const POST = withRouteErrors("/api/application-pitches/[jobId]/research/refresh", handlePOST);
+export const POST = withRouteErrors("/api/application-pitches/[jobId]/research/refresh", withRateLimit("ai", "/api/application-pitches/[jobId]/research/refresh", handlePOST));

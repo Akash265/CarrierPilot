@@ -1,4 +1,5 @@
 import { withRouteErrors } from "../../../lib/http/withRouteErrors";
+import { withRateLimit } from "../../../lib/http/rateLimit";
 import { gateConfig } from "../../../lib/security/gate";
 import { handleUnlock } from "../../../lib/security/unlock";
 import { log } from "../../../lib/log";
@@ -8,4 +9,4 @@ async function handlePOST(request: Request): Promise<Response> {
   return handleUnlock(request, gateConfig(), log);
 }
 
-export const POST = withRouteErrors("/api/unlock", handlePOST);
+export const POST = withRouteErrors("/api/unlock", withRateLimit("unlock", "/api/unlock", handlePOST));

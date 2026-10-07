@@ -9,6 +9,7 @@ import { enqueueAutofill } from "../../../lib/browser-automation/enqueue";
 import { toSessionView } from "../../../lib/browser-automation/serializeSession";
 import { automationErrorResponse } from "../../../lib/browser-automation/errorResponse";
 import { withRouteErrors } from "../../../lib/http/withRouteErrors";
+import { withRateLimit } from "../../../lib/http/rateLimit";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const CreateBodySchema = z.object({ jobId: z.string().uuid() }).strict();
@@ -57,4 +58,4 @@ async function handlePOST(request: Request) {
 }
 
 export const GET = withRouteErrors("/api/automation-sessions", handleGET);
-export const POST = withRouteErrors("/api/automation-sessions", handlePOST);
+export const POST = withRouteErrors("/api/automation-sessions", withRateLimit("jobs", "/api/automation-sessions", handlePOST));

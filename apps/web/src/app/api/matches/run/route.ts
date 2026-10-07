@@ -4,6 +4,7 @@ import { loadEnv } from "@ai-career/config";
 import { closeDbClient, createDbClient, schema, withUserContext } from "@ai-career/db";
 import { enqueueMatching } from "../../../../lib/matching/enqueue";
 import { withRouteErrors } from "../../../../lib/http/withRouteErrors";
+import { withRateLimit } from "../../../../lib/http/rateLimit";
 
 async function handlePOST() {
   const env = loadEnv();
@@ -37,4 +38,4 @@ async function handlePOST() {
   return NextResponse.json({ status: "queued" }, { status: 202 });
 }
 
-export const POST = withRouteErrors("/api/matches/run", handlePOST);
+export const POST = withRouteErrors("/api/matches/run", withRateLimit("jobs", "/api/matches/run", handlePOST));
