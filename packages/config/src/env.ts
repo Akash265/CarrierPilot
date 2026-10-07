@@ -67,6 +67,10 @@ const envSchema = z
     LANGFUSE_HOST: z.preprocess(blankAsUnset, z.string().url().regex(/^https?:\/\//i, "must be an http(s) URL").optional()),
     LANGFUSE_PUBLIC_KEY: z.preprocess(blankAsUnset, z.string().min(1).optional()),
     LANGFUSE_SECRET_KEY: z.preprocess(blankAsUnset, z.string().min(1).optional()),
+    // Phase 11b (design §3, §5.2). Minimum level the structured logger writes, and how long a worker may go without
+    // a heartbeat (they beat every 30 s) before /status calls it "stale".
+    LOG_LEVEL: z.preprocess(blankAsUnset, z.enum(["debug", "info", "warn", "error"]).default("info")),
+    STATUS_STALE_AFTER_MS: z.preprocess(blankAsUnset, z.coerce.number().int().min(1000).default(90_000)),
   })
   .superRefine((val, ctx) => {
     if (val.EMBEDDING_PROVIDER === "voyage" && !val.VOYAGE_API_KEY) {

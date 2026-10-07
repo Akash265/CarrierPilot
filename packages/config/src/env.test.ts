@@ -217,4 +217,25 @@ describe("loadEnv", () => {
       loadEnv({ ...validSource, LANGFUSE_HOST: "ftp://x.example", LANGFUSE_PUBLIC_KEY: "p", LANGFUSE_SECRET_KEY: "s" })
     ).toThrow(/LANGFUSE_HOST/);
   });
+
+  it("defaults the Phase 11b logging and status settings", () => {
+    const env = loadEnv(validSource);
+    expect(env.LOG_LEVEL).toBe("info");
+    expect(env.STATUS_STALE_AFTER_MS).toBe(90_000);
+  });
+
+  it("parses and bounds the Phase 11b logging and status settings", () => {
+    const env = loadEnv({ ...validSource, LOG_LEVEL: "debug", STATUS_STALE_AFTER_MS: "5000" });
+    expect(env.LOG_LEVEL).toBe("debug");
+    expect(env.STATUS_STALE_AFTER_MS).toBe(5000);
+    expect(() => loadEnv({ ...validSource, LOG_LEVEL: "verbose" })).toThrow(/LOG_LEVEL/);
+    expect(() => loadEnv({ ...validSource, STATUS_STALE_AFTER_MS: "999" })).toThrow(/STATUS_STALE_AFTER_MS/);
+    expect(() => loadEnv({ ...validSource, STATUS_STALE_AFTER_MS: "1500.5" })).toThrow(/STATUS_STALE_AFTER_MS/);
+  });
+
+  it("treats blank Phase 11b settings as unset", () => {
+    const env = loadEnv({ ...validSource, LOG_LEVEL: "", STATUS_STALE_AFTER_MS: " " });
+    expect(env.LOG_LEVEL).toBe("info");
+    expect(env.STATUS_STALE_AFTER_MS).toBe(90_000);
+  });
 });
