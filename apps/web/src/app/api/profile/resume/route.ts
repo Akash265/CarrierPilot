@@ -18,8 +18,9 @@ import { createUsageSink } from "../../../../lib/aiUsage/createUsageSink";
 import { budgetExceededResponse } from "../../../../lib/aiUsage/budgetResponse";
 import { withRouteErrors } from "../../../../lib/http/withRouteErrors";
 import { withRateLimit } from "../../../../lib/http/rateLimit";
+import { CONTENT_LENGTH_SLACK_BYTES, MAX_UPLOAD_BYTES } from "../../../../lib/http/uploadLimits";
 
-const MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024;
+const MAX_FILE_SIZE_BYTES = MAX_UPLOAD_BYTES;
 
 // Content-Length measures the whole multipart envelope (boundary markers,
 // Content-Disposition/Content-Type headers, filename), not just the file
@@ -27,8 +28,8 @@ const MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024;
 // larger Content-Length. 64KB is far more than any realistic single-file
 // form's overhead, so this stays a coarse, early rejection for uploads that
 // are genuinely, unambiguously oversized; file.size below (checked against
-// MAX_FILE_SIZE_BYTES with no slack) remains the real, authoritative limit.
-const CONTENT_LENGTH_SLACK_BYTES = 64 * 1024;
+// MAX_FILE_SIZE_BYTES with no slack) remains the real, authoritative limit. The slack is
+// CONTENT_LENGTH_SLACK_BYTES in lib/http/uploadLimits.ts.
 
 const MIME_BY_FILE_TYPE: Record<Awaited<ReturnType<typeof detectResumeFileType>>, string> = {
   pdf: "application/pdf",

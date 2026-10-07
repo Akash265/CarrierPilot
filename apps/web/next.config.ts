@@ -1,4 +1,5 @@
 import type { NextConfig } from "next";
+import { CONTENT_LENGTH_SLACK_BYTES, MAX_UPLOAD_BYTES } from "./src/lib/http/uploadLimits";
 
 const nextConfig: NextConfig = {
   /* config options here */
@@ -19,6 +20,11 @@ const nextConfig: NextConfig = {
   // Phase 11c (D179): no framework fingerprint, and baseline hardening headers on every response. A script-src CSP
   // is not set: it needs per-request nonces threaded through every page (documented gap).
   poweredByHeader: false,
+  experimental: {
+    // proxy.ts makes Next buffer every request body and cut it off at 10 MB by default, which broke a maximum-size
+    // upload (a 10 MiB file plus its multipart envelope); allow exactly what the upload routes accept (D179).
+    proxyClientMaxBodySize: MAX_UPLOAD_BYTES + CONTENT_LENGTH_SLACK_BYTES,
+  },
   async headers() {
     return [
       {

@@ -5,11 +5,11 @@ import { UploadParseError, parseUploadFile, storeUpload } from "@ai-career/inges
 import { enqueueIngestion } from "../../../../lib/job-ingestion/enqueue";
 import { withRouteErrors } from "../../../../lib/http/withRouteErrors";
 import { withRateLimit } from "../../../../lib/http/rateLimit";
+import { CONTENT_LENGTH_SLACK_BYTES, MAX_UPLOAD_BYTES } from "../../../../lib/http/uploadLimits";
 
-const MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024;
-// Content-Length covers the whole multipart envelope, so a file at exactly the cap is slightly larger.
-// This is only an early, coarse rejection; `file.size` below is the authoritative limit.
-const CONTENT_LENGTH_SLACK_BYTES = 64 * 1024;
+// Content-Length covers the whole multipart envelope, so a file at exactly the cap is slightly larger
+// (CONTENT_LENGTH_SLACK_BYTES). This is only an early, coarse rejection; `file.size` below is the authoritative limit.
+const MAX_FILE_SIZE_BYTES = MAX_UPLOAD_BYTES;
 
 async function handlePOST(request: Request) {
   const env = loadEnv();
