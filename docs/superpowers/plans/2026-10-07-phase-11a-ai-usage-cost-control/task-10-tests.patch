@@ -1,0 +1,220 @@
+diff --git a/apps/web/src/app/api/career-goal/parse/route.test.ts b/apps/web/src/app/api/career-goal/parse/route.test.ts
+index 77411fa..7439d4d 100644
+--- a/apps/web/src/app/api/career-goal/parse/route.test.ts
++++ b/apps/web/src/app/api/career-goal/parse/route.test.ts
+@@ -9,13 +9,13 @@ import {
+   CareerGoalExtractionValidationError,
+   type CareerGoalExtractionDraft,
+ } from "@ai-career/ai";
++import { insertAiSpend, aiCallRows } from "../../../../test/jobsDb";
+ 
+ vi.mock("@ai-career/ai", async () => {
+   const actual = await vi.importActual<typeof import("@ai-career/ai")>("@ai-career/ai");
+   return {
+     ...actual,
+     extractCareerGoal: vi.fn(),
+-    createAnthropicClient: () => ({}),
+   };
+ });
+ 
+@@ -26,6 +26,9 @@ vi.mock("@ai-career/config", () => ({
+       "postgres://career_intel_app:career_intel_app@localhost:5432/career_intel_test",
+     ANTHROPIC_MODEL_FAST: "test-model",
+     ANTHROPIC_MODEL_RESEARCH: "test-model",
++    ANTHROPIC_API_KEY: "sk-ant-test",
++    AI_MONTHLY_BUDGET_USD: 5,
++    AI_BUDGET_WARN_PERCENT: 80,
+   }),
+ }));
+ 
+@@ -51,9 +54,11 @@ beforeAll(async () => {
+   // Delete the FK-child table first.
+   await adminSql`DELETE FROM career_goal_constraints WHERE user_id = ${TEST_USER_ID}`;
+   await adminSql`DELETE FROM career_goals WHERE user_id = ${TEST_USER_ID}`;
++  await adminSql`DELETE FROM ai_calls WHERE user_id = ${TEST_USER_ID}`;
+ });
+ 
+ afterAll(async () => {
++  await adminSql`DELETE FROM ai_calls WHERE user_id = ${TEST_USER_ID}`;
+   await adminSql.end();
+ });
+ 
+@@ -236,4 +241,26 @@ describe("POST /api/career-goal/parse", () => {
+     expect(row.parse_status).toBe("failed");
+     expect(row.parse_error).toBe("bad output");
+   });
++
++  it("answers 429 with the budget message when the monthly AI budget blocks the parse, without retrying", async () => {
++    await insertAiSpend(adminSql, TEST_USER_ID, 5);
++    // Drive the real tracked client the route built (label career_goal_parse); the gate blocks before the SDK.
++    vi.mocked(extractCareerGoal).mockImplementation(async (client) => {
++      await client.messages.create({ model: "test-model", max_tokens: 1, messages: [{ role: "user", content: "x" }] });
++      throw new Error("unreachable: the budget gate should have thrown");
++    });
++
++    const res = await POST(makeRequest({ rawText: "Data roles in Berlin" }));
++    const body = await res.json();
++
++    expect(res.status).toBe(429);
++    expect(body).toMatchObject({ status: "failed", code: "ai_budget_exceeded" });
++    expect(body.error).toMatch(/^Monthly AI budget reached/);
++    expect(vi.mocked(extractCareerGoal)).toHaveBeenCalledTimes(1);
++    const [goal] = await adminSql`SELECT parse_status, parse_error FROM career_goals WHERE id = ${body.goalId}`;
++    expect(goal).toEqual({ parse_status: "failed", parse_error: "ai_budget_exceeded" });
++    expect(await aiCallRows(adminSql, TEST_USER_ID)).toContainEqual({ operation: "career_goal_parse", outcome: "blocked", error_code: "budget_exceeded" });
++    await adminSql`DELETE FROM ai_calls WHERE user_id = ${TEST_USER_ID}`;
++  });
+ });
++
+diff --git a/apps/web/src/app/api/profile/resume/route.test.ts b/apps/web/src/app/api/profile/resume/route.test.ts
+index 917dea3..5add0f7 100644
+--- a/apps/web/src/app/api/profile/resume/route.test.ts
++++ b/apps/web/src/app/api/profile/resume/route.test.ts
+@@ -13,6 +13,9 @@ const {
+   dbInsertMock,
+   dbValuesMock,
+   extractProfileFromResumeMock,
++  anthropicForMock,
++  createAnthropicForMock,
++  dbSetMock,
+   dbSelectWhereMock,
+   dbSelectFromMock,
+   dbSelectMock,
+@@ -27,6 +30,9 @@ const {
+   const dbValuesMock = vi.fn(() => ({ returning: dbInsertReturningMock }));
+   const dbInsertMock = vi.fn(() => ({ values: dbValuesMock }));
+   const extractProfileFromResumeMock = vi.fn();
++  // Phase 11a: the route asks for a labelled, budget-checked client; the fake records the label it was asked for.
++  const anthropicForMock = vi.fn((operation: string) => ({ operation }));
++  const createAnthropicForMock = vi.fn(() => anthropicForMock);
+ 
+   // Chain shapes for the DELETE handler: `.select().from(...).where(...)`
+   // and `.delete(...).where(...)`, each mirroring the same "one link
+@@ -44,6 +50,9 @@ const {
+     dbInsertMock,
+     dbValuesMock,
+     extractProfileFromResumeMock,
++    anthropicForMock,
++    createAnthropicForMock,
++    dbSetMock,
+     dbSelectWhereMock,
+     dbSelectFromMock,
+     dbSelectMock,
+@@ -59,6 +68,10 @@ vi.mock("@ai-career/db", () => ({
+   withUserContext: async (_db: unknown, _userId: string, fn: (tx: unknown) => unknown) =>
+     fn({ update: dbUpdateMock, insert: dbInsertMock, select: dbSelectMock, delete: dbDeleteMock }),
+   schema: { resumeDocuments: { isActive: "isActive", id: "id" } },
++  DbUsageSink: class {
++    spendSinceUsd = async () => 0;
++    record = async () => undefined;
++  },
+ }));
+ 
+ vi.mock("@ai-career/storage", () => ({
+@@ -67,11 +80,13 @@ vi.mock("@ai-career/storage", () => ({
+   deleteResume: deleteResumeMock,
+ }));
+ 
+-vi.mock("@ai-career/ai", () => ({
++vi.mock("@ai-career/ai", async (importOriginal) => ({
++  AiBudgetExceededError: (await importOriginal<typeof import("@ai-career/ai")>()).AiBudgetExceededError,
++  withLangfuseExport: (sink: unknown) => sink,
+   detectResumeFileType: vi.fn().mockResolvedValue("pdf"),
+   extractText: vi.fn().mockResolvedValue("plain resume text"),
+   extractProfileFromResume: extractProfileFromResumeMock,
+-  createAnthropicClient: () => ({}),
++  createAnthropicFor: createAnthropicForMock,
+   UnsupportedFileTypeError: class UnsupportedFileTypeError extends Error {},
+   ExtractionValidationError: class ExtractionValidationError extends Error {},
+ }));
+@@ -97,7 +112,9 @@ beforeEach(async () => {
+   dbDeleteMock.mockClear();
+   dbValuesMock.mockClear();
+   dbUpdateMock.mockClear();
++  dbSetMock.mockClear();
+   dbInsertMock.mockClear();
++  anthropicForMock.mockClear();
+   deleteResumeMock.mockReset().mockResolvedValue(undefined);
+   const { detectResumeFileType } = await import("@ai-career/ai");
+   vi.mocked(detectResumeFileType).mockReset().mockResolvedValue("pdf");
+@@ -115,6 +132,27 @@ describe("POST /api/profile/resume", () => {
+     expect(body.draft.contact.fullName).toBe("Ada");
+   });
+ 
++  it("extracts with a client labelled resume_extraction", async () => {
++    extractProfileFromResumeMock.mockResolvedValue({ contact: { fullName: "Ada" } });
++    await POST(makeRequest());
++    expect(anthropicForMock).toHaveBeenCalledWith("resume_extraction");
++    expect(extractProfileFromResumeMock.mock.calls[0][0]).toEqual({ operation: "resume_extraction" });
++  });
++
++  it("answers 429 with the budget message, does not retry, and marks the upload's extraction failed", async () => {
++    const { AiBudgetExceededError } = await import("@ai-career/ai");
++    extractProfileFromResumeMock.mockRejectedValue(new AiBudgetExceededError(20, 20, new Date("2026-11-01T00:00:00Z")));
++
++    const res = await POST(makeRequest());
++    const body = await res.json();
++
++    expect(res.status).toBe(429);
++    expect(body).toMatchObject({ resumeDocumentId: "resume-doc-1", status: "failed", code: "ai_budget_exceeded" });
++    expect(body.error).toMatch(/^Monthly AI budget reached/);
++    expect(extractProfileFromResumeMock).toHaveBeenCalledTimes(1);
++    expect(dbSetMock).toHaveBeenCalledWith({ extractionStatus: "failed", extractionError: "ai_budget_exceeded" });
++  });
++
+   it("returns a failed status without a server error when extraction fails twice", async () => {
+     const { ExtractionValidationError } = await import("@ai-career/ai");
+     extractProfileFromResumeMock.mockRejectedValue(new ExtractionValidationError("bad output"));
+diff --git a/packages/ai/src/usage/noUntrackedCalls.test.ts b/packages/ai/src/usage/noUntrackedCalls.test.ts
+new file mode 100644
+index 0000000..add2242
+--- /dev/null
++++ b/packages/ai/src/usage/noUntrackedCalls.test.ts
+@@ -0,0 +1,47 @@
++import { describe, it, expect } from "vitest";
++import { readdirSync, readFileSync, statSync } from "node:fs";
++import path from "node:path";
++import { fileURLToPath } from "node:url";
++
++/**
++ * Phase 11a structural guard: every production AI call must go through the tracked path, or the monthly
++ * budget has a hole. Tests, evals and E2E helpers may build raw clients; production code may not.
++ */
++const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../../..");
++const SKIP_DIRS = new Set(["node_modules", ".next", "dist", "eval", "e2e", "test", "testing", "fixtures"]);
++const isTestFile = (f: string) => /\.test\.tsx?$/.test(f);
++
++function sourceFiles(dir: string): string[] {
++  const out: string[] = [];
++  for (const name of readdirSync(dir)) {
++    const full = path.join(dir, name);
++    if (statSync(full).isDirectory()) {
++      if (!SKIP_DIRS.has(name)) out.push(...sourceFiles(full));
++    } else if (/\.(ts|tsx|mts)$/.test(name) && !isTestFile(name)) {
++      out.push(full);
++    }
++  }
++  return out;
++}
++
++const productionFiles = ["apps", "services", "packages"].flatMap((top) => sourceFiles(path.join(REPO, top)));
++const rel = (f: string) => path.relative(REPO, f);
++const filesMatching = (re: RegExp) => productionFiles.filter((f) => re.test(readFileSync(f, "utf8"))).map(rel).sort();
++
++describe("no untracked AI calls in production code", () => {
++  it("scans a realistic number of files (the walk itself works)", () => {
++    expect(productionFiles.length).toBeGreaterThan(100);
++  });
++
++  it("calls createAnthropicClient nowhere but its own definition (evals may still use it)", () => {
++    expect(filesMatching(/createAnthropicClient\(/)).toEqual(["packages/ai/src/extractProfile.ts"]);
++  });
++
++  it("constructs the Anthropic SDK client only inside packages/ai", () => {
++    expect(filesMatching(/new Anthropic\(/)).toEqual(["packages/ai/src/extractProfile.ts", "packages/ai/src/usage/anthropicFor.ts"]);
++  });
++
++  it("talks to Voyage only through embedTexts", () => {
++    expect(filesMatching(/api\.voyageai\.com/)).toEqual(["packages/ai/src/embeddings.ts"]);
++  });
++});

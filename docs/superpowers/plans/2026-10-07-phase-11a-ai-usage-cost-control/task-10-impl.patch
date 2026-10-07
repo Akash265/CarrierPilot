@@ -1,0 +1,144 @@
+diff --git a/apps/web/src/app/api/career-goal/parse/route.ts b/apps/web/src/app/api/career-goal/parse/route.ts
+index 26b70d7..e5d13b8 100644
+--- a/apps/web/src/app/api/career-goal/parse/route.ts
++++ b/apps/web/src/app/api/career-goal/parse/route.ts
+@@ -7,16 +7,20 @@ import { lockUserCareerGoals } from "../../../../lib/career-goal/lockUserCareerG
+ import { createDbClient, closeDbClient, withUserContext, schema } from "@ai-career/db";
+ import {
+   extractCareerGoal,
+-  createAnthropicClient,
++  createAnthropicFor,
++  AiBudgetExceededError,
+   parseSalaryFloor,
+   CareerGoalExtractionValidationError,
+   type CareerGoalExtractionDraft,
++  type MessagesClient,
+ } from "@ai-career/ai";
++import { createUsageSink } from "../../../../lib/aiUsage/createUsageSink";
++import { budgetExceededResponse } from "../../../../lib/aiUsage/budgetResponse";
+ 
+ const MAX_RAW_TEXT_LENGTH = 4000;
+ 
+ async function extractWithRetry(
+-  anthropic: ReturnType<typeof createAnthropicClient>,
++  anthropic: MessagesClient,
+   env: Parameters<typeof extractCareerGoal>[1],
+   text: string
+ ): Promise<CareerGoalExtractionDraft> {
+@@ -68,11 +72,20 @@ export async function POST(request: Request) {
+       return row;
+     });
+ 
+-    const anthropic = createAnthropicClient(env);
++    const anthropic = createAnthropicFor(env, createUsageSink(db, env))("career_goal_parse");
+     let extracted: CareerGoalExtractionDraft;
+     try {
+       extracted = await extractWithRetry(anthropic, env, rawText);
+     } catch (error) {
++      if (error instanceof AiBudgetExceededError) {
++        await withUserContext(db, env.DEFAULT_USER_ID, (tx) =>
++          tx
++            .update(schema.careerGoals)
++            .set({ parseStatus: "failed", parseError: "ai_budget_exceeded" })
++            .where(eq(schema.careerGoals.id, goal.id))
++        );
++        return budgetExceededResponse(error, { goalId: goal.id, version: goal.version, status: "failed" });
++      }
+       // The audit trail (parse_error) keeps a validation failure's message but
+       // only the class name of anything else: an SDK/network error message can
+       // echo the request, i.e. the user's goal text.
+diff --git a/apps/web/src/app/api/profile/resume/route.ts b/apps/web/src/app/api/profile/resume/route.ts
+index 081eaee..a01eebd 100644
+--- a/apps/web/src/app/api/profile/resume/route.ts
++++ b/apps/web/src/app/api/profile/resume/route.ts
+@@ -7,11 +7,15 @@ import {
+   detectResumeFileType,
+   extractText,
+   extractProfileFromResume,
+-  createAnthropicClient,
++  createAnthropicFor,
++  AiBudgetExceededError,
+   UnsupportedFileTypeError,
+   ExtractionValidationError,
++  type MessagesClient,
+   type ResumeExtractionDraft,
+ } from "@ai-career/ai";
++import { createUsageSink } from "../../../../lib/aiUsage/createUsageSink";
++import { budgetExceededResponse } from "../../../../lib/aiUsage/budgetResponse";
+ 
+ const MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024;
+ 
+@@ -31,7 +35,7 @@ const MIME_BY_FILE_TYPE: Record<Awaited<ReturnType<typeof detectResumeFileType>>
+ };
+ 
+ async function extractWithRetry(
+-  anthropic: ReturnType<typeof createAnthropicClient>,
++  anthropic: MessagesClient,
+   env: Parameters<typeof extractProfileFromResume>[1],
+   text: string
+ ): Promise<ResumeExtractionDraft> {
+@@ -128,7 +132,7 @@ export async function POST(request: Request) {
+       // for a failed Anthropic/Zod extraction. Outside the try it would escape as
+       // an unhandled 500 and leave extraction_status stuck at 'pending' forever.
+       const text = await extractText(buffer, fileType);
+-      const anthropic = createAnthropicClient(env);
++      const anthropic = createAnthropicFor(env, createUsageSink(db, env))("resume_extraction");
+       const draft = await extractWithRetry(anthropic, env, text);
+       await withUserContext(db, env.DEFAULT_USER_ID, (tx) =>
+         tx
+@@ -138,6 +142,15 @@ export async function POST(request: Request) {
+       );
+       return NextResponse.json({ resumeDocumentId, status: "extracted", draft });
+     } catch (error) {
++      if (error instanceof AiBudgetExceededError) {
++        await withUserContext(db, env.DEFAULT_USER_ID, (tx) =>
++          tx
++            .update(schema.resumeDocuments)
++            .set({ extractionStatus: "failed", extractionError: "ai_budget_exceeded" })
++            .where(eq(schema.resumeDocuments.id, resumeDocumentId))
++        );
++        return budgetExceededResponse(error, { resumeDocumentId, status: "failed" });
++      }
+       const message =
+         error instanceof ExtractionValidationError ? error.message : "Extraction failed";
+       await withUserContext(db, env.DEFAULT_USER_ID, (tx) =>
+diff --git a/packages/ai/src/extractCareerGoal.ts b/packages/ai/src/extractCareerGoal.ts
+index 9b3a859..73e3158 100644
+--- a/packages/ai/src/extractCareerGoal.ts
++++ b/packages/ai/src/extractCareerGoal.ts
+@@ -1,5 +1,6 @@
+ import { randomBytes } from "node:crypto";
+ import Anthropic from "@anthropic-ai/sdk";
++import type { MessagesClient } from "./usage/anthropicFor";
+ import { CareerGoalExtractionSchema, type CareerGoalExtractionDraft } from "./careerGoalExtractionSchema";
+ import type { Env } from "@ai-career/config";
+ 
+@@ -38,7 +39,7 @@ const EXTRACTION_TOOL_INPUT_SCHEMA = {
+ export class CareerGoalExtractionValidationError extends Error {}
+ 
+ export async function extractCareerGoal(
+-  client: Pick<Anthropic, "messages">,
++  client: MessagesClient,
+   env: Pick<Env, "ANTHROPIC_MODEL_FAST">,
+   rawText: string
+ ): Promise<CareerGoalExtractionDraft> {
+diff --git a/packages/ai/src/extractProfile.ts b/packages/ai/src/extractProfile.ts
+index 447e245..c229e9e 100644
+--- a/packages/ai/src/extractProfile.ts
++++ b/packages/ai/src/extractProfile.ts
+@@ -1,5 +1,6 @@
+ import { randomBytes } from "node:crypto";
+ import Anthropic from "@anthropic-ai/sdk";
++import type { MessagesClient } from "./usage/anthropicFor";
+ import { ResumeExtractionSchema, type ResumeExtractionDraft } from "./extractionSchema";
+ import type { Env } from "@ai-career/config";
+ 
+@@ -89,7 +90,7 @@ const EXTRACTION_TOOL_INPUT_SCHEMA = {
+ export class ExtractionValidationError extends Error {}
+ 
+ export async function extractProfileFromResume(
+-  client: Pick<Anthropic, "messages">,
++  client: MessagesClient,
+   env: Pick<Env, "ANTHROPIC_MODEL_FAST">,
+   resumeText: string
+ ): Promise<ResumeExtractionDraft> {

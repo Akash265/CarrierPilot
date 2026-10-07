@@ -1,0 +1,187 @@
+diff --git a/packages/ai/src/usage/anthropicFor.ts b/packages/ai/src/usage/anthropicFor.ts
+new file mode 100644
+index 0000000..efeeece
+--- /dev/null
++++ b/packages/ai/src/usage/anthropicFor.ts
+@@ -0,0 +1,69 @@
++import Anthropic from "@anthropic-ai/sdk";
++import type { Env } from "@ai-career/config";
++import type { BudgetEnv } from "./budget";
++import { trackAiCall } from "./track";
++import type { AiOperation, AiUsageSink, UsageCounts } from "./types";
++
++/**
++ * The only Anthropic surface generators receive (Phase 11a): non-streaming `messages.create`. Narrower than
++ * `Pick<Anthropic, "messages">` on purpose -- an untracked `stream()`, `countTokens()` or `batches` call is
++ * a compile error, not a silent hole in the budget. A real SDK client is assignable to it.
++ */
++export interface MessagesClient {
++  messages: {
++    create(body: Anthropic.MessageCreateParamsNonStreaming, options?: Anthropic.RequestOptions): Promise<Anthropic.Message>;
++  };
++}
++
++/** A pipeline that makes several kinds of call asks for a client per operation, so each row is labelled. */
++export type AnthropicFor = (operation: AiOperation) => MessagesClient;
++
++export interface AnthropicForDeps {
++  /** Tests inject a fake; production builds one SDK client from ANTHROPIC_API_KEY (its own 2 retries apply). */
++  client?: MessagesClient;
++  clock?: () => number;
++}
++
++export function anthropicErrorCode(error: unknown): string {
++  if (error instanceof Anthropic.APIConnectionTimeoutError) return "anthropic:timeout";
++  if (error instanceof Anthropic.APIUserAbortError) return "anthropic:aborted";
++  if (error instanceof Anthropic.APIConnectionError) return "anthropic:connection";
++  if (error instanceof Anthropic.APIError) return `anthropic:${error.status ?? "unknown"}`;
++  return "error";
++}
++
++function usageOf(message: Anthropic.Message): { usage: UsageCounts; usageReported: boolean } {
++  const u = message.usage;
++  if (!u) return { usage: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0, webSearchRequests: 0 }, usageReported: false };
++  return {
++    usage: {
++      inputTokens: u.input_tokens ?? 0,
++      outputTokens: u.output_tokens ?? 0,
++      cacheReadTokens: u.cache_read_input_tokens ?? 0,
++      cacheCreationTokens: u.cache_creation_input_tokens ?? 0,
++      webSearchRequests: u.server_tool_use?.web_search_requests ?? 0,
++    },
++    usageReported: true,
++  };
++}
++
++export function createAnthropicFor(
++  env: Pick<Env, "ANTHROPIC_API_KEY"> & BudgetEnv,
++  sink: AiUsageSink,
++  deps: AnthropicForDeps = {}
++): AnthropicFor {
++  const client: MessagesClient = deps.client ?? new Anthropic({ apiKey: env.ANTHROPIC_API_KEY });
++  const clock = deps.clock ?? Date.now;
++  return (operation) => ({
++    messages: {
++      create: (body, options) =>
++        trackAiCall(
++          { sink, env, operation, provider: "anthropic", model: body.model, clock, errorCodeOf: anthropicErrorCode },
++          async () => {
++            const message = options === undefined ? await client.messages.create(body) : await client.messages.create(body, options);
++            return { result: message, ...usageOf(message), servedModel: message.model || undefined };
++          }
++        ),
++    },
++  });
++}
+diff --git a/packages/ai/src/usage/index.ts b/packages/ai/src/usage/index.ts
+index 6ea281c..69551b8 100644
+--- a/packages/ai/src/usage/index.ts
++++ b/packages/ai/src/usage/index.ts
+@@ -5,3 +5,4 @@ export { MODEL_PRICES, findPrice, estimateCostUsd, type ModelPrice } from "./pri
+ export {
+   AiBudgetExceededError, checkBudget, budgetState, utcMonthStart, utcNextMonthStart, type BudgetEnv, type BudgetState,
+ } from "./budget";
++export { createAnthropicFor, anthropicErrorCode, type AnthropicFor, type AnthropicForDeps, type MessagesClient } from "./anthropicFor";
+diff --git a/packages/ai/src/usage/track.ts b/packages/ai/src/usage/track.ts
+new file mode 100644
+index 0000000..a04b4ef
+--- /dev/null
++++ b/packages/ai/src/usage/track.ts
+@@ -0,0 +1,97 @@
++import { randomUUID } from "node:crypto";
++import { AiBudgetExceededError, checkBudget, type BudgetEnv } from "./budget";
++import { estimateCostUsd } from "./prices";
++import { ZERO_USAGE, type AiCallEvent, type AiOperation, type AiProvider, type AiUsageSink, type UsageCounts } from "./types";
++
++export interface TrackContext {
++  sink: AiUsageSink;
++  env: BudgetEnv;
++  operation: AiOperation;
++  provider: AiProvider;
++  /** The requested model; a successful call may report the model that actually served it. */
++  model: string;
++  /** Epoch milliseconds; injectable for tests. */
++  clock: () => number;
++  /** Maps a provider failure to a short code. Never returns the error message (it can echo request content). */
++  errorCodeOf: (error: unknown) => string;
++}
++
++export interface TrackedResult<T> {
++  result: T;
++  usage: UsageCounts;
++  /** False when the provider response carried no usage block: cost is then unknown, flagged via priceKnown. */
++  usageReported: boolean;
++  /** The model that served the call, when the response says so. */
++  servedModel?: string;
++}
++
++/** A failed `record` must never fail a call that already happened (and may have been paid for). */
++async function safeRecord(sink: AiUsageSink, event: AiCallEvent): Promise<void> {
++  try {
++    await sink.record(event);
++  } catch (error) {
++    const code = typeof (error as { code?: unknown })?.code === "string" ? (error as { code: string }).code : "unknown";
++    console.error(JSON.stringify({ event: "ai_usage_record_failed", operation: event.operation, code }));
++  }
++}
++
++function baseEvent(ctx: TrackContext, createdAtMs: number): Omit<AiCallEvent, "outcome" | "errorCode" | "latencyMs"> {
++  return {
++    id: randomUUID(),
++    createdAt: new Date(createdAtMs),
++    operation: ctx.operation,
++    provider: ctx.provider,
++    model: ctx.model,
++    ...ZERO_USAGE,
++    estimatedCostUsd: 0,
++    priceKnown: true,
++  };
++}
++
++/**
++ * The one tracked path (design §3): budget gate → provider call → cost estimate → one `ai_calls` row per
++ * logical call (retries inside `call` are not separate rows). Blocked and failed calls are recorded and
++ * the original error is rethrown unchanged, so existing error handling at call sites keeps working.
++ */
++export async function trackAiCall<T>(ctx: TrackContext, call: () => Promise<TrackedResult<T>>): Promise<T> {
++  const startedAt = ctx.clock();
++  try {
++    await checkBudget(ctx.sink, ctx.env, new Date(startedAt));
++  } catch (error) {
++    await safeRecord(ctx.sink, {
++      ...baseEvent(ctx, startedAt),
++      latencyMs: 0,
++      outcome: "blocked",
++      errorCode: error instanceof AiBudgetExceededError ? "budget_exceeded" : "budget_check_failed",
++    });
++    throw error;
++  }
++
++  let tracked: TrackedResult<T>;
++  try {
++    tracked = await call();
++  } catch (error) {
++    await safeRecord(ctx.sink, {
++      ...baseEvent(ctx, startedAt),
++      latencyMs: Math.max(0, ctx.clock() - startedAt),
++      outcome: "api_error",
++      errorCode: ctx.errorCodeOf(error),
++    });
++    throw error;
++  }
++
++  const latencyMs = Math.max(0, ctx.clock() - startedAt);
++  const model = tracked.servedModel ?? ctx.model;
++  const { costUsd, priceKnown } = estimateCostUsd(ctx.provider, model, tracked.usage);
++  await safeRecord(ctx.sink, {
++    ...baseEvent(ctx, startedAt),
++    model,
++    ...tracked.usage,
++    latencyMs,
++    estimatedCostUsd: costUsd,
++    priceKnown: priceKnown && tracked.usageReported,
++    outcome: "ok",
++    errorCode: null,
++  });
++  return tracked.result;
++}

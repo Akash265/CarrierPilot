@@ -1,7 +1,7 @@
 # Phase 11a — AI Usage Observability & Cost Control: Design
 
 Date: 2026-10-07
-Status: Approved in brainstorming (sections 1–3) on 2026-10-07; awaiting written-spec review.
+Status: Approved in brainstorming (sections 1–3) and as a written spec on 2026-10-07. §14 records what planning changed; where it disagrees with an earlier section, §14 wins.
 Spec sources: project spec §17 ("Observability — Langfuse Cloud or self-hosted"; "start the application locally without requiring paid SaaS services"), §21 (Phase 11 — Observability & Production Hardening: "Langfuse … retries … cost controls, monitoring"), §23 principles 12 ("Every important AI workflow should be observable") and 13 ("Prefer local/OSS-compatible infrastructure and keep cloud services optional"). Fulfils the unenforced half of DECISIONS.md D8 ("A monthly spend ceiling is enforced via Langfuse alerting").
 
 ## 1. Scope
@@ -227,3 +227,21 @@ CI sets none of the Langfuse vars and leaves the ceiling at its default (fakes r
 - **Per-call SUM query.** Matching explains up to 25 jobs per run → 25 extra indexed SUMs; negligible at single-user volume, revisit if a run's explanation count grows.
 - **Factory signature churn.** Six pipelines and their tests change one option. Mechanical; done per package so each task stays reviewable.
 - **Background block surprises.** Once over budget, matching keeps producing unexplained matches and embedding jobs fail until the month resets — visible on `/usage` and the home badge, which is the intended trade-off of a hard ceiling.
+
+## 14. Planning refinements (2026-10-07)
+
+Found while writing and dry-running the implementation plan. Each supersedes the earlier text it names.
+
+1. **Langfuse transport (§6).** Langfuse's OpenAPI document marks `POST /api/public/ingestion` deprecated and shut down on Langfuse Cloud on 2026-11-16 for everything but scores. The exporter instead POSTs one OTLP/HTTP JSON span per call to `{LANGFUSE_HOST}/api/public/otel/v1/traces` with basic auth and `x-langfuse-ingestion-version: 4`, using Langfuse's documented `langfuse.observation.*` attributes (type `generation`, model, `usage_details`, `cost_details`, level, metadata). Still a plain `fetch`, still metadata only.
+2. **Embeddings under a budget block (§3.3).** Every embedding call site already swallows errors by design (D56, "degrade, never block"). A blocked embedding is recorded and degrades the same way; it does not fail the matching job, and the profile/goal confirm routes never return 429. `ensureJobEmbeddings` stops at the first blocked chunk (remaining jobs counted as failed).
+3. **Matching explanations (§3.3).** The explanation loop stops at the first budget block (`break`) and the run completes with every score stored, instead of recording one blocked row per remaining job.
+4. **Which routes answer 429 (§3.3).** Seven: `profile/resume`, `career-goal/parse`, `resume-optimizations/[jobId]/run`, `application-pitches/[jobId]/run`, `application-pitches/[jobId]/research/refresh`, `cover-letters/[jobId]/run`, `interview-preps/[jobId]/run`. Resume upload and goal parse also mark their row failed with `ai_budget_exceeded`.
+5. **429 body and UI (§3.3).** Every AI panel already shows the response's `error` string, so the readable message goes in `error` and the body adds `code: "ai_budget_exceeded"`, `spentUsd`, `ceilingUsd`, `resetsAt`. No panel changes; no `formatBudgetError` UI helper. Message: `Monthly AI budget reached ($X.XX of $Y.YY). Raise AI_MONTHLY_BUDGET_USD or wait until YYYY-MM-DD (UTC).`
+6. **Generator client type (§3.1, §3.2).** Generators take `MessagesClient` (non-streaming `messages.create` only) instead of `Pick<Anthropic, "messages">`, so untracked `stream`/`countTokens`/`batches` calls do not compile. A real SDK client remains assignable. `createTrackedAnthropic` is not a separate export: `createAnthropicFor(env, sink)` returns `(operation) => MessagesClient`.
+7. **Sink interface (§3.1).** `AiUsageSink` is `{ spendSinceUsd(since), record(event) }` (month bounds stay in `packages/ai`). `DbUsageSink` declares its own structurally identical record type so `packages/db` does not depend on `packages/ai`; property-typed members make TypeScript reject drift where the two meet.
+8. **Append-only (§8).** Enforced by command-specific RLS policies (`FOR SELECT`, `FOR INSERT`), not grants: the app role holds UPDATE/DELETE on every table via default privileges. Test ids: `…0b01`/`…0b02` (DB tests), `…0b04`/`…0b05` (usage route test), `…0b06` (E2E).
+9. **Home badge (§9).** The home page is prerendered at build time, so the link and badge are a client component that fetches `GET /api/usage`. The warn badge shows the floored percentage (`84% of AI budget`); over shows `AI budget reached`.
+10. **Voyage errors (§7).** `VoyageRequestError`'s message carries the status only — the response body can echo the embedded text. An HTTP-date `retry-after` falls back to exponential backoff.
+11. **Blank env values (§5, §6).** A blank `AI_MONTHLY_BUDGET_USD`/`AI_BUDGET_WARN_PERCENT` uses the default (`z.coerce.number("")` would be 0, i.e. unlimited); a blank `LANGFUSE_*` counts as unset.
+12. **E2E (§10).** Runs against `career_intel_test` as user `…0b06` with the existing fake Anthropic (now returning token usage), an invalid Voyage key (Voyage's real 401 exercises failure recording) and a local fake Langfuse OTLP receiver — no real Anthropic, Voyage or Langfuse spend.
+

@@ -1,0 +1,148 @@
+diff --git a/packages/matching/src/explanation/generateMatchExplanation.ts b/packages/matching/src/explanation/generateMatchExplanation.ts
+index 49871a0..0119572 100644
+--- a/packages/matching/src/explanation/generateMatchExplanation.ts
++++ b/packages/matching/src/explanation/generateMatchExplanation.ts
+@@ -1,4 +1,5 @@
+ import type Anthropic from "@anthropic-ai/sdk";
++import type { MessagesClient } from "@ai-career/ai";
+ import type { Env } from "@ai-career/config";
+ import { MatchExplanationSchema, type MatchExplanationDraft } from "./matchExplanationSchema";
+ 
+@@ -38,7 +39,7 @@ export interface MatchExplanationInput {
+  * surface from untrusted job content without needing per-field nonce handling (design doc §9).
+  */
+ export async function generateMatchExplanation(
+-  client: Pick<Anthropic, "messages">,
++  client: MessagesClient,
+   env: Pick<Env, "ANTHROPIC_MODEL_FAST">,
+   input: MatchExplanationInput
+ ): Promise<MatchExplanationDraft> {
+diff --git a/packages/matching/src/pipeline/runMatching.ts b/packages/matching/src/pipeline/runMatching.ts
+index 774290c..5bcbc98 100644
+--- a/packages/matching/src/pipeline/runMatching.ts
++++ b/packages/matching/src/pipeline/runMatching.ts
+@@ -1,7 +1,7 @@
+ import { and, eq, inArray, isNotNull } from "drizzle-orm";
+ import Anthropic from "@anthropic-ai/sdk";
+ import { schema, withUserContext, type DbClient } from "@ai-career/db";
+-import type { AiUsageSink } from "@ai-career/ai";
++import { AiBudgetExceededError, type AiUsageSink, type AnthropicFor } from "@ai-career/ai";
+ import { evaluateEligibility } from "../eligibility/evaluateEligibility";
+ import { scoreSkills } from "../scoring/scoreSkills";
+ import { scoreExperience } from "../scoring/scoreExperience";
+@@ -50,7 +50,8 @@ export interface RunMatchingEnv {
+ 
+ export interface RunMatchingOptions {
+   userId: string;
+-  anthropicClient: Pick<Anthropic, "messages">;
++  /** One labelled, budget-checked Anthropic client per operation (Phase 11a). */
++  anthropicFor: AnthropicFor;
+   /** Where this run's embedding calls are recorded and budget-checked (Phase 11a). */
+   usageSink: AiUsageSink;
+   env: RunMatchingEnv;
+@@ -82,7 +83,7 @@ interface ScoredJob {
+  * after recording it -- same shape as packages/ingestion's `runIngestion`.
+  */
+ export async function runMatching(db: DbClient, opts: RunMatchingOptions): Promise<MatchingRunSummary> {
+-  const { userId, env, anthropicClient, usageSink } = opts;
++  const { userId, env, anthropicFor, usageSink } = opts;
+   const now = opts.now ?? (() => new Date());
+   const inUserContext = <T>(fn: (tx: DbClient) => Promise<T>) => withUserContext(db, userId, fn);
+ 
+@@ -246,11 +247,12 @@ export async function runMatching(db: DbClient, opts: RunMatchingOptions): Promi
+       })
+     );
+     const toExplain = stale.slice(0, env.MATCHING_EXPLAIN_TOP_N);
++    const explainClient = anthropicFor("match_explanation");
+ 
+     for (const item of toExplain) {
+       try {
+         const referenceDate = item.job.postedAt ?? item.job.firstSeenAt;
+-        const draft = await generateMatchExplanation(anthropicClient, env, {
++        const draft = await generateMatchExplanation(explainClient, env, {
+           jobTitle: item.job.title,
+           companyName: item.job.companyName,
+           overallScore: item.overallScore,
+@@ -269,6 +271,9 @@ export async function runMatching(db: DbClient, opts: RunMatchingOptions): Promi
+         );
+         counters.explained++;
+       } catch (error) {
++        // Over the monthly AI budget (Phase 11a): every remaining explanation would be blocked too, so stop
++        // explaining and finish the run -- the scores are complete, only narratives are missing.
++        if (error instanceof AiBudgetExceededError) break;
+         // A malformed response (MatchExplanationValidationError) or a transient Anthropic API failure
+         // (rate limit, 5xx, network -- Anthropic.APIError) leaves the row's deterministic scores intact
+         // and moves on to the next job -- never blocks the run (design doc §4 step 6). Anything else is
+diff --git a/services/matching-worker/src/main.ts b/services/matching-worker/src/main.ts
+index ec29e3c..7480778 100644
+--- a/services/matching-worker/src/main.ts
++++ b/services/matching-worker/src/main.ts
+@@ -1,7 +1,7 @@
+ import IORedis from "ioredis";
+ import { loadEnv } from "@ai-career/config";
+ import { DbUsageSink, closeDbClient, createDbClient } from "@ai-career/db";
+-import { createAnthropicClient, withLangfuseExport, type AiUsageSink } from "@ai-career/ai";
++import { createAnthropicFor, withLangfuseExport, type AiUsageSink } from "@ai-career/ai";
+ import { createMatchingWorker } from "./worker";
+ 
+ const log = (event: string, fields: Record<string, unknown> = {}) =>
+@@ -18,12 +18,14 @@ async function main(): Promise<void> {
+   const env = loadEnv();
+   const db = createDbClient(env);
+   const connection = new IORedis(env.REDIS_URL, { maxRetriesPerRequest: null });
+-  const anthropicClient = createAnthropicClient(env);
+ 
+-  // Typed as AiUsageSink so the compiler checks DbUsageSink still matches the AI package's interface.
+-  const usageSinkFor = (userId: string): AiUsageSink => withLangfuseExport(new DbUsageSink(db, userId), env);
++  const aiFor = (userId: string) => {
++    // Typed as AiUsageSink so the compiler checks DbUsageSink still matches the AI package's interface.
++    const usageSink: AiUsageSink = withLangfuseExport(new DbUsageSink(db, userId), env);
++    return { usageSink, anthropicFor: createAnthropicFor(env, usageSink) };
++  };
+ 
+-  const worker = createMatchingWorker({ connection, db, anthropicClient, usageSinkFor, env });
++  const worker = createMatchingWorker({ connection, db, aiFor, env });
+   worker.on("completed", (job) => log("matching_completed", { jobId: job.id }));
+   worker.on("failed", (job, error) => log("matching_failed", { jobId: job?.id, error: safeErrorLabel(error) }));
+   log("worker_started", {});
+diff --git a/services/matching-worker/src/worker.ts b/services/matching-worker/src/worker.ts
+index 47fdb9e..d755714 100644
+--- a/services/matching-worker/src/worker.ts
++++ b/services/matching-worker/src/worker.ts
+@@ -1,15 +1,16 @@
+ import { Worker, UnrecoverableError, type ConnectionOptions } from "bullmq";
+-import type Anthropic from "@anthropic-ai/sdk";
+ import type { DbClient } from "@ai-career/db";
+-import type { AiUsageSink } from "@ai-career/ai";
++import type { AiUsageSink, AnthropicFor } from "@ai-career/ai";
+ import { MATCHING_QUEUE_NAME, MatchingError, runMatching, type MatchingJobData, type RunMatchingEnv } from "@ai-career/matching";
+ 
+ export interface MatchingWorkerDeps {
+   connection: ConnectionOptions;
+   db: DbClient;
+-  anthropicClient: Pick<Anthropic, "messages">;
+-  /** Builds the AI usage sink for the user a job runs for (Phase 11a): ai_calls rows are per user. */
+-  usageSinkFor: (userId: string) => AiUsageSink;
++  /**
++   * Builds the AI clients for the user a job runs for (Phase 11a): ai_calls rows and the monthly budget are
++   * per user, so the usage sink -- and the Anthropic clients that record into it -- are built per job.
++   */
++  aiFor: (userId: string) => { usageSink: AiUsageSink; anthropicFor: AnthropicFor };
+   env: RunMatchingEnv;
+   /** Overridable so tests use an isolated queue. */
+   queueName?: string;
+@@ -26,12 +27,8 @@ export function createMatchingWorker(deps: MatchingWorkerDeps): Worker<MatchingJ
+     deps.queueName ?? MATCHING_QUEUE_NAME,
+     async (job) => {
+       try {
+-        await runMatching(deps.db, {
+-          userId: job.data.userId,
+-          anthropicClient: deps.anthropicClient,
+-          usageSink: deps.usageSinkFor(job.data.userId),
+-          env: deps.env,
+-        });
++        const { usageSink, anthropicFor } = deps.aiFor(job.data.userId);
++        await runMatching(deps.db, { userId: job.data.userId, anthropicFor, usageSink, env: deps.env });
+       } catch (error) {
+         if (error instanceof MatchingError && error.errorClass === "no_active_goal") {
+           throw new UnrecoverableError(error.errorClass);

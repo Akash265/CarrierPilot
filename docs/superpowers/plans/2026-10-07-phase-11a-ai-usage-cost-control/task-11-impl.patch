@@ -1,0 +1,480 @@
+diff --git a/apps/web/src/app/AiUsageLink.tsx b/apps/web/src/app/AiUsageLink.tsx
+new file mode 100644
+index 0000000..7f0afb1
+--- /dev/null
++++ b/apps/web/src/app/AiUsageLink.tsx
+@@ -0,0 +1,45 @@
++"use client";
++
++import Link from "next/link";
++import { useEffect, useState } from "react";
++import type { UsageSummary } from "../lib/aiUsage/summarizeUsage";
++import { percentOfCeiling } from "../lib/aiUsage/format";
++
++type Badge = { tone: "warn" | "over"; text: string } | null;
++
++/**
++ * The home page's link to /usage (Phase 11a design §9). Fetched in the browser because the home page is
++ * prerendered: a server query would freeze build-time numbers into the page. The badge appears only at
++ * "warn" or "over"; loading, errors, "ok" and "unlimited" show the plain link.
++ */
++export function AiUsageLink() {
++  const [badge, setBadge] = useState<Badge>(null);
++
++  useEffect(() => {
++    let ignore = false;
++    fetch("/api/usage")
++      .then((res) => (res.ok ? (res.json() as Promise<UsageSummary>) : null))
++      .then((data) => {
++        if (ignore || !data || data.ceilingUsd === null) return;
++        if (data.state === "over") setBadge({ tone: "over", text: "AI budget reached" });
++        else if (data.state === "warn") setBadge({ tone: "warn", text: `${percentOfCeiling(data.spentUsd, data.ceilingUsd)}% of AI budget` });
++      })
++      .catch(() => undefined);
++    return () => {
++      ignore = true;
++    };
++  }, []);
++
++  return (
++    <span className="flex items-center gap-2">
++      <Link href="/usage" className="underline">
++        8. AI usage — estimated spend against your monthly budget
++      </Link>
++      {badge && (
++        <span className={badge.tone === "over" ? "rounded bg-red-100 px-2 py-0.5 text-xs" : "rounded bg-amber-100 px-2 py-0.5 text-xs"}>
++          {badge.text}
++        </span>
++      )}
++    </span>
++  );
++}
+diff --git a/apps/web/src/app/api/health/route.ts b/apps/web/src/app/api/health/route.ts
+index 840f284..025a05a 100644
+--- a/apps/web/src/app/api/health/route.ts
++++ b/apps/web/src/app/api/health/route.ts
+@@ -3,6 +3,7 @@ import { createDbClient, closeDbClient } from "@ai-career/db";
+ import { sql } from "drizzle-orm";
+ import Redis from "ioredis";
+ import { loadEnv } from "@ai-career/config";
++import { getLangfuseExportFailures, isLangfuseConfigured } from "@ai-career/ai";
+ 
+ export async function GET() {
+   const env = loadEnv();
+@@ -40,5 +41,8 @@ export async function GET() {
+   }
+ 
+   const status = checks.database && checks.redis ? "ok" : "degraded";
+-  return NextResponse.json({ status, checks }, { status: status === "ok" ? 200 : 503 });
++  // Phase 11a: informational only -- Langfuse is optional, so its health never changes `status`. The
++  // failure count is this web process's own exports since it started (each worker process has its own).
++  const aiUsage = { langfuseEnabled: isLangfuseConfigured(env), langfuseExportFailures: getLangfuseExportFailures() };
++  return NextResponse.json({ status, checks, aiUsage }, { status: status === "ok" ? 200 : 503 });
+ }
+diff --git a/apps/web/src/app/api/usage/route.ts b/apps/web/src/app/api/usage/route.ts
+new file mode 100644
+index 0000000..31aadda
+--- /dev/null
++++ b/apps/web/src/app/api/usage/route.ts
+@@ -0,0 +1,41 @@
++import { NextResponse } from "next/server";
++import { gte } from "drizzle-orm";
++import { loadEnv } from "@ai-career/config";
++import { closeDbClient, createDbClient, schema, withUserContext } from "@ai-career/db";
++import { utcMonthStart } from "@ai-career/ai";
++import { summarizeUsage } from "../../../lib/aiUsage/summarizeUsage";
++
++const { aiCalls } = schema;
++
++/**
++ * Phase 11a design §9. Read-only: this UTC month's ai_calls rows summarized on every request (a single
++ * user's month is at most thousands of rows). Metadata only -- the table holds no prompt or response text.
++ */
++export async function GET() {
++  const env = loadEnv();
++  const db = createDbClient(env);
++  const now = new Date();
++  try {
++    const rows = await withUserContext(db, env.DEFAULT_USER_ID, (tx) =>
++      tx
++        .select({
++          createdAt: aiCalls.createdAt,
++          operation: aiCalls.operation,
++          provider: aiCalls.provider,
++          model: aiCalls.model,
++          inputTokens: aiCalls.inputTokens,
++          outputTokens: aiCalls.outputTokens,
++          webSearchRequests: aiCalls.webSearchRequests,
++          estimatedCostUsd: aiCalls.estimatedCostUsd,
++          priceKnown: aiCalls.priceKnown,
++          outcome: aiCalls.outcome,
++          errorCode: aiCalls.errorCode,
++        })
++        .from(aiCalls)
++        .where(gte(aiCalls.createdAt, utcMonthStart(now)))
++    );
++    return NextResponse.json(summarizeUsage(rows.map((r) => ({ ...r, estimatedCostUsd: Number(r.estimatedCostUsd) })), env, now));
++  } finally {
++    await closeDbClient(db);
++  }
++}
+diff --git a/apps/web/src/app/page.tsx b/apps/web/src/app/page.tsx
+index 6f926c1..2d8a0f2 100644
+--- a/apps/web/src/app/page.tsx
++++ b/apps/web/src/app/page.tsx
+@@ -1,5 +1,6 @@
+ import Link from "next/link";
+ import { loadEnv } from "@ai-career/config";
++import { AiUsageLink } from "./AiUsageLink";
+ 
+ export default function Home() {
+   const env = loadEnv();
+@@ -31,6 +32,7 @@ export default function Home() {
+         <Link href="/insights" className="underline">
+           7. Insights — see which applications get responses
+         </Link>
++        <AiUsageLink />
+       </nav>
+     </main>
+   );
+diff --git a/apps/web/src/app/usage/UsageClient.tsx b/apps/web/src/app/usage/UsageClient.tsx
+new file mode 100644
+index 0000000..ca4c823
+--- /dev/null
++++ b/apps/web/src/app/usage/UsageClient.tsx
+@@ -0,0 +1,165 @@
++"use client";
++
++import { useEffect, useState } from "react";
++import type { UsageSummary } from "../../lib/aiUsage/summarizeUsage";
++import { formatUsd, operationLabel, percentOfCeiling } from "../../lib/aiUsage/format";
++
++type State = { kind: "loading" } | { kind: "error" } | { kind: "ready"; data: UsageSummary };
++
++const day = (iso: string) => iso.slice(0, 10);
++const when = (iso: string) => iso.slice(0, 16).replace("T", " ");
++
++function SpendSummary({ data }: { data: UsageSummary }) {
++  if (data.ceilingUsd === null) {
++    return <p className="text-2xl font-semibold">{`${formatUsd(data.spentUsd)} this month · no monthly ceiling`}</p>;
++  }
++  const percent = percentOfCeiling(data.spentUsd, data.ceilingUsd);
++  const barColor = data.state === "over" ? "bg-red-600" : data.state === "warn" ? "bg-amber-500" : "bg-gray-800";
++  return (
++    <div className="flex flex-col gap-2">
++      <p className="text-2xl font-semibold">{`${formatUsd(data.spentUsd)} of ${formatUsd(data.ceilingUsd)} this month`}</p>
++      <div
++        role="progressbar"
++        aria-label="Share of monthly AI budget used"
++        aria-valuemin={0}
++        aria-valuemax={100}
++        aria-valuenow={Math.min(percent, 100)}
++        className="h-2 w-full rounded bg-gray-200"
++      >
++        <div className={`h-2 rounded ${barColor}`} style={{ width: `${Math.min(percent, 100)}%` }} />
++      </div>
++      {data.state === "warn" && (
++        <p className="rounded bg-amber-100 px-2 py-1 text-sm">{`Over ${data.warnPercent}% of your monthly AI budget.`}</p>
++      )}
++      {data.state === "over" && (
++        <p role="alert" className="rounded bg-red-100 px-2 py-1 text-sm">
++          {`Monthly AI budget reached. New AI calls are blocked until ${day(data.month.resetsAt)} (UTC) or until AI_MONTHLY_BUDGET_USD is raised.`}
++        </p>
++      )}
++    </div>
++  );
++}
++
++export function UsageClient() {
++  const [state, setState] = useState<State>({ kind: "loading" });
++
++  useEffect(() => {
++    let ignore = false;
++    fetch("/api/usage")
++      .then((res) => {
++        if (!res.ok) throw new Error("load failed");
++        return res.json() as Promise<UsageSummary>;
++      })
++      .then((data) => {
++        if (!ignore) setState({ kind: "ready", data });
++      })
++      .catch(() => {
++        if (!ignore) setState({ kind: "error" });
++      });
++    return () => {
++      ignore = true;
++    };
++  }, []);
++
++  if (state.kind === "loading") return <p className="text-sm text-gray-600">Loading…</p>;
++  if (state.kind === "error") return <p className="text-sm text-red-700">Could not load AI usage.</p>;
++  const { data } = state;
++
++  return (
++    <div className="flex flex-col gap-6">
++      <section aria-label="Monthly spend" className="flex flex-col gap-1 rounded border p-4">
++        <SpendSummary data={data} />
++        <p className="text-sm text-gray-600">{`Resets ${day(data.month.resetsAt)} (UTC).`}</p>
++      </section>
++
++      {data.unknownPriceModels.length > 0 && (
++        <p className="rounded bg-amber-100 px-2 py-1 text-sm">
++          {`No price is configured for ${data.unknownPriceModels.join(", ")}; its cost is estimated at the most expensive known rate.`}
++        </p>
++      )}
++
++      {data.byOperation.length === 0 ? (
++        <p className="text-sm text-gray-600">No AI calls yet this month.</p>
++      ) : (
++        <>
++          <table aria-label="By feature" className="text-sm">
++            <thead>
++              <tr className="text-left">
++                <th className="pr-4">Feature</th>
++                <th className="pr-4">Calls</th>
++                <th className="pr-4">Blocked</th>
++                <th className="pr-4">Failed</th>
++                <th className="pr-4">Tokens in</th>
++                <th className="pr-4">Tokens out</th>
++                <th className="pr-4">Web searches</th>
++                <th>Cost</th>
++              </tr>
++            </thead>
++            <tbody>
++              {data.byOperation.map((op) => (
++                <tr key={op.operation} className="border-t">
++                  <td className="py-1 pr-4">{operationLabel(op.operation)}</td>
++                  <td className="pr-4">{op.calls}</td>
++                  <td className="pr-4">{op.blocked}</td>
++                  <td className="pr-4">{op.failed}</td>
++                  <td className="pr-4">{op.inputTokens.toLocaleString("en-US")}</td>
++                  <td className="pr-4">{op.outputTokens.toLocaleString("en-US")}</td>
++                  <td className="pr-4">{op.webSearches}</td>
++                  <td>{formatUsd(op.costUsd)}</td>
++                </tr>
++              ))}
++            </tbody>
++          </table>
++
++          {data.byModel.length > 0 && (
++            <table aria-label="By model" className="text-sm">
++              <thead>
++                <tr className="text-left">
++                  <th className="pr-4">Model</th>
++                  <th className="pr-4">Calls</th>
++                  <th>Cost</th>
++                </tr>
++              </thead>
++              <tbody>
++                {data.byModel.map((m) => (
++                  <tr key={m.model} className="border-t">
++                    <td className="py-1 pr-4">{m.model}</td>
++                    <td className="pr-4">{m.calls}</td>
++                    <td>{formatUsd(m.costUsd)}</td>
++                  </tr>
++                ))}
++              </tbody>
++            </table>
++          )}
++        </>
++      )}
++
++      {data.recentFailures.length > 0 && (
++        <table aria-label="Recent failed and blocked calls" className="text-sm">
++          <thead>
++            <tr className="text-left">
++              <th className="pr-4">When (UTC)</th>
++              <th className="pr-4">Feature</th>
++              <th className="pr-4">Model</th>
++              <th className="pr-4">Outcome</th>
++              <th>Code</th>
++            </tr>
++          </thead>
++          <tbody>
++            {data.recentFailures.map((f, i) => (
++              <tr key={`${f.createdAt}-${i}`} className="border-t">
++                <td className="py-1 pr-4">{when(f.createdAt)}</td>
++                <td className="pr-4">{operationLabel(f.operation)}</td>
++                <td className="pr-4">{f.model}</td>
++                <td className="pr-4">{f.outcome === "blocked" ? "Blocked" : "Failed"}</td>
++                <td>{f.errorCode ?? ""}</td>
++              </tr>
++            ))}
++          </tbody>
++        </table>
++      )}
++
++      <p className="text-xs text-gray-500">Costs are estimates from a built-in price table, not your Anthropic or Voyage invoice.</p>
++    </div>
++  );
++}
+diff --git a/apps/web/src/app/usage/page.tsx b/apps/web/src/app/usage/page.tsx
+new file mode 100644
+index 0000000..144689a
+--- /dev/null
++++ b/apps/web/src/app/usage/page.tsx
+@@ -0,0 +1,13 @@
++import Link from "next/link";
++import { UsageClient } from "./UsageClient";
++
++export default function UsagePage() {
++  return (
++    <main className="mx-auto flex max-w-4xl flex-col gap-4 p-8">
++      <Link href="/" className="text-sm underline">← Home</Link>
++      <h1 className="text-2xl font-semibold">AI usage</h1>
++      <p className="text-sm text-gray-600">Estimated spend on AI calls this month (UTC), against your monthly budget.</p>
++      <UsageClient />
++    </main>
++  );
++}
+diff --git a/apps/web/src/lib/aiUsage/format.ts b/apps/web/src/lib/aiUsage/format.ts
+new file mode 100644
+index 0000000..133af60
+--- /dev/null
++++ b/apps/web/src/lib/aiUsage/format.ts
+@@ -0,0 +1,34 @@
++import type { AiOperation } from "@ai-career/ai";
++
++/** Whole cents; a non-zero amount under a cent shows as "<$0.01" rather than a misleading "$0.00". */
++export function formatUsd(usd: number): string {
++  if (usd > 0 && usd < 0.005) return "<$0.01";
++  return `$${usd.toFixed(2)}`;
++}
++
++/** Floored, so the badge never claims a threshold the spend has not reached. */
++export function percentOfCeiling(spentUsd: number, ceilingUsd: number): number {
++  return Math.floor((spentUsd / ceilingUsd) * 100);
++}
++
++/** Typed over every AiOperation, so adding an operation without a label is a compile error. */
++const OPERATION_LABELS: Record<AiOperation, string> = {
++  resume_extraction: "Resume extraction",
++  career_goal_parse: "Career goal parsing",
++  job_requirements_extraction: "Job requirements extraction",
++  resume_optimization: "Resume optimization",
++  company_research: "Company research",
++  pitch_generation: "Hiring manager pitch",
++  cover_letter_generation: "Cover letter",
++  interview_prep_generation: "Interview prep",
++  match_explanation: "Match explanations",
++  profile_fact_embedding: "Profile embeddings",
++  goal_embedding: "Career goal embedding",
++  job_embedding: "Job embeddings",
++  resume_similarity_embedding: "Resume similarity embedding",
++};
++
++/** Rows written by a newer build may carry an operation this build does not know: show it raw. */
++export function operationLabel(operation: string): string {
++  return (OPERATION_LABELS as Record<string, string>)[operation] ?? operation;
++}
+diff --git a/apps/web/src/lib/aiUsage/summarizeUsage.ts b/apps/web/src/lib/aiUsage/summarizeUsage.ts
+new file mode 100644
+index 0000000..a199470
+--- /dev/null
++++ b/apps/web/src/lib/aiUsage/summarizeUsage.ts
+@@ -0,0 +1,105 @@
++import { budgetState, utcMonthStart, utcNextMonthStart, type BudgetState } from "@ai-career/ai";
++
++/** The ai_calls columns the /usage view needs (never content -- the table has none). */
++export interface AiCallRow {
++  createdAt: Date;
++  operation: string;
++  provider: string;
++  model: string;
++  inputTokens: number;
++  outputTokens: number;
++  webSearchRequests: number;
++  estimatedCostUsd: number;
++  priceKnown: boolean;
++  outcome: string;
++  errorCode: string | null;
++}
++
++export interface OperationUsage {
++  operation: string;
++  /** Calls that reached the provider (ok + failed); blocked calls are counted separately. */
++  calls: number;
++  blocked: number;
++  failed: number;
++  inputTokens: number;
++  outputTokens: number;
++  webSearches: number;
++  costUsd: number;
++}
++
++export interface UsageSummary {
++  month: { start: string; resetsAt: string };
++  /** null when AI_MONTHLY_BUDGET_USD is 0 (no ceiling). */
++  ceilingUsd: number | null;
++  warnPercent: number;
++  spentUsd: number;
++  state: BudgetState;
++  byOperation: OperationUsage[];
++  byModel: { model: string; calls: number; costUsd: number }[];
++  unknownPriceModels: string[];
++  recentFailures: { createdAt: string; operation: string; model: string; outcome: string; errorCode: string | null }[];
++}
++
++const RECENT_FAILURES = 20;
++const micro = (usd: number) => Math.round(usd * 1e6);
++const fromMicro = (m: number) => m / 1e6;
++
++/**
++ * Phase 11a design §9. Pure: the route passes this month's rows. Sums run in whole micro-dollars (the
++ * column's precision) so ten $0.10 calls are exactly $1.00. Lists sort by cost, then name, for stable output.
++ */
++export function summarizeUsage(
++  rows: AiCallRow[],
++  env: { AI_MONTHLY_BUDGET_USD: number; AI_BUDGET_WARN_PERCENT: number },
++  now: Date
++): UsageSummary {
++  const spentMicro = rows.reduce((sum, r) => sum + micro(r.estimatedCostUsd), 0);
++
++  const ops = new Map<string, OperationUsage & { micro: number }>();
++  const models = new Map<string, { model: string; calls: number; micro: number }>();
++  const unknown = new Set<string>();
++  for (const r of rows) {
++    const op = ops.get(r.operation) ?? {
++      operation: r.operation, calls: 0, blocked: 0, failed: 0, inputTokens: 0, outputTokens: 0, webSearches: 0, costUsd: 0, micro: 0,
++    };
++    if (r.outcome === "blocked") {
++      op.blocked++;
++    } else {
++      op.calls++;
++      if (r.outcome !== "ok") op.failed++;
++      const m = models.get(r.model) ?? { model: r.model, calls: 0, micro: 0 };
++      m.calls++;
++      m.micro += micro(r.estimatedCostUsd);
++      models.set(r.model, m);
++      if (r.outcome === "ok" && !r.priceKnown) unknown.add(r.model);
++    }
++    op.inputTokens += r.inputTokens;
++    op.outputTokens += r.outputTokens;
++    op.webSearches += r.webSearchRequests;
++    op.micro += micro(r.estimatedCostUsd);
++    ops.set(r.operation, op);
++  }
++
++  const byCostThenName = <T extends { micro: number }>(name: (x: T) => string) => (a: T, b: T) =>
++    b.micro - a.micro || name(a).localeCompare(name(b));
++
++  return {
++    month: { start: utcMonthStart(now).toISOString(), resetsAt: utcNextMonthStart(now).toISOString() },
++    ceilingUsd: env.AI_MONTHLY_BUDGET_USD === 0 ? null : env.AI_MONTHLY_BUDGET_USD,
++    warnPercent: env.AI_BUDGET_WARN_PERCENT,
++    spentUsd: fromMicro(spentMicro),
++    state: budgetState(fromMicro(spentMicro), env),
++    byOperation: [...ops.values()]
++      .sort(byCostThenName((o) => o.operation))
++      .map(({ micro: m, ...o }) => ({ ...o, costUsd: fromMicro(m) })),
++    byModel: [...models.values()]
++      .sort(byCostThenName((x) => x.model))
++      .map(({ micro: m, ...x }) => ({ ...x, costUsd: fromMicro(m) })),
++    unknownPriceModels: [...unknown].sort(),
++    recentFailures: rows
++      .filter((r) => r.outcome !== "ok")
++      .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
++      .slice(0, RECENT_FAILURES)
++      .map((r) => ({ createdAt: r.createdAt.toISOString(), operation: r.operation, model: r.model, outcome: r.outcome, errorCode: r.errorCode })),
++  };
++}

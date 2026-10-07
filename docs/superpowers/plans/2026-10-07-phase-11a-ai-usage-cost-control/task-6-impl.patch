@@ -1,0 +1,486 @@
+diff --git a/apps/web/src/app/api/resume-optimizations/[jobId]/run/route.ts b/apps/web/src/app/api/resume-optimizations/[jobId]/run/route.ts
+index 77b84f7..005d015 100644
+--- a/apps/web/src/app/api/resume-optimizations/[jobId]/run/route.ts
++++ b/apps/web/src/app/api/resume-optimizations/[jobId]/run/route.ts
+@@ -5,6 +5,7 @@ import { closeDbClient, createDbClient } from "@ai-career/db";
+ import { createAnthropicClient } from "@ai-career/ai";
+ import { runResumeOptimization, ResumeOptimizationError } from "@ai-career/resume-optimization";
+ import { toOptimizationView } from "../../../../../lib/resumeOptimization/serializeOptimization";
++import { createUsageSink } from "../../../../../lib/aiUsage/createUsageSink";
+ 
+ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+ 
+@@ -19,6 +20,7 @@ export async function POST(_request: Request, { params }: { params: Promise<{ jo
+       userId: env.DEFAULT_USER_ID,
+       jobId,
+       anthropicClient: createAnthropicClient(env),
++      usageSink: createUsageSink(db, env),
+       env,
+     });
+     return NextResponse.json({ optimization: toOptimizationView(result.optimization, result.evaluation) }, { status: 201 });
+diff --git a/apps/web/src/lib/aiUsage/createUsageSink.ts b/apps/web/src/lib/aiUsage/createUsageSink.ts
+new file mode 100644
+index 0000000..839ff11
+--- /dev/null
++++ b/apps/web/src/lib/aiUsage/createUsageSink.ts
+@@ -0,0 +1,13 @@
++import type { Env } from "@ai-career/config";
++import { DbUsageSink, type DbClient } from "@ai-career/db";
++import { withLangfuseExport, type AiUsageSink } from "@ai-career/ai";
++
++/**
++ * The single place the web app builds its AI usage sink (Phase 11a): ai_calls rows for the local user,
++ * plus the metadata-only Langfuse export when LANGFUSE_* is configured. Typed as AiUsageSink, so the
++ * compiler checks DbUsageSink still matches the AI package's interface.
++ */
++export function createUsageSink(db: DbClient, env: Env): AiUsageSink {
++  const sink: AiUsageSink = new DbUsageSink(db, env.DEFAULT_USER_ID);
++  return withLangfuseExport(sink, env);
++}
+diff --git a/apps/web/src/lib/career-goal/saveCareerGoal.ts b/apps/web/src/lib/career-goal/saveCareerGoal.ts
+index 3a39aaa..83833f3 100644
+--- a/apps/web/src/lib/career-goal/saveCareerGoal.ts
++++ b/apps/web/src/lib/career-goal/saveCareerGoal.ts
+@@ -4,6 +4,7 @@ import type { Env } from "@ai-career/config";
+ import { ensureGoalEmbedding } from "@ai-career/matching";
+ import type { CareerGoalConstraintsInput } from "./careerGoalConstraintsSchema";
+ import { lockUserCareerGoals } from "./lockUserCareerGoals";
++import { createUsageSink } from "../aiUsage/createUsageSink";
+ 
+ export class CareerGoalNotFoundError extends Error {}
+ 
+@@ -110,7 +111,8 @@ export async function confirmCareerGoal(
+     // itself degrades to a no-op (leaves `embedding` null) on any failure; Phase 5's `runMatching`
+     // falls back to generating it lazily on the first "Find Matches" run if this ever didn't run
+     // (design doc §10's last item).
+-    await withUserContext(db, env.DEFAULT_USER_ID, (tx) => ensureGoalEmbedding(tx, env, constraintsId));
++    const usageSink = createUsageSink(db, env);
++    await withUserContext(db, env.DEFAULT_USER_ID, (tx) => ensureGoalEmbedding(tx, env, constraintsId, usageSink));
+   } finally {
+     await closeDbClient(db);
+   }
+diff --git a/apps/web/src/lib/profile/saveProfile.ts b/apps/web/src/lib/profile/saveProfile.ts
+index eecae77..45f0c6c 100644
+--- a/apps/web/src/lib/profile/saveProfile.ts
++++ b/apps/web/src/lib/profile/saveProfile.ts
+@@ -3,6 +3,7 @@ import { embedTexts } from "@ai-career/ai";
+ import type { Env } from "@ai-career/config";
+ import type { ConfirmedProfile } from "./confirmedProfileSchema";
+ import { deriveFact, type DerivedFact } from "./deriveFacts";
++import { createUsageSink } from "../aiUsage/createUsageSink";
+ 
+ type ExistingFact = {
+   contentHash: string;
+@@ -166,11 +167,12 @@ export async function saveConfirmedProfile(
+     try {
+       newEmbeddings = await embedTexts(
+         env,
+-        factsNeedingEmbedding.map((f) => f.factText)
++        factsNeedingEmbedding.map((f) => f.factText),
++        { sink: createUsageSink(db, env), operation: "profile_fact_embedding" }
+       );
+     } catch {
+-      // Spec §7: a Voyage failure must not lose the confirmed profile (already
+-      // committed above). The affected facts are written with a null embedding
++      // Spec §7: a Voyage failure -- or a call blocked by the monthly AI budget
++      // (Phase 11a) -- must not lose the confirmed profile (already committed above). The affected facts are written with a null embedding
+       // -- the column is nullable precisely so they can be back-filled later.
+       // The error itself is swallowed rather than logged because it may embed
+       // fact text (profile PII) in its message, which §6 forbids logging.
+diff --git a/packages/ai/src/embeddings.ts b/packages/ai/src/embeddings.ts
+index a8a67bd..2a49e69 100644
+--- a/packages/ai/src/embeddings.ts
++++ b/packages/ai/src/embeddings.ts
+@@ -1,28 +1,107 @@
+ import type { Env } from "@ai-career/config";
++import type { BudgetEnv } from "./usage/budget";
++import { trackAiCall } from "./usage/track";
++import type { AiOperation, AiUsageSink } from "./usage/types";
+ 
+ export class EmbeddingProviderNotImplementedError extends Error {}
+ 
++/** A non-2xx Voyage response. The message carries the status only: the body can echo the embedded text (CLAUDE.md §9). */
++export class VoyageRequestError extends Error {
++  readonly status: number;
++  constructor(status: number) {
++    super(`Voyage embeddings request failed: ${status}`);
++    this.name = "VoyageRequestError";
++    this.status = status;
++  }
++}
++
++export interface EmbedUsage {
++  sink: AiUsageSink;
++  operation: AiOperation;
++}
++
++export interface EmbedDeps {
++  fetchFn?: (url: string, init: RequestInit) => Promise<Response>;
++  sleep?: (ms: number) => Promise<void>;
++  /** [0, 1); drives the ±20% backoff jitter. */
++  random?: () => number;
++  clock?: () => number;
++}
++
++const VOYAGE_URL = "https://api.voyageai.com/v1/embeddings";
++const MAX_ATTEMPTS = 3;
++const BASE_DELAY_MS = 500;
++const MAX_RETRY_AFTER_MS = 30_000;
++
++const isRetryableStatus = (status: number) => status === 429 || status >= 500;
++
++/** Seconds-valued retry-after only (capped); an HTTP-date or garbage value falls back to exponential backoff. */
++function retryDelayMs(attempt: number, retryAfter: string | null, random: () => number): number {
++  const seconds = retryAfter === null ? NaN : Number(retryAfter.trim());
++  if (retryAfter !== null && retryAfter.trim() !== "" && Number.isFinite(seconds) && seconds >= 0) {
++    return Math.min(seconds * 1000, MAX_RETRY_AFTER_MS);
++  }
++  return Math.round(BASE_DELAY_MS * 2 ** (attempt - 1) * (0.8 + 0.4 * random()));
++}
++
++function voyageErrorCode(error: unknown): string {
++  if (error instanceof VoyageRequestError) return `voyage:${error.status}`;
++  if (error instanceof TypeError) return "network";
++  return "error";
++}
++
++/**
++ * Embeds `texts` with Voyage (Phase 11a design §7): one budget check, then up to 3 attempts retrying
++ * network errors, 429 and 5xx (never other 4xx), honouring a seconds-valued retry-after. One `ai_calls`
++ * row per call, labelled with `usage.operation`. Empty input returns [] without a call or a row.
++ */
+ export async function embedTexts(
+-  env: Pick<Env, "EMBEDDING_PROVIDER" | "VOYAGE_API_KEY" | "VOYAGE_EMBEDDING_MODEL">,
+-  texts: string[]
++  env: Pick<Env, "EMBEDDING_PROVIDER" | "VOYAGE_API_KEY" | "VOYAGE_EMBEDDING_MODEL"> & BudgetEnv,
++  texts: string[],
++  usage: EmbedUsage,
++  deps: EmbedDeps = {}
+ ): Promise<number[][]> {
+   if (texts.length === 0) return [];
+   if (env.EMBEDDING_PROVIDER !== "voyage") {
+-    throw new EmbeddingProviderNotImplementedError(
+-      `EMBEDDING_PROVIDER=${env.EMBEDDING_PROVIDER} has no implementation yet`
+-    );
++    throw new EmbeddingProviderNotImplementedError(`EMBEDDING_PROVIDER=${env.EMBEDDING_PROVIDER} has no implementation yet`);
+   }
+-  const response = await fetch("https://api.voyageai.com/v1/embeddings", {
+-    method: "POST",
+-    headers: {
+-      Authorization: `Bearer ${env.VOYAGE_API_KEY}`,
+-      "Content-Type": "application/json",
++  const fetchFn = deps.fetchFn ?? ((url: string, init: RequestInit) => fetch(url, init));
++  const sleep = deps.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
++  const random = deps.random ?? Math.random;
++
++  return trackAiCall(
++    {
++      sink: usage.sink, env, operation: usage.operation, provider: "voyage", model: env.VOYAGE_EMBEDDING_MODEL,
++      clock: deps.clock ?? Date.now, errorCodeOf: voyageErrorCode,
+     },
+-    body: JSON.stringify({ input: texts, model: env.VOYAGE_EMBEDDING_MODEL }),
+-  });
+-  if (!response.ok) {
+-    throw new Error(`Voyage embeddings request failed: ${response.status} ${await response.text()}`);
+-  }
+-  const body = (await response.json()) as { data: { embedding: number[] }[] };
+-  return body.data.map((item) => item.embedding);
++    async () => {
++      for (let attempt = 1; ; attempt++) {
++        let response: Response;
++        try {
++          response = await fetchFn(VOYAGE_URL, {
++            method: "POST",
++            headers: { Authorization: `Bearer ${env.VOYAGE_API_KEY}`, "Content-Type": "application/json" },
++            body: JSON.stringify({ input: texts, model: env.VOYAGE_EMBEDDING_MODEL }),
++          });
++        } catch (error) {
++          if (attempt >= MAX_ATTEMPTS) throw error;
++          await sleep(retryDelayMs(attempt, null, random));
++          continue;
++        }
++        if (response.ok) {
++          const body = (await response.json()) as { data: { embedding: number[] }[]; usage?: { total_tokens?: number } };
++          const totalTokens = body.usage?.total_tokens;
++          const usageReported = typeof totalTokens === "number";
++          return {
++            result: body.data.map((item) => item.embedding),
++            usage: { inputTokens: usageReported ? totalTokens : 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0, webSearchRequests: 0 },
++            usageReported,
++          };
++        }
++        await response.body?.cancel().catch(() => undefined);
++        if (!isRetryableStatus(response.status) || attempt >= MAX_ATTEMPTS) throw new VoyageRequestError(response.status);
++        await sleep(retryDelayMs(attempt, response.headers.get("retry-after"), random));
++      }
++    }
++  );
+ }
+diff --git a/packages/ai/src/index.ts b/packages/ai/src/index.ts
+index 7bf3f53..989f0e2 100644
+--- a/packages/ai/src/index.ts
++++ b/packages/ai/src/index.ts
+@@ -4,7 +4,7 @@ export { extractText } from "./textExtraction";
+ export { ResumeExtractionSchema } from "./extractionSchema";
+ export type { ResumeExtractionDraft } from "./extractionSchema";
+ export { extractProfileFromResume, createAnthropicClient, ExtractionValidationError } from "./extractProfile";
+-export { embedTexts, EmbeddingProviderNotImplementedError } from "./embeddings";
++export { embedTexts, EmbeddingProviderNotImplementedError, VoyageRequestError, type EmbedUsage, type EmbedDeps } from "./embeddings";
+ export { parseSalaryFloor } from "./parseSalaryFloor";
+ export type { ParsedSalaryFloor } from "./parseSalaryFloor";
+ export { CareerGoalExtractionSchema } from "./careerGoalExtractionSchema";
+diff --git a/packages/matching/src/embeddings/ensureGoalEmbedding.ts b/packages/matching/src/embeddings/ensureGoalEmbedding.ts
+index 7b5b12a..64a6451 100644
+--- a/packages/matching/src/embeddings/ensureGoalEmbedding.ts
++++ b/packages/matching/src/embeddings/ensureGoalEmbedding.ts
+@@ -1,5 +1,5 @@
+ import { eq } from "drizzle-orm";
+-import { embedTexts } from "@ai-career/ai";
++import { embedTexts, type AiUsageSink } from "@ai-career/ai";
+ import { schema, type DbClient } from "@ai-career/db";
+ import type { Env } from "@ai-career/config";
+ 
+@@ -9,12 +9,14 @@ const { careerGoalConstraints, careerGoals } = schema;
+  * Generates and stores `career_goal_constraints.embedding` if it is not already set. Returns the
+  * embedding (existing or freshly generated), or null if generation fails or there is no text to
+  * embed. Never throws -- a Voyage outage must not block a matching run (mirrors saveProfile.ts's
+- * "degrade to null" rule for profile_facts).
++ * "degrade to null" rule for profile_facts). A call blocked by the monthly AI budget (Phase 11a) degrades
++ * the same way; the blocked call is still recorded in ai_calls.
+  */
+ export async function ensureGoalEmbedding(
+   tx: DbClient,
+-  env: Pick<Env, "EMBEDDING_PROVIDER" | "VOYAGE_API_KEY" | "VOYAGE_EMBEDDING_MODEL">,
+-  careerGoalConstraintsId: string
++  env: Pick<Env, "EMBEDDING_PROVIDER" | "VOYAGE_API_KEY" | "VOYAGE_EMBEDDING_MODEL" | "AI_MONTHLY_BUDGET_USD">,
++  careerGoalConstraintsId: string,
++  usageSink: AiUsageSink
+ ): Promise<number[] | null> {
+   const [row] = await tx
+     .select({
+@@ -35,7 +37,7 @@ export async function ensureGoalEmbedding(
+ 
+   let embedding: number[] | null;
+   try {
+-    [embedding] = await embedTexts(env, [text]);
++    [embedding] = await embedTexts(env, [text], { sink: usageSink, operation: "goal_embedding" });
+   } catch {
+     // Swallowed on purpose: the error may echo the goal text (PII), which CLAUDE.md §9 forbids logging.
+     return null;
+diff --git a/packages/matching/src/embeddings/ensureJobEmbeddings.ts b/packages/matching/src/embeddings/ensureJobEmbeddings.ts
+index 05e9816..a72d1f2 100644
+--- a/packages/matching/src/embeddings/ensureJobEmbeddings.ts
++++ b/packages/matching/src/embeddings/ensureJobEmbeddings.ts
+@@ -1,5 +1,5 @@
+ import { eq, inArray, and, ne, isNull, or } from "drizzle-orm";
+-import { embedTexts } from "@ai-career/ai";
++import { AiBudgetExceededError, embedTexts, type AiUsageSink } from "@ai-career/ai";
+ import { schema, type DbClient } from "@ai-career/db";
+ import type { Env } from "@ai-career/config";
+ 
+@@ -31,12 +31,14 @@ function chunk<T>(items: T[], size: number): T[][] {
+  * to the rate limit). A chunk's failure leaves only that chunk's jobs' embeddings untouched -- they
+  * simply keep scoring with semanticScore's "unknown" default and are retried on the next run -- rather
+  * than one oversized, all-or-nothing request taking out every job (same "degrade, never block the
+- * run" rule as `ensureGoalEmbedding`).
++ * run" rule as `ensureGoalEmbedding`). A chunk blocked by the monthly AI budget (Phase 11a) stops the
++ * loop: every later chunk would be blocked too, so they are counted as failed without another call.
+  */
+ export async function ensureJobEmbeddings(
+   tx: DbClient,
+-  env: Pick<Env, "EMBEDDING_PROVIDER" | "VOYAGE_API_KEY" | "VOYAGE_EMBEDDING_MODEL">,
+-  jobIds: string[]
++  env: Pick<Env, "EMBEDDING_PROVIDER" | "VOYAGE_API_KEY" | "VOYAGE_EMBEDDING_MODEL" | "AI_MONTHLY_BUDGET_USD">,
++  jobIds: string[],
++  usageSink: AiUsageSink
+ ): Promise<EnsureJobEmbeddingsResult> {
+   if (jobIds.length === 0) return { embedded: 0, failed: 0 };
+ 
+@@ -54,14 +56,20 @@ export async function ensureJobEmbeddings(
+   let embedded = 0;
+   let failed = 0;
+ 
+-  for (const batch of chunk(stale, EMBEDDING_BATCH_SIZE)) {
++  const batches = chunk(stale, EMBEDDING_BATCH_SIZE);
++  for (const [batchIndex, batch] of batches.entries()) {
+     let embeddings: number[][];
+     try {
+       embeddings = await embedTexts(
+         env,
+-        batch.map((job) => `${job.title} ${job.descriptionText}`)
++        batch.map((job) => `${job.title} ${job.descriptionText}`),
++        { sink: usageSink, operation: "job_embedding" }
+       );
+-    } catch {
++    } catch (error) {
++      if (error instanceof AiBudgetExceededError) {
++        failed += batches.slice(batchIndex).reduce((n, b) => n + b.length, 0);
++        break;
++      }
+       // Swallowed: job content must never be logged (CLAUDE.md §9), and a Voyage outage on one chunk
+       // must not fail the whole matching run or take out other chunks -- these jobs simply keep
+       // scoring with semanticScore's "unknown" default and are retried next run.
+diff --git a/packages/matching/src/pipeline/runMatching.ts b/packages/matching/src/pipeline/runMatching.ts
+index 16ecaa8..774290c 100644
+--- a/packages/matching/src/pipeline/runMatching.ts
++++ b/packages/matching/src/pipeline/runMatching.ts
+@@ -1,6 +1,7 @@
+ import { and, eq, inArray, isNotNull } from "drizzle-orm";
+ import Anthropic from "@anthropic-ai/sdk";
+ import { schema, withUserContext, type DbClient } from "@ai-career/db";
++import type { AiUsageSink } from "@ai-career/ai";
+ import { evaluateEligibility } from "../eligibility/evaluateEligibility";
+ import { scoreSkills } from "../scoring/scoreSkills";
+ import { scoreExperience } from "../scoring/scoreExperience";
+@@ -44,11 +45,14 @@ export interface RunMatchingEnv {
+   MATCHING_EXPERIENCE_GRACE_YEARS: number;
+   MATCHING_FRESHNESS_HALF_LIFE_HOURS: number;
+   MATCHING_EXPLANATION_TTL_DAYS: number;
++  AI_MONTHLY_BUDGET_USD: number;
+ }
+ 
+ export interface RunMatchingOptions {
+   userId: string;
+   anthropicClient: Pick<Anthropic, "messages">;
++  /** Where this run's embedding calls are recorded and budget-checked (Phase 11a). */
++  usageSink: AiUsageSink;
+   env: RunMatchingEnv;
+   now?: () => Date;
+ }
+@@ -78,7 +82,7 @@ interface ScoredJob {
+  * after recording it -- same shape as packages/ingestion's `runIngestion`.
+  */
+ export async function runMatching(db: DbClient, opts: RunMatchingOptions): Promise<MatchingRunSummary> {
+-  const { userId, env, anthropicClient } = opts;
++  const { userId, env, anthropicClient, usageSink } = opts;
+   const now = opts.now ?? (() => new Date());
+   const inUserContext = <T>(fn: (tx: DbClient) => Promise<T>) => withUserContext(db, userId, fn);
+ 
+@@ -125,10 +129,10 @@ export async function runMatching(db: DbClient, opts: RunMatchingOptions): Promi
+     );
+     const candidateYears = profile?.yearsOfExperience ?? null;
+ 
+-    const goalEmbedding = await inUserContext((tx) => ensureGoalEmbedding(tx, env, constraints.id));
++    const goalEmbedding = await inUserContext((tx) => ensureGoalEmbedding(tx, env, constraints.id, usageSink));
+ 
+     const initialRows = await inUserContext((tx) => fetchCandidateJobs(tx, goalEmbedding));
+-    const embeddingResult = await inUserContext((tx) => ensureJobEmbeddings(tx, env, initialRows.map((r) => r.id)));
++    const embeddingResult = await inUserContext((tx) => ensureJobEmbeddings(tx, env, initialRows.map((r) => r.id), usageSink));
+     counters.embedded = embeddingResult.embedded;
+     counters.embeddingFailed = embeddingResult.failed;
+     // Re-fetch so a job embedded just now is reflected in this run's semantic similarity.
+diff --git a/packages/resume-optimization/src/pipeline/runResumeOptimization.ts b/packages/resume-optimization/src/pipeline/runResumeOptimization.ts
+index e0b6a56..fc26203 100644
+--- a/packages/resume-optimization/src/pipeline/runResumeOptimization.ts
++++ b/packages/resume-optimization/src/pipeline/runResumeOptimization.ts
+@@ -1,7 +1,7 @@
+ import { and, eq, max, sql } from "drizzle-orm";
+ import Anthropic from "@anthropic-ai/sdk";
+ import { schema, withUserContext, type DbClient } from "@ai-career/db";
+-import { embedTexts } from "@ai-career/ai";
++import { embedTexts, type AiUsageSink } from "@ai-career/ai";
+ import { ensureJobRequirements } from "../requirements/ensureJobRequirements";
+ import { JobRequirementExtractionValidationError } from "../requirements/extractJobRequirements";
+ import { buildResumeSnapshot } from "../optimization/buildResumeSnapshot";
+@@ -32,12 +32,15 @@ export interface RunResumeOptimizationEnv {
+   EMBEDDING_PROVIDER: "voyage" | "self-hosted";
+   VOYAGE_API_KEY?: string;
+   VOYAGE_EMBEDDING_MODEL: string;
++  AI_MONTHLY_BUDGET_USD: number;
+ }
+ 
+ export interface RunResumeOptimizationOptions {
+   userId: string;
+   jobId: string;
+   anthropicClient: Pick<Anthropic, "messages">;
++  /** Where the similarity-embedding call is recorded and budget-checked (Phase 11a). */
++  usageSink: AiUsageSink;
+   env: RunResumeOptimizationEnv;
+ }
+ 
+@@ -62,7 +65,7 @@ export async function runResumeOptimization(
+   db: DbClient,
+   opts: RunResumeOptimizationOptions
+ ): Promise<RunResumeOptimizationResult> {
+-  const { userId, jobId, anthropicClient, env } = opts;
++  const { userId, jobId, anthropicClient, usageSink, env } = opts;
+   const inUserContext = <T>(fn: (tx: DbClient) => Promise<T>) => withUserContext(db, userId, fn);
+ 
+   const [match] = await inUserContext((tx) => tx.select().from(jobMatches).where(eq(jobMatches.jobId, jobId)).limit(1));
+@@ -124,12 +127,12 @@ export async function runResumeOptimization(
+   let semanticSimilarity: number | null = null;
+   if (job.embedding !== null && combinedOptimizedText.trim().length > 0) {
+     try {
+-      const [resumeEmbedding] = await embedTexts(env, [combinedOptimizedText]);
++      const [resumeEmbedding] = await embedTexts(env, [combinedOptimizedText], { sink: usageSink, operation: "resume_similarity_embedding" });
+       semanticSimilarity = scoreSemanticSimilarity(job.embedding, resumeEmbedding ?? null);
+     } catch {
+-      // Same "degrade, never block" rule as ensureJobEmbeddings: a Voyage outage leaves
+-      // semanticSimilarity null (computeOverallScore redistributes its weight) rather than failing
+-      // the whole optimization.
++      // Same "degrade, never block" rule as ensureJobEmbeddings: a Voyage outage -- or a call blocked by
++      // the monthly AI budget (Phase 11a) -- leaves semanticSimilarity null (computeOverallScore
++      // redistributes its weight) rather than failing the whole optimization.
+       semanticSimilarity = null;
+     }
+   }
+diff --git a/services/matching-worker/src/main.ts b/services/matching-worker/src/main.ts
+index d89dc44..ec29e3c 100644
+--- a/services/matching-worker/src/main.ts
++++ b/services/matching-worker/src/main.ts
+@@ -1,7 +1,7 @@
+ import IORedis from "ioredis";
+ import { loadEnv } from "@ai-career/config";
+-import { closeDbClient, createDbClient } from "@ai-career/db";
+-import { createAnthropicClient } from "@ai-career/ai";
++import { DbUsageSink, closeDbClient, createDbClient } from "@ai-career/db";
++import { createAnthropicClient, withLangfuseExport, type AiUsageSink } from "@ai-career/ai";
+ import { createMatchingWorker } from "./worker";
+ 
+ const log = (event: string, fields: Record<string, unknown> = {}) =>
+@@ -20,7 +20,10 @@ async function main(): Promise<void> {
+   const connection = new IORedis(env.REDIS_URL, { maxRetriesPerRequest: null });
+   const anthropicClient = createAnthropicClient(env);
+ 
+-  const worker = createMatchingWorker({ connection, db, anthropicClient, env });
++  // Typed as AiUsageSink so the compiler checks DbUsageSink still matches the AI package's interface.
++  const usageSinkFor = (userId: string): AiUsageSink => withLangfuseExport(new DbUsageSink(db, userId), env);
++
++  const worker = createMatchingWorker({ connection, db, anthropicClient, usageSinkFor, env });
+   worker.on("completed", (job) => log("matching_completed", { jobId: job.id }));
+   worker.on("failed", (job, error) => log("matching_failed", { jobId: job?.id, error: safeErrorLabel(error) }));
+   log("worker_started", {});
+diff --git a/services/matching-worker/src/worker.ts b/services/matching-worker/src/worker.ts
+index bc663ed..47fdb9e 100644
+--- a/services/matching-worker/src/worker.ts
++++ b/services/matching-worker/src/worker.ts
+@@ -1,12 +1,15 @@
+ import { Worker, UnrecoverableError, type ConnectionOptions } from "bullmq";
+ import type Anthropic from "@anthropic-ai/sdk";
+ import type { DbClient } from "@ai-career/db";
++import type { AiUsageSink } from "@ai-career/ai";
+ import { MATCHING_QUEUE_NAME, MatchingError, runMatching, type MatchingJobData, type RunMatchingEnv } from "@ai-career/matching";
+ 
+ export interface MatchingWorkerDeps {
+   connection: ConnectionOptions;
+   db: DbClient;
+   anthropicClient: Pick<Anthropic, "messages">;
++  /** Builds the AI usage sink for the user a job runs for (Phase 11a): ai_calls rows are per user. */
++  usageSinkFor: (userId: string) => AiUsageSink;
+   env: RunMatchingEnv;
+   /** Overridable so tests use an isolated queue. */
+   queueName?: string;
+@@ -23,7 +26,12 @@ export function createMatchingWorker(deps: MatchingWorkerDeps): Worker<MatchingJ
+     deps.queueName ?? MATCHING_QUEUE_NAME,
+     async (job) => {
+       try {
+-        await runMatching(deps.db, { userId: job.data.userId, anthropicClient: deps.anthropicClient, env: deps.env });
++        await runMatching(deps.db, {
++          userId: job.data.userId,
++          anthropicClient: deps.anthropicClient,
++          usageSink: deps.usageSinkFor(job.data.userId),
++          env: deps.env,
++        });
+       } catch (error) {
+         if (error instanceof MatchingError && error.errorClass === "no_active_goal") {
+           throw new UnrecoverableError(error.errorClass);

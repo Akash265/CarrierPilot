@@ -1,0 +1,263 @@
+diff --git a/packages/ai/src/index.ts b/packages/ai/src/index.ts
+index dcd8926..7bf3f53 100644
+--- a/packages/ai/src/index.ts
++++ b/packages/ai/src/index.ts
+@@ -10,3 +10,4 @@ export type { ParsedSalaryFloor } from "./parseSalaryFloor";
+ export { CareerGoalExtractionSchema } from "./careerGoalExtractionSchema";
+ export type { CareerGoalExtractionDraft } from "./careerGoalExtractionSchema";
+ export { extractCareerGoal, CareerGoalExtractionValidationError } from "./extractCareerGoal";
++export * from "./usage";
+diff --git a/packages/ai/src/usage/budget.ts b/packages/ai/src/usage/budget.ts
+new file mode 100644
+index 0000000..d0cc359
+--- /dev/null
++++ b/packages/ai/src/usage/budget.ts
+@@ -0,0 +1,56 @@
++import type { AiUsageSink } from "./types";
++
++/** The ceiling resets on the UTC calendar month (design §5): deterministic and testable, at most hours off local time. */
++export function utcMonthStart(now: Date): Date {
++  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
++}
++
++export function utcNextMonthStart(now: Date): Date {
++  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1));
++}
++
++/**
++ * Thrown before contacting the provider when this month's estimated spend has reached the ceiling.
++ * Deliberately NOT an Anthropic.APIError, so the call sites that turn APIError into a degraded or cached
++ * "failed" result (company research, match explanations) let it through -- see design §3.3.
++ */
++export class AiBudgetExceededError extends Error {
++  readonly spentUsd: number;
++  readonly ceilingUsd: number;
++  readonly resetsAt: Date;
++  constructor(spentUsd: number, ceilingUsd: number, resetsAt: Date) {
++    super("ai_budget_exceeded");
++    this.name = "AiBudgetExceededError";
++    this.spentUsd = spentUsd;
++    this.ceilingUsd = ceilingUsd;
++    this.resetsAt = resetsAt;
++  }
++}
++
++export interface BudgetEnv {
++  AI_MONTHLY_BUDGET_USD: number;
++}
++
++/**
++ * Resolves when a new call may proceed. A 0 ceiling means unlimited and skips the query. A spend query
++ * that throws is rethrown unchanged: the caller blocks the call (fail closed -- an unenforceable ceiling
++ * must not silently become no ceiling). Check-then-call is not atomic: concurrent in-flight calls can
++ * overshoot by their own cost (accepted, design §5).
++ */
++export async function checkBudget(sink: AiUsageSink, env: BudgetEnv, now: Date): Promise<void> {
++  const ceilingUsd = env.AI_MONTHLY_BUDGET_USD;
++  if (ceilingUsd === 0) return;
++  const spentUsd = await sink.spendSinceUsd(utcMonthStart(now));
++  if (spentUsd >= ceilingUsd) throw new AiBudgetExceededError(spentUsd, ceilingUsd, utcNextMonthStart(now));
++}
++
++export type BudgetState = "unlimited" | "ok" | "warn" | "over";
++
++/** Compared as spent*100 vs ceiling*percent, so 16 of 20 at 80% is exactly "warn" with no float division. */
++export function budgetState(spentUsd: number, env: BudgetEnv & { AI_BUDGET_WARN_PERCENT: number }): BudgetState {
++  const ceilingUsd = env.AI_MONTHLY_BUDGET_USD;
++  if (ceilingUsd === 0) return "unlimited";
++  if (spentUsd >= ceilingUsd) return "over";
++  if (spentUsd * 100 >= ceilingUsd * env.AI_BUDGET_WARN_PERCENT) return "warn";
++  return "ok";
++}
+diff --git a/packages/ai/src/usage/index.ts b/packages/ai/src/usage/index.ts
+new file mode 100644
+index 0000000..6ea281c
+--- /dev/null
++++ b/packages/ai/src/usage/index.ts
+@@ -0,0 +1,7 @@
++export { AI_OPERATIONS, ZERO_USAGE } from "./types";
++export type { AiOperation, AiProvider, AiCallOutcome, AiCallEvent, AiUsageSink, UsageCounts } from "./types";
++export { NoopUsageSink } from "./noopSink";
++export { MODEL_PRICES, findPrice, estimateCostUsd, type ModelPrice } from "./prices";
++export {
++  AiBudgetExceededError, checkBudget, budgetState, utcMonthStart, utcNextMonthStart, type BudgetEnv, type BudgetState,
++} from "./budget";
+diff --git a/packages/ai/src/usage/noopSink.ts b/packages/ai/src/usage/noopSink.ts
+new file mode 100644
+index 0000000..0a804bc
+--- /dev/null
++++ b/packages/ai/src/usage/noopSink.ts
+@@ -0,0 +1,7 @@
++import type { AiUsageSink } from "./types";
++
++/** For evals and unit tests: never blocks (spend is always 0), records nothing. */
++export const NoopUsageSink: AiUsageSink = Object.freeze({
++  spendSinceUsd: async () => 0,
++  record: async () => undefined,
++});
+diff --git a/packages/ai/src/usage/prices.ts b/packages/ai/src/usage/prices.ts
+new file mode 100644
+index 0000000..86c915c
+--- /dev/null
++++ b/packages/ai/src/usage/prices.ts
+@@ -0,0 +1,82 @@
++import type { AiProvider, UsageCounts } from "./types";
++
++/**
++ * Phase 11a cost estimates (design §4.2). USD per million tokens. Sources, checked 2026-10-07:
++ * Anthropic model pricing (claude-api reference, cached 2026-06-24), Anthropic web-search docs
++ * ($10 per 1,000 searches), Voyage pricing page. These are ESTIMATES, not the invoice -- the /usage
++ * page says so. When a price changes or a model is added, edit this table; an unpriced model is never
++ * free (see UNKNOWN_* below).
++ */
++export interface ModelPrice {
++  provider: AiProvider;
++  /** Matches the model id exactly, or as a prefix followed by "-" (so dated ids match their family). */
++  prefix: string;
++  inputPerMTok: number;
++  /** 0 for embedding models, which have no output tokens. */
++  outputPerMTok: number;
++}
++
++export const MODEL_PRICES: readonly ModelPrice[] = Object.freeze([
++  { provider: "anthropic", prefix: "claude-haiku-4-5", inputPerMTok: 1, outputPerMTok: 5 },
++  { provider: "anthropic", prefix: "claude-sonnet-4-6", inputPerMTok: 3, outputPerMTok: 15 },
++  { provider: "anthropic", prefix: "claude-sonnet-5", inputPerMTok: 2, outputPerMTok: 10 },
++  { provider: "anthropic", prefix: "claude-opus-4-6", inputPerMTok: 5, outputPerMTok: 25 },
++  { provider: "anthropic", prefix: "claude-opus-4-7", inputPerMTok: 5, outputPerMTok: 25 },
++  { provider: "anthropic", prefix: "claude-opus-4-8", inputPerMTok: 5, outputPerMTok: 25 },
++  { provider: "anthropic", prefix: "claude-opus-5", inputPerMTok: 5, outputPerMTok: 25 },
++  { provider: "anthropic", prefix: "claude-opus-5-5", inputPerMTok: 4, outputPerMTok: 20 },
++  { provider: "anthropic", prefix: "claude-fable-5", inputPerMTok: 10, outputPerMTok: 50 },
++  { provider: "voyage", prefix: "voyage-3.5", inputPerMTok: 0.06, outputPerMTok: 0 },
++  { provider: "voyage", prefix: "voyage-3.5-lite", inputPerMTok: 0.02, outputPerMTok: 0 },
++]);
++
++/** Prompt-cache multipliers on the input rate (5-minute TTL writes -- the only TTL this app could use). */
++export const CACHE_READ_MULTIPLIER = 0.1;
++export const CACHE_WRITE_MULTIPLIER = 1.25;
++/** $10 per 1,000 searches, in micro-dollars per search. */
++export const WEB_SEARCH_MICRO_USD = 10_000;
++
++function matchesPrefix(model: string, prefix: string): boolean {
++  return model === prefix || model.startsWith(`${prefix}-`);
++}
++
++/** The longest matching prefix for this provider, or null. */
++export function findPrice(provider: AiProvider, model: string): ModelPrice | null {
++  let best: ModelPrice | null = null;
++  for (const price of MODEL_PRICES) {
++    if (price.provider !== provider || !matchesPrefix(model, price.prefix)) continue;
++    if (!best || price.prefix.length > best.prefix.length) best = price;
++  }
++  return best;
++}
++
++/** An unknown model is priced at the provider's most expensive known rates, so a model swap can never look free. */
++function mostExpensive(provider: AiProvider): ModelPrice {
++  const candidates = MODEL_PRICES.filter((p) => p.provider === provider);
++  return {
++    provider,
++    prefix: "(unknown)",
++    inputPerMTok: Math.max(...candidates.map((p) => p.inputPerMTok)),
++    outputPerMTok: Math.max(...candidates.map((p) => p.outputPerMTok)),
++  };
++}
++
++/**
++ * $X per million tokens is X micro-dollars per token, so the sum below is in micro-dollars; it is rounded
++ * to whole micro-dollars (the column is numeric(12,6)) before converting to dollars.
++ */
++export function estimateCostUsd(
++  provider: AiProvider,
++  model: string,
++  usage: UsageCounts
++): { costUsd: number; priceKnown: boolean } {
++  const known = findPrice(provider, model);
++  const price = known ?? mostExpensive(provider);
++  const microUsd =
++    usage.inputTokens * price.inputPerMTok +
++    usage.outputTokens * price.outputPerMTok +
++    usage.cacheReadTokens * price.inputPerMTok * CACHE_READ_MULTIPLIER +
++    usage.cacheCreationTokens * price.inputPerMTok * CACHE_WRITE_MULTIPLIER +
++    usage.webSearchRequests * WEB_SEARCH_MICRO_USD;
++  return { costUsd: Math.round(microUsd) / 1e6, priceKnown: known !== null };
++}
+diff --git a/packages/ai/src/usage/types.ts b/packages/ai/src/usage/types.ts
+new file mode 100644
+index 0000000..53467a7
+--- /dev/null
++++ b/packages/ai/src/usage/types.ts
+@@ -0,0 +1,72 @@
++/**
++ * Phase 11a (design §3.1). Every Anthropic `messages.create` and every Voyage embedding request is
++ * labelled with the product operation that spent the money. A new operation is added here (and only
++ * here): `ai_calls.operation` is plain text, not a CHECK, so no migration is needed.
++ */
++export const AI_OPERATIONS = [
++  "resume_extraction",
++  "career_goal_parse",
++  "job_requirements_extraction",
++  "resume_optimization",
++  "company_research",
++  "pitch_generation",
++  "cover_letter_generation",
++  "interview_prep_generation",
++  "match_explanation",
++  "profile_fact_embedding",
++  "goal_embedding",
++  "job_embedding",
++  "resume_similarity_embedding",
++] as const;
++
++export type AiOperation = (typeof AI_OPERATIONS)[number];
++
++export type AiProvider = "anthropic" | "voyage";
++
++/** Transport outcome only (design §2.7): schema-validation failures stay with each call site's *ValidationError. */
++export type AiCallOutcome = "ok" | "api_error" | "blocked";
++
++export interface UsageCounts {
++  inputTokens: number;
++  outputTokens: number;
++  cacheReadTokens: number;
++  cacheCreationTokens: number;
++  webSearchRequests: number;
++}
++
++/**
++ * One row of `ai_calls`. Carries metadata only -- never prompt text, response text, or any profile field
++ * (CLAUDE.md §9). `errorCode` is a short code (e.g. `anthropic:429`, `voyage:503`, `network`), never an
++ * error message, because provider messages can echo request content.
++ */
++export interface AiCallEvent extends UsageCounts {
++  id: string;
++  createdAt: Date;
++  operation: AiOperation;
++  provider: AiProvider;
++  model: string;
++  latencyMs: number;
++  estimatedCostUsd: number;
++  priceKnown: boolean;
++  outcome: AiCallOutcome;
++  errorCode: string | null;
++}
++
++/**
++ * Where usage goes. Property (not method) syntax on purpose: it makes TypeScript check parameter types
++ * contravariantly, so a structurally-declared implementation elsewhere (packages/db's DbUsageSink, which
++ * does not import this package) fails to compile if the two shapes drift.
++ */
++export interface AiUsageSink {
++  /** Sum of estimated_cost_usd for calls created at or after `since`. */
++  spendSinceUsd: (since: Date) => Promise<number>;
++  record: (event: AiCallEvent) => Promise<void>;
++}
++
++export const ZERO_USAGE: UsageCounts = Object.freeze({
++  inputTokens: 0,
++  outputTokens: 0,
++  cacheReadTokens: 0,
++  cacheCreationTokens: 0,
++  webSearchRequests: 0,
++});

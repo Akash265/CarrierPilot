@@ -1,0 +1,441 @@
+diff --git a/apps/web/src/app/api/health/route.test.ts b/apps/web/src/app/api/health/route.test.ts
+index d8c8fc5..7a28282 100644
+--- a/apps/web/src/app/api/health/route.test.ts
++++ b/apps/web/src/app/api/health/route.test.ts
+@@ -1,4 +1,11 @@
+-import { describe, it, expect, vi } from "vitest";
++import { describe, it, expect, vi, beforeEach } from "vitest";
++
++const { envState } = vi.hoisted(() => ({ envState: { current: {} as Record<string, unknown> } }));
++vi.mock("@ai-career/config", () => ({ loadEnv: () => envState.current }));
++const BASE_ENV = { REDIS_URL: "redis://localhost:6379" };
++beforeEach(() => {
++  envState.current = { ...BASE_ENV };
++});
+ 
+ vi.mock("@ai-career/db", () => ({
+   createDbClient: () => ({
+@@ -24,6 +31,16 @@ describe("GET /api/health", () => {
+     expect(body).toEqual({
+       status: "ok",
+       checks: { database: true, redis: true },
++      aiUsage: { langfuseEnabled: false, langfuseExportFailures: 0 },
+     });
+   });
++
++  it("reports Langfuse export as enabled when it is configured, without affecting status", async () => {
++    envState.current = {
++      ...BASE_ENV, LANGFUSE_HOST: "https://cloud.langfuse.com", LANGFUSE_PUBLIC_KEY: "pk", LANGFUSE_SECRET_KEY: "sk",
++    };
++    const res = await GET();
++    expect(res.status).toBe(200);
++    expect((await res.json()).aiUsage).toEqual({ langfuseEnabled: true, langfuseExportFailures: 0 });
++  });
+ });
+diff --git a/apps/web/src/app/api/usage/route.test.ts b/apps/web/src/app/api/usage/route.test.ts
+new file mode 100644
+index 0000000..5dbe2f3
+--- /dev/null
++++ b/apps/web/src/app/api/usage/route.test.ts
+@@ -0,0 +1,68 @@
++import { describe, it, expect, vi, beforeAll, beforeEach, afterAll } from "vitest";
++import type postgres from "postgres";
++import { openAdminDb } from "../../../test/jobsDb";
++
++// Phase 11a test user …0b04 (verified unused repo-wide on 2026-10-07); …0b05 is another user's row.
++const USER = "00000000-0000-0000-0000-000000000b04";
++const OTHER = "00000000-0000-0000-0000-000000000b05";
++
++vi.mock("@ai-career/config", () => ({
++  loadEnv: () => ({
++    DEFAULT_USER_ID: "00000000-0000-0000-0000-000000000b04",
++    DATABASE_URL: process.env.TEST_APP_DATABASE_URL ?? "postgres://career_intel_app:career_intel_app@localhost:5432/career_intel_test",
++    AI_MONTHLY_BUDGET_USD: 2,
++    AI_BUDGET_WARN_PERCENT: 80,
++  }),
++}));
++
++let admin: postgres.Sql;
++const wipe = () => admin`DELETE FROM ai_calls WHERE user_id IN (${USER}, ${OTHER})`;
++
++beforeAll(async () => {
++  admin = await openAdminDb();
++});
++beforeEach(wipe);
++afterAll(async () => {
++  await wipe();
++  await admin.end();
++});
++
++async function insertCall(userId: string, o: { createdAt: Date; operation: string; cost: number; outcome?: string; errorCode?: string | null }) {
++  await admin`
++    INSERT INTO ai_calls (user_id, created_at, operation, provider, model, input_tokens, output_tokens, latency_ms, estimated_cost_usd, price_known, outcome, error_code)
++    VALUES (${userId}, ${o.createdAt.toISOString()}::timestamptz, ${o.operation}, 'anthropic', 'claude-haiku-4-5-20251001', 10, 5, 100, ${o.cost}, true,
++            ${o.outcome ?? "ok"}, ${o.errorCode ?? null})`;
++}
++
++const { GET } = await import("./route");
++
++describe("GET /api/usage", () => {
++  it("summarizes only this UTC month's calls for the current user", async () => {
++    const now = new Date();
++    const thisMonth = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1, 0, 0, 1));
++    const lastMonth = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1) - 1000);
++    await insertCall(USER, { createdAt: thisMonth, operation: "pitch_generation", cost: 1.25 });
++    await insertCall(USER, { createdAt: thisMonth, operation: "pitch_generation", cost: 0, outcome: "blocked", errorCode: "budget_exceeded" });
++    await insertCall(USER, { createdAt: lastMonth, operation: "pitch_generation", cost: 50 });
++    await insertCall(OTHER, { createdAt: thisMonth, operation: "pitch_generation", cost: 9 });
++
++    const res = await GET();
++    expect(res.status).toBe(200);
++    const body = await res.json();
++
++    expect(body).toMatchObject({ ceilingUsd: 2, warnPercent: 80, spentUsd: 1.25, state: "ok" });
++    expect(body.byOperation).toEqual([
++      { operation: "pitch_generation", calls: 1, blocked: 1, failed: 0, inputTokens: 20, outputTokens: 10, webSearches: 0, costUsd: 1.25 },
++    ]);
++    expect(body.recentFailures).toEqual([
++      { createdAt: thisMonth.toISOString(), operation: "pitch_generation", model: "claude-haiku-4-5-20251001", outcome: "blocked", errorCode: "budget_exceeded" },
++    ]);
++  });
++
++  it("reports warn and over against the configured ceiling", async () => {
++    await insertCall(USER, { createdAt: new Date(), operation: "match_explanation", cost: 1.6 });
++    expect((await (await GET()).json()).state).toBe("warn");
++    await insertCall(USER, { createdAt: new Date(), operation: "match_explanation", cost: 0.4 });
++    expect((await (await GET()).json()).state).toBe("over");
++  });
++});
+diff --git a/apps/web/src/app/page.test.tsx b/apps/web/src/app/page.test.tsx
+index 0de768b..05ba309 100644
+--- a/apps/web/src/app/page.test.tsx
++++ b/apps/web/src/app/page.test.tsx
+@@ -1,17 +1,27 @@
+ // @vitest-environment jsdom
+-import { describe, it, expect, vi } from "vitest";
++import { describe, it, expect, vi, beforeEach } from "vitest";
+ import { render, screen } from "@testing-library/react";
+ 
+ vi.mock("@ai-career/config", () => ({ loadEnv: () => ({ NODE_ENV: "test" }) }));
+ 
+ import Home from "./page";
+ 
++function serveUsage(body: unknown, ok = true) {
++  vi.stubGlobal("fetch", vi.fn(() => Promise.resolve({ ok, status: ok ? 200 : 500, json: async () => body } as Response)));
++}
++const usage = (spentUsd: number, state: string, ceilingUsd: number | null = 20) => ({ spentUsd, state, ceilingUsd });
++
++beforeEach(() => {
++  vi.unstubAllGlobals();
++  serveUsage(usage(1, "ok"));
++});
++
+ describe("Home", () => {
+   it("links to each step of the user journey, in order", () => {
+     render(<Home />);
+ 
+     const links = screen.getAllByRole("link");
+-    expect(links.map((a) => a.getAttribute("href"))).toEqual(["/profile", "/career-goal", "/sources", "/jobs", "/matches", "/applications", "/insights"]);
++    expect(links.map((a) => a.getAttribute("href"))).toEqual(["/profile", "/career-goal", "/sources", "/jobs", "/matches", "/applications", "/insights", "/usage"]);
+     expect(screen.getByRole("link", { name: /candidate profile/i })).toHaveAttribute("href", "/profile");
+     expect(screen.getByRole("link", { name: /describe the roles you want/i })).toHaveAttribute("href", "/career-goal");
+     expect(screen.getByRole("link", { name: /job sources/i })).toHaveAttribute("href", "/sources");
+@@ -19,6 +29,37 @@ describe("Home", () => {
+     expect(screen.getByRole("link", { name: /jobs ranked against your career goal/i })).toHaveAttribute("href", "/matches");
+     expect(screen.getByRole("link", { name: /track what you've applied to/i })).toHaveAttribute("href", "/applications");
+     expect(screen.getByRole("link", { name: /which applications get responses/i })).toHaveAttribute("href", "/insights");
++    expect(screen.getByRole("link", { name: /estimated spend against your monthly budget/i })).toHaveAttribute("href", "/usage");
++  });
++
++  it("shows no AI budget badge while spend is under the warn threshold", async () => {
++    render(<Home />);
++    await vi.waitFor(() => expect(fetch).toHaveBeenCalledWith("/api/usage"));
++    expect(screen.queryByText(/AI budget/)).not.toBeInTheDocument();
++  });
++
++  it("badges the AI usage link with the floored percentage once spend passes the warn threshold", async () => {
++    serveUsage(usage(16.99, "warn"));
++    render(<Home />);
++    expect(await screen.findByText("84% of AI budget")).toBeInTheDocument();
++  });
++
++  it("badges the AI usage link when the budget is reached", async () => {
++    serveUsage(usage(20, "over"));
++    render(<Home />);
++    expect(await screen.findByText("AI budget reached")).toBeInTheDocument();
++  });
++
++  it("shows no badge with no ceiling, or when usage cannot be loaded", async () => {
++    serveUsage(usage(500, "unlimited", null));
++    const { unmount } = render(<Home />);
++    await vi.waitFor(() => expect(fetch).toHaveBeenCalled());
++    expect(screen.queryByText(/AI budget/)).not.toBeInTheDocument();
++    unmount();
++    serveUsage({}, false);
++    render(<Home />);
++    await vi.waitFor(() => expect(fetch).toHaveBeenCalled());
++    expect(screen.queryByText(/AI budget/)).not.toBeInTheDocument();
+   });
+ 
+   it("no longer describes the app as a foundation-phase shell", () => {
+diff --git a/apps/web/src/app/usage/UsageClient.test.tsx b/apps/web/src/app/usage/UsageClient.test.tsx
+new file mode 100644
+index 0000000..af622dc
+--- /dev/null
++++ b/apps/web/src/app/usage/UsageClient.test.tsx
+@@ -0,0 +1,117 @@
++// @vitest-environment jsdom
++import { describe, it, expect, vi, beforeEach } from "vitest";
++import { render, screen, within } from "@testing-library/react";
++import { UsageClient } from "./UsageClient";
++import type { UsageSummary } from "../../lib/aiUsage/summarizeUsage";
++
++beforeEach(() => vi.unstubAllGlobals());
++
++function summary(over: Partial<UsageSummary> = {}): UsageSummary {
++  return {
++    month: { start: "2026-10-01T00:00:00.000Z", resetsAt: "2026-11-01T00:00:00.000Z" },
++    ceilingUsd: 20,
++    warnPercent: 80,
++    spentUsd: 3.5,
++    state: "ok",
++    byOperation: [
++      { operation: "company_research", calls: 2, blocked: 0, failed: 0, inputTokens: 12000, outputTokens: 3000, webSearches: 8, costUsd: 3.2 },
++      { operation: "match_explanation", calls: 30, blocked: 1, failed: 2, inputTokens: 1500, outputTokens: 900, webSearches: 0, costUsd: 0.3 },
++    ],
++    byModel: [
++      { model: "claude-sonnet-5", calls: 2, costUsd: 3.2 },
++      { model: "claude-haiku-4-5-20251001", calls: 30, costUsd: 0.3 },
++    ],
++    unknownPriceModels: [],
++    recentFailures: [],
++    ...over,
++  };
++}
++
++function serve(body: unknown, ok = true) {
++  vi.stubGlobal("fetch", vi.fn(() => Promise.resolve({ ok, status: ok ? 200 : 500, json: async () => body } as Response)));
++}
++
++describe("UsageClient", () => {
++  it("shows spend against the ceiling with a progress bar and the reset date", async () => {
++    serve(summary());
++    render(<UsageClient />);
++    expect(await screen.findByText("$3.50 of $20.00 this month")).toBeInTheDocument();
++    expect(screen.getByRole("progressbar", { name: "Share of monthly AI budget used" })).toHaveAttribute("aria-valuenow", "17");
++    expect(screen.getByText("Resets 2026-11-01 (UTC).")).toBeInTheDocument();
++    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
++  });
++
++  it("breaks spend down by feature (readable names) and by model", async () => {
++    serve(summary());
++    render(<UsageClient />);
++    const byFeature = await screen.findByRole("table", { name: "By feature" });
++    const rows = within(byFeature).getAllByRole("row").slice(1).map((r) => within(r).getAllByRole("cell").map((c) => c.textContent));
++    expect(rows).toEqual([
++      ["Company research", "2", "0", "0", "12,000", "3,000", "8", "$3.20"],
++      ["Match explanations", "30", "1", "2", "1,500", "900", "0", "$0.30"],
++    ]);
++    const byModel = screen.getByRole("table", { name: "By model" });
++    expect(within(byModel).getByText("claude-sonnet-5")).toBeInTheDocument();
++  });
++
++  it("warns past the warn percent", async () => {
++    serve(summary({ spentUsd: 16.5, state: "warn" }));
++    render(<UsageClient />);
++    expect(await screen.findByText("Over 80% of your monthly AI budget.")).toBeInTheDocument();
++  });
++
++  it("says new calls are blocked once the ceiling is reached, and caps the bar at 100", async () => {
++    serve(summary({ spentUsd: 21, state: "over" }));
++    render(<UsageClient />);
++    expect(await screen.findByRole("alert")).toHaveTextContent(
++      "Monthly AI budget reached. New AI calls are blocked until 2026-11-01 (UTC) or until AI_MONTHLY_BUDGET_USD is raised."
++    );
++    expect(screen.getByRole("progressbar")).toHaveAttribute("aria-valuenow", "100");
++  });
++
++  it("shows spend without a bar when there is no ceiling", async () => {
++    serve(summary({ ceilingUsd: null, state: "unlimited" }));
++    render(<UsageClient />);
++    expect(await screen.findByText("$3.50 this month · no monthly ceiling")).toBeInTheDocument();
++    expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
++  });
++
++  it("names models priced at the fallback rate", async () => {
++    serve(summary({ unknownPriceModels: ["claude-future-9"] }));
++    render(<UsageClient />);
++    expect(
++      await screen.findByText("No price is configured for claude-future-9; its cost is estimated at the most expensive known rate.")
++    ).toBeInTheDocument();
++  });
++
++  it("lists recent failed and blocked calls with their codes", async () => {
++    serve(
++      summary({
++        recentFailures: [
++          { createdAt: "2026-10-07T09:15:00.000Z", operation: "pitch_generation", model: "claude-haiku-4-5-20251001", outcome: "blocked", errorCode: "budget_exceeded" },
++          { createdAt: "2026-10-06T08:00:00.000Z", operation: "job_embedding", model: "voyage-3.5", outcome: "api_error", errorCode: "voyage:503" },
++        ],
++      })
++    );
++    render(<UsageClient />);
++    const table = await screen.findByRole("table", { name: "Recent failed and blocked calls" });
++    const rows = within(table).getAllByRole("row").slice(1).map((r) => within(r).getAllByRole("cell").map((c) => c.textContent));
++    expect(rows).toEqual([
++      ["2026-10-07 09:15", "Hiring manager pitch", "claude-haiku-4-5-20251001", "Blocked", "budget_exceeded"],
++      ["2026-10-06 08:00", "Job embeddings", "voyage-3.5", "Failed", "voyage:503"],
++    ]);
++  });
++
++  it("says when there have been no calls, and always labels costs as estimates", async () => {
++    serve(summary({ spentUsd: 0, byOperation: [], byModel: [] }));
++    render(<UsageClient />);
++    expect(await screen.findByText("No AI calls yet this month.")).toBeInTheDocument();
++    expect(screen.getByText("Costs are estimates from a built-in price table, not your Anthropic or Voyage invoice.")).toBeInTheDocument();
++  });
++
++  it("shows an error when the summary cannot be loaded", async () => {
++    serve({}, false);
++    render(<UsageClient />);
++    expect(await screen.findByText("Could not load AI usage.")).toBeInTheDocument();
++  });
++});
+diff --git a/apps/web/src/lib/aiUsage/format.test.ts b/apps/web/src/lib/aiUsage/format.test.ts
+new file mode 100644
+index 0000000..4735e8c
+--- /dev/null
++++ b/apps/web/src/lib/aiUsage/format.test.ts
+@@ -0,0 +1,30 @@
++import { describe, it, expect } from "vitest";
++import { AI_OPERATIONS } from "@ai-career/ai";
++import { formatUsd, operationLabel, percentOfCeiling } from "./format";
++
++describe("formatUsd", () => {
++  it("shows whole cents, and a sub-cent amount as <$0.01", () => {
++    expect(formatUsd(0)).toBe("$0.00");
++    expect(formatUsd(0.004)).toBe("<$0.01");
++    expect(formatUsd(0.005)).toBe("$0.01");
++    expect(formatUsd(12.345)).toBe("$12.35");
++  });
++});
++
++describe("percentOfCeiling", () => {
++  it("floors, so 79.9% is never shown as 80%", () => {
++    expect(percentOfCeiling(15.98, 20)).toBe(79);
++    expect(percentOfCeiling(16, 20)).toBe(80);
++    expect(percentOfCeiling(25, 20)).toBe(125);
++  });
++});
++
++describe("operationLabel", () => {
++  it("has a readable label for every operation", () => {
++    for (const op of AI_OPERATIONS) expect(operationLabel(op)).not.toBe(op);
++  });
++
++  it("falls back to the raw name for an operation it does not know", () => {
++    expect(operationLabel("future_operation")).toBe("future_operation");
++  });
++});
+diff --git a/apps/web/src/lib/aiUsage/summarizeUsage.test.ts b/apps/web/src/lib/aiUsage/summarizeUsage.test.ts
+new file mode 100644
+index 0000000..def1e88
+--- /dev/null
++++ b/apps/web/src/lib/aiUsage/summarizeUsage.test.ts
+@@ -0,0 +1,96 @@
++import { describe, it, expect } from "vitest";
++import { summarizeUsage, type AiCallRow } from "./summarizeUsage";
++
++const NOW = new Date("2026-10-07T12:00:00Z");
++const ENV = { AI_MONTHLY_BUDGET_USD: 20, AI_BUDGET_WARN_PERCENT: 80 };
++
++const row = (o: Partial<AiCallRow> = {}): AiCallRow => ({
++  createdAt: new Date("2026-10-05T10:00:00Z"),
++  operation: "match_explanation",
++  provider: "anthropic",
++  model: "claude-haiku-4-5-20251001",
++  inputTokens: 100,
++  outputTokens: 10,
++  webSearchRequests: 0,
++  estimatedCostUsd: 0.1,
++  priceKnown: true,
++  outcome: "ok",
++  errorCode: null,
++  ...o,
++});
++
++describe("summarizeUsage", () => {
++  it("describes an empty month", () => {
++    expect(summarizeUsage([], ENV, NOW)).toEqual({
++      month: { start: "2026-10-01T00:00:00.000Z", resetsAt: "2026-11-01T00:00:00.000Z" },
++      ceilingUsd: 20,
++      warnPercent: 80,
++      spentUsd: 0,
++      state: "ok",
++      byOperation: [],
++      byModel: [],
++      unknownPriceModels: [],
++      recentFailures: [],
++    });
++  });
++
++  it("sums spend in whole micro-dollars (no float drift) and derives the budget state", () => {
++    const rows = Array.from({ length: 10 }, () => row({ estimatedCostUsd: 0.1 }));
++    const summary = summarizeUsage(rows, ENV, NOW);
++    expect(summary.spentUsd).toBe(1);
++    expect(summary.state).toBe("ok");
++    expect(summarizeUsage([row({ estimatedCostUsd: 16 })], ENV, NOW).state).toBe("warn");
++    expect(summarizeUsage([row({ estimatedCostUsd: 20 })], ENV, NOW).state).toBe("over");
++  });
++
++  it("reports no ceiling as null and the state as unlimited", () => {
++    const summary = summarizeUsage([row()], { ...ENV, AI_MONTHLY_BUDGET_USD: 0 }, NOW);
++    expect(summary.ceilingUsd).toBeNull();
++    expect(summary.state).toBe("unlimited");
++  });
++
++  it("groups by operation, counting blocked calls separately, most expensive first", () => {
++    const rows = [
++      row({ operation: "match_explanation", estimatedCostUsd: 0.1, inputTokens: 100, outputTokens: 10 }),
++      row({ operation: "match_explanation", estimatedCostUsd: 0.2, inputTokens: 200, outputTokens: 20 }),
++      row({ operation: "match_explanation", outcome: "blocked", errorCode: "budget_exceeded", estimatedCostUsd: 0, inputTokens: 0, outputTokens: 0 }),
++      row({ operation: "company_research", estimatedCostUsd: 1.5, webSearchRequests: 5, model: "claude-sonnet-5" }),
++      row({ operation: "job_embedding", provider: "voyage", model: "voyage-3.5", estimatedCostUsd: 0.01, outputTokens: 0, outcome: "api_error", errorCode: "voyage:503" }),
++    ];
++    expect(summarizeUsage(rows, ENV, NOW).byOperation).toEqual([
++      { operation: "company_research", calls: 1, blocked: 0, failed: 0, inputTokens: 100, outputTokens: 10, webSearches: 5, costUsd: 1.5 },
++      { operation: "match_explanation", calls: 2, blocked: 1, failed: 0, inputTokens: 300, outputTokens: 30, webSearches: 0, costUsd: 0.3 },
++      { operation: "job_embedding", calls: 1, blocked: 0, failed: 1, inputTokens: 100, outputTokens: 0, webSearches: 0, costUsd: 0.01 },
++    ]);
++  });
++
++  it("groups by model over calls that reached a provider (blocked calls never did)", () => {
++    const rows = [
++      row({ model: "claude-haiku-4-5-20251001", estimatedCostUsd: 0.1 }),
++      row({ model: "claude-haiku-4-5-20251001", estimatedCostUsd: 0.1 }),
++      row({ model: "claude-sonnet-5", estimatedCostUsd: 1 }),
++      row({ model: "claude-sonnet-5", outcome: "blocked", estimatedCostUsd: 0 }),
++    ];
++    expect(summarizeUsage(rows, ENV, NOW).byModel).toEqual([
++      { model: "claude-sonnet-5", calls: 1, costUsd: 1 },
++      { model: "claude-haiku-4-5-20251001", calls: 2, costUsd: 0.2 },
++    ]);
++  });
++
++  it("lists models priced at the conservative fallback rate, once each", () => {
++    const rows = [row({ model: "claude-future-9", priceKnown: false }), row({ model: "claude-future-9", priceKnown: false }), row()];
++    expect(summarizeUsage(rows, ENV, NOW).unknownPriceModels).toEqual(["claude-future-9"]);
++  });
++
++  it("returns the 20 most recent failed or blocked calls, newest first, with codes only", () => {
++    const failures = Array.from({ length: 25 }, (_, i) =>
++      row({ createdAt: new Date(Date.UTC(2026, 9, 1, 0, i)), outcome: i % 2 ? "blocked" : "api_error", errorCode: `code-${i}` })
++    );
++    const recent = summarizeUsage([...failures, row({ createdAt: new Date("2026-10-07T11:00:00Z") })], ENV, NOW).recentFailures;
++    expect(recent).toHaveLength(20);
++    expect(recent[0]).toEqual({
++      createdAt: "2026-10-01T00:24:00.000Z", operation: "match_explanation", model: "claude-haiku-4-5-20251001", outcome: "api_error", errorCode: "code-24",
++    });
++    expect(recent.at(-1)!.errorCode).toBe("code-5");
++  });
++});

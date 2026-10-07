@@ -1,0 +1,357 @@
+diff --git a/apps/web/src/app/api/application-pitches/[jobId]/research/refresh/route.ts b/apps/web/src/app/api/application-pitches/[jobId]/research/refresh/route.ts
+index c8cd014..ed50eb7 100644
+--- a/apps/web/src/app/api/application-pitches/[jobId]/research/refresh/route.ts
++++ b/apps/web/src/app/api/application-pitches/[jobId]/research/refresh/route.ts
+@@ -3,9 +3,11 @@ import { NextResponse } from "next/server";
+ import { eq } from "drizzle-orm";
+ import { loadEnv } from "@ai-career/config";
+ import { closeDbClient, createDbClient, schema, withUserContext } from "@ai-career/db";
+-import { createAnthropicClient } from "@ai-career/ai";
++import { AiBudgetExceededError, createAnthropicFor } from "@ai-career/ai";
+ import { ensureCompanyResearch, CompanyResearchRefreshFailedError } from "@ai-career/application-package";
+ import { toResearchView } from "../../../../../../lib/applicationPitch/serializePitch";
++import { createUsageSink } from "../../../../../../lib/aiUsage/createUsageSink";
++import { budgetExceededResponse } from "../../../../../../lib/aiUsage/budgetResponse";
+ 
+ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+ const { jobs } = schema;
+@@ -26,9 +28,11 @@ export async function POST(_request: Request, { params }: { params: Promise<{ jo
+     );
+     if (!job) return NextResponse.json({ error: "Job not found" }, { status: 404 });
+ 
+-    const research = await ensureCompanyResearch(db, env.DEFAULT_USER_ID, createAnthropicClient(env), env, job, { forceRefresh: true });
++    const anthropicFor = createAnthropicFor(env, createUsageSink(db, env));
++    const research = await ensureCompanyResearch(db, env.DEFAULT_USER_ID, anthropicFor("company_research"), env, job, { forceRefresh: true });
+     return NextResponse.json({ research: toResearchView(research) });
+   } catch (error) {
++    if (error instanceof AiBudgetExceededError) return budgetExceededResponse(error);
+     if (error instanceof CompanyResearchRefreshFailedError) {
+       return NextResponse.json({ error: "Research refresh failed; your existing research was kept." }, { status: 502 });
+     }
+diff --git a/apps/web/src/app/api/application-pitches/[jobId]/run/route.ts b/apps/web/src/app/api/application-pitches/[jobId]/run/route.ts
+index ca54603..d327818 100644
+--- a/apps/web/src/app/api/application-pitches/[jobId]/run/route.ts
++++ b/apps/web/src/app/api/application-pitches/[jobId]/run/route.ts
+@@ -2,9 +2,11 @@
+ import { NextResponse } from "next/server";
+ import { loadEnv } from "@ai-career/config";
+ import { closeDbClient, createDbClient } from "@ai-career/db";
+-import { createAnthropicClient } from "@ai-career/ai";
++import { AiBudgetExceededError, createAnthropicFor } from "@ai-career/ai";
+ import { runPitchGeneration, PitchGenerationError } from "@ai-career/application-package";
+ import { toPitchView, toResearchView } from "../../../../../lib/applicationPitch/serializePitch";
++import { createUsageSink } from "../../../../../lib/aiUsage/createUsageSink";
++import { budgetExceededResponse } from "../../../../../lib/aiUsage/budgetResponse";
+ 
+ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+ 
+@@ -18,11 +20,12 @@ export async function POST(_request: Request, { params }: { params: Promise<{ jo
+     const result = await runPitchGeneration(db, {
+       userId: env.DEFAULT_USER_ID,
+       jobId,
+-      anthropicClient: createAnthropicClient(env),
++      anthropicFor: createAnthropicFor(env, createUsageSink(db, env)),
+       env,
+     });
+     return NextResponse.json({ pitch: toPitchView(result.pitch), research: toResearchView(result.research) }, { status: 201 });
+   } catch (error) {
++    if (error instanceof AiBudgetExceededError) return budgetExceededResponse(error);
+     if (error instanceof PitchGenerationError) {
+       if (error.errorClass === "no_match") return NextResponse.json({ error: 'Run "Find Matches" for this job first' }, { status: 404 });
+       if (error.errorClass === "not_eligible") return NextResponse.json({ error: "This job is not an eligible match" }, { status: 400 });
+diff --git a/apps/web/src/app/api/cover-letters/[jobId]/run/route.ts b/apps/web/src/app/api/cover-letters/[jobId]/run/route.ts
+index 09f2d7e..47b48e7 100644
+--- a/apps/web/src/app/api/cover-letters/[jobId]/run/route.ts
++++ b/apps/web/src/app/api/cover-letters/[jobId]/run/route.ts
+@@ -2,10 +2,12 @@
+ import { NextResponse } from "next/server";
+ import { loadEnv } from "@ai-career/config";
+ import { closeDbClient, createDbClient } from "@ai-career/db";
+-import { createAnthropicClient } from "@ai-career/ai";
++import { AiBudgetExceededError, createAnthropicFor } from "@ai-career/ai";
+ import { runCoverLetterGeneration, ApplicationGenerationError } from "@ai-career/application-package";
+ import { toCoverLetterView } from "../../../../../lib/coverLetter/serializeCoverLetter";
+ import { toResearchView } from "../../../../../lib/applicationPitch/serializePitch";
++import { createUsageSink } from "../../../../../lib/aiUsage/createUsageSink";
++import { budgetExceededResponse } from "../../../../../lib/aiUsage/budgetResponse";
+ 
+ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+ 
+@@ -19,11 +21,12 @@ export async function POST(_request: Request, { params }: { params: Promise<{ jo
+     const result = await runCoverLetterGeneration(db, {
+       userId: env.DEFAULT_USER_ID,
+       jobId,
+-      anthropicClient: createAnthropicClient(env),
++      anthropicFor: createAnthropicFor(env, createUsageSink(db, env)),
+       env,
+     });
+     return NextResponse.json({ coverLetter: toCoverLetterView(result.coverLetter), research: toResearchView(result.research) }, { status: 201 });
+   } catch (error) {
++    if (error instanceof AiBudgetExceededError) return budgetExceededResponse(error);
+     if (error instanceof ApplicationGenerationError) {
+       if (error.errorClass === "no_match") return NextResponse.json({ error: 'Run "Find Matches" for this job first' }, { status: 404 });
+       if (error.errorClass === "not_eligible") return NextResponse.json({ error: "This job is not an eligible match" }, { status: 400 });
+diff --git a/apps/web/src/app/api/interview-preps/[jobId]/run/route.ts b/apps/web/src/app/api/interview-preps/[jobId]/run/route.ts
+index c989618..ffe611a 100644
+--- a/apps/web/src/app/api/interview-preps/[jobId]/run/route.ts
++++ b/apps/web/src/app/api/interview-preps/[jobId]/run/route.ts
+@@ -2,10 +2,12 @@
+ import { NextResponse } from "next/server";
+ import { loadEnv } from "@ai-career/config";
+ import { closeDbClient, createDbClient } from "@ai-career/db";
+-import { createAnthropicClient } from "@ai-career/ai";
++import { AiBudgetExceededError, createAnthropicFor } from "@ai-career/ai";
+ import { runInterviewPrepGeneration, ApplicationGenerationError } from "@ai-career/application-package";
+ import { toInterviewPrepView } from "../../../../../lib/interviewPrep/serializeInterviewPrep";
+ import { toResearchView } from "../../../../../lib/applicationPitch/serializePitch";
++import { createUsageSink } from "../../../../../lib/aiUsage/createUsageSink";
++import { budgetExceededResponse } from "../../../../../lib/aiUsage/budgetResponse";
+ 
+ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+ 
+@@ -19,11 +21,12 @@ export async function POST(_request: Request, { params }: { params: Promise<{ jo
+     const result = await runInterviewPrepGeneration(db, {
+       userId: env.DEFAULT_USER_ID,
+       jobId,
+-      anthropicClient: createAnthropicClient(env),
++      anthropicFor: createAnthropicFor(env, createUsageSink(db, env)),
+       env,
+     });
+     return NextResponse.json({ interviewPrep: toInterviewPrepView(result.interviewPrep), research: toResearchView(result.research) }, { status: 201 });
+   } catch (error) {
++    if (error instanceof AiBudgetExceededError) return budgetExceededResponse(error);
+     if (error instanceof ApplicationGenerationError) {
+       if (error.errorClass === "no_match") return NextResponse.json({ error: 'Run "Find Matches" for this job first' }, { status: 404 });
+       if (error.errorClass === "not_eligible") return NextResponse.json({ error: "This job is not an eligible match" }, { status: 400 });
+diff --git a/packages/application-package/src/coverLetter/generateCoverLetter.ts b/packages/application-package/src/coverLetter/generateCoverLetter.ts
+index 5a67550..2165b63 100644
+--- a/packages/application-package/src/coverLetter/generateCoverLetter.ts
++++ b/packages/application-package/src/coverLetter/generateCoverLetter.ts
+@@ -1,5 +1,6 @@
+ import { randomBytes } from "node:crypto";
+ import type Anthropic from "@anthropic-ai/sdk";
++import type { MessagesClient } from "@ai-career/ai";
+ import type { Env } from "@ai-career/config";
+ import { MAX_PARAGRAPH_CHARS } from "../types";
+ import type { PitchEvidenceItem } from "../pitch/buildEvidenceIndex";
+@@ -47,7 +48,7 @@ export interface GenerateCoverLetterInput {
+  * random per-request delimiter (D20).
+  */
+ export async function generateCoverLetter(
+-  client: Pick<Anthropic, "messages">,
++  client: MessagesClient,
+   env: Pick<Env, "ANTHROPIC_MODEL_FAST">,
+   input: GenerateCoverLetterInput
+ ): Promise<CoverLetterDraft> {
+diff --git a/packages/application-package/src/interviewPrep/generateInterviewPrep.ts b/packages/application-package/src/interviewPrep/generateInterviewPrep.ts
+index d9d4709..29d7818 100644
+--- a/packages/application-package/src/interviewPrep/generateInterviewPrep.ts
++++ b/packages/application-package/src/interviewPrep/generateInterviewPrep.ts
+@@ -1,5 +1,6 @@
+ import { randomBytes } from "node:crypto";
+ import type Anthropic from "@anthropic-ai/sdk";
++import type { MessagesClient } from "@ai-career/ai";
+ import type { Env } from "@ai-career/config";
+ import {
+   LIKELY_QUESTION_CATEGORIES, MAX_FRAMING_CHARS, MAX_GAP_TERMS, MAX_OUTLINE_LINE_CHARS, MAX_POINT_CHARS, MAX_QUESTION_CHARS,
+@@ -97,7 +98,7 @@ export interface GenerateInterviewPrepInput {
+  * rule stated here. Job context, evidence and gap terms each get their own random delimiter (D20).
+  */
+ export async function generateInterviewPrep(
+-  client: Pick<Anthropic, "messages">,
++  client: MessagesClient,
+   env: Pick<Env, "ANTHROPIC_MODEL_RESEARCH">,
+   input: GenerateInterviewPrepInput
+ ): Promise<InterviewPrepDraft> {
+diff --git a/packages/application-package/src/pipeline/prepareApplicationContext.ts b/packages/application-package/src/pipeline/prepareApplicationContext.ts
+index 7180529..f24e3b5 100644
+--- a/packages/application-package/src/pipeline/prepareApplicationContext.ts
++++ b/packages/application-package/src/pipeline/prepareApplicationContext.ts
+@@ -1,6 +1,7 @@
+ import { eq } from "drizzle-orm";
+ import Anthropic from "@anthropic-ai/sdk";
+ import { schema, withUserContext, type DbClient } from "@ai-career/db";
++import type { AnthropicFor } from "@ai-career/ai";
+ import {
+   buildResumeSnapshot, ensureJobRequirements, JobRequirementExtractionValidationError, type ResumeSnapshot,
+ } from "@ai-career/resume-optimization";
+@@ -22,7 +23,8 @@ export interface ApplicationContextEnv {
+ export interface PrepareApplicationContextOptions {
+   userId: string;
+   jobId: string;
+-  anthropicClient: Pick<Anthropic, "messages">;
++  /** One labelled, budget-checked Anthropic client per operation (Phase 11a). */
++  anthropicFor: AnthropicFor;
+   env: ApplicationContextEnv;
+ }
+ 
+@@ -39,10 +41,11 @@ export interface ApplicationContext {
+  * 7a's runPitchGeneration). Order matters: the cheap DB gates and the profile check run BEFORE
+  * ensureCompanyResearch, so a user with no profile never triggers a paid web search. Research failures
+  * never surface here (they are stored as a status). ensureJobRequirements' Anthropic.APIError and
+- * validation error map to "unknown" (→ 502, D57); anything else is a bug and is rethrown.
++ * validation error map to "unknown" (→ 502, D57); anything else is a bug and is rethrown -- including
++ * AiBudgetExceededError (Phase 11a), which the routes answer with 429.
+  */
+ export async function prepareApplicationContext(db: DbClient, opts: PrepareApplicationContextOptions): Promise<ApplicationContext> {
+-  const { userId, jobId, anthropicClient, env } = opts;
++  const { userId, jobId, anthropicFor, env } = opts;
+   const inUserContext = <T>(fn: (tx: DbClient) => Promise<T>) => withUserContext(db, userId, fn);
+ 
+   const [match] = await inUserContext((tx) => tx.select().from(jobMatches).where(eq(jobMatches.jobId, jobId)).limit(1));
+@@ -55,7 +58,7 @@ export async function prepareApplicationContext(db: DbClient, opts: PrepareAppli
+   const snapshot = await inUserContext((tx) => buildResumeSnapshot(tx));
+   if (snapshot.catalog.length === 0) throw new ApplicationGenerationError("no_profile");
+ 
+-  const research = await ensureCompanyResearch(db, userId, anthropicClient, env, {
++  const research = await ensureCompanyResearch(db, userId, anthropicFor("company_research"), env, {
+     id: job.id, companyKey: job.companyKey, companyName: job.companyName, title: job.title,
+   });
+ 
+@@ -64,7 +67,7 @@ export async function prepareApplicationContext(db: DbClient, opts: PrepareAppli
+     // Same accepted trade-off as runResumeOptimization: ensureJobRequirements may make an Anthropic
+     // call inside this transaction, buying atomic replace-on-change of the job_requirements cache.
+     requirements = await inUserContext((tx) =>
+-      ensureJobRequirements(tx, env, anthropicClient, {
++      ensureJobRequirements(tx, env, anthropicFor("job_requirements_extraction"), {
+         id: job.id, title: job.title, descriptionText: job.descriptionText, descriptionHash: job.descriptionHash,
+       })
+     );
+diff --git a/packages/application-package/src/pipeline/runCoverLetterGeneration.ts b/packages/application-package/src/pipeline/runCoverLetterGeneration.ts
+index bc29fbd..6ac55da 100644
+--- a/packages/application-package/src/pipeline/runCoverLetterGeneration.ts
++++ b/packages/application-package/src/pipeline/runCoverLetterGeneration.ts
+@@ -20,14 +20,14 @@ export interface RunCoverLetterGenerationResult {
+  * gap mentions (missingTermMentions, D106) and the review flag they raise (D101) → D44 → locked insert.
+  */
+ export async function runCoverLetterGeneration(db: DbClient, opts: PrepareApplicationContextOptions): Promise<RunCoverLetterGenerationResult> {
+-  const { userId, jobId, anthropicClient, env } = opts;
++  const { userId, jobId, anthropicFor, env } = opts;
+   const { job, snapshot, research, requirements, evidence } = await prepareApplicationContext(db, opts);
+   // D101: every missing required term (not capped) -- a later paragraph naming one needs the user's review.
+   const gapTerms = computeGapTerms(requirements, snapshot.catalog);
+ 
+   let guard: CoverLetterGuardResult;
+   try {
+-    const draft = await generateCoverLetter(anthropicClient, env, { jobTitle: job.title, companyName: job.companyName, evidence });
++    const draft = await generateCoverLetter(anthropicFor("cover_letter_generation"), env, { jobTitle: job.title, companyName: job.companyName, evidence });
+     guard = applyCoverLetterGuard(evidence, draft);
+     // D106: the cause is stored per paragraph so the review banner can name it.
+     const mentions = findGapTermMentions(guard.paragraphs, gapTerms);
+diff --git a/packages/application-package/src/pipeline/runInterviewPrepGeneration.ts b/packages/application-package/src/pipeline/runInterviewPrepGeneration.ts
+index e175e5b..a0e91e0 100644
+--- a/packages/application-package/src/pipeline/runInterviewPrepGeneration.ts
++++ b/packages/application-package/src/pipeline/runInterviewPrepGeneration.ts
+@@ -17,7 +17,7 @@ export interface RunInterviewPrepGenerationResult {
+ 
+ /** Phase 7c design §4.3: shared context → deterministic gap terms → research-tier call → guard → D44 → locked insert. */
+ export async function runInterviewPrepGeneration(db: DbClient, opts: PrepareApplicationContextOptions): Promise<RunInterviewPrepGenerationResult> {
+-  const { userId, jobId, anthropicClient, env } = opts;
++  const { userId, jobId, anthropicFor, env } = opts;
+   const { job, snapshot, research, requirements, evidence } = await prepareApplicationContext(db, opts);
+   // D100: every missing required term is detected; the model is given (and may write gap questions for)
+   // only the first MAX_GAP_TERMS, but no likely question may target any of them, and all are stored.
+@@ -26,7 +26,7 @@ export async function runInterviewPrepGeneration(db: DbClient, opts: PrepareAppl
+ 
+   let guard: InterviewPrepGuardResult;
+   try {
+-    const draft = await generateInterviewPrep(anthropicClient, env, { jobTitle: job.title, companyName: job.companyName, evidence, gapTerms: modelGapTerms });
++    const draft = await generateInterviewPrep(anthropicFor("interview_prep_generation"), env, { jobTitle: job.title, companyName: job.companyName, evidence, gapTerms: modelGapTerms });
+     guard = applyInterviewPrepGuard(evidence, { modelGapTerms, allGapTerms }, draft);
+   } catch (error) {
+     if (error instanceof Anthropic.APIError || error instanceof InterviewPrepGenerationValidationError) {
+diff --git a/packages/application-package/src/pipeline/runPitchGeneration.ts b/packages/application-package/src/pipeline/runPitchGeneration.ts
+index a157c8e..c0be34e 100644
+--- a/packages/application-package/src/pipeline/runPitchGeneration.ts
++++ b/packages/application-package/src/pipeline/runPitchGeneration.ts
+@@ -1,5 +1,6 @@
+ import Anthropic from "@anthropic-ai/sdk";
+ import { withUserContext, type DbClient } from "@ai-career/db";
++import type { AnthropicFor } from "@ai-career/ai";
+ import { hasUnsafeText } from "@ai-career/ingestion/text";
+ import type { CompanyResearchWithFacts } from "../research/ensureCompanyResearch";
+ import { generatePitch, PitchGenerationValidationError } from "../pitch/generatePitch";
+@@ -17,7 +18,7 @@ export type RunPitchGenerationEnv = ApplicationContextEnv;
+ export interface RunPitchGenerationOptions {
+   userId: string;
+   jobId: string;
+-  anthropicClient: Pick<Anthropic, "messages">;
++  anthropicFor: AnthropicFor;
+   env: RunPitchGenerationEnv;
+ }
+ 
+@@ -31,12 +32,12 @@ export interface RunPitchGenerationResult {
+  * research, requirements and evidence index; this adds the pitch call, the guard and the locked insert.
+  */
+ export async function runPitchGeneration(db: DbClient, opts: RunPitchGenerationOptions): Promise<RunPitchGenerationResult> {
+-  const { userId, jobId, anthropicClient, env } = opts;
++  const { userId, jobId, anthropicFor, env } = opts;
+   const { job, snapshot, research, evidence } = await prepareApplicationContext(db, opts);
+ 
+   let guard: PitchGuardResult;
+   try {
+-    const draft = await generatePitch(anthropicClient, env, { jobTitle: job.title, companyName: job.companyName, evidence });
++    const draft = await generatePitch(anthropicFor("pitch_generation"), env, { jobTitle: job.title, companyName: job.companyName, evidence });
+     guard = applyPitchGuard(evidence, draft);
+   } catch (error) {
+     if (error instanceof Anthropic.APIError || error instanceof PitchGenerationValidationError) {
+diff --git a/packages/application-package/src/pitch/generatePitch.ts b/packages/application-package/src/pitch/generatePitch.ts
+index bfa5c8b..2da8e02 100644
+--- a/packages/application-package/src/pitch/generatePitch.ts
++++ b/packages/application-package/src/pitch/generatePitch.ts
+@@ -1,5 +1,6 @@
+ import { randomBytes } from "node:crypto";
+ import type Anthropic from "@anthropic-ai/sdk";
++import type { MessagesClient } from "@ai-career/ai";
+ import type { Env } from "@ai-career/config";
+ import { MAX_BULLET_CHARS } from "../types";
+ import { PitchDraftSchema, type PitchDraft } from "./pitchSchema";
+@@ -47,7 +48,7 @@ export interface GeneratePitchInput {
+  * own random per-request delimiter (D20).
+  */
+ export async function generatePitch(
+-  client: Pick<Anthropic, "messages">,
++  client: MessagesClient,
+   env: Pick<Env, "ANTHROPIC_MODEL_FAST">,
+   input: GeneratePitchInput
+ ): Promise<PitchDraft> {
+diff --git a/packages/application-package/src/research/ensureCompanyResearch.ts b/packages/application-package/src/research/ensureCompanyResearch.ts
+index f280162..36d5c07 100644
+--- a/packages/application-package/src/research/ensureCompanyResearch.ts
++++ b/packages/application-package/src/research/ensureCompanyResearch.ts
+@@ -1,5 +1,5 @@
+ import { and, asc, eq, isNotNull, or, sql } from "drizzle-orm";
+-import type Anthropic from "@anthropic-ai/sdk";
++import type { MessagesClient } from "@ai-career/ai";
+ import { schema, withUserContext, type DbClient } from "@ai-career/db";
+ import { runCompanyResearch, type CompanyResearchEnv } from "./runCompanyResearch";
+ import { deriveInternalFacts } from "./deriveInternalFacts";
+@@ -61,7 +61,7 @@ export async function loadCompanyResearch(tx: DbClient, companyKey: string): Pro
+ export async function ensureCompanyResearch(
+   db: DbClient,
+   userId: string,
+-  anthropicClient: Pick<Anthropic, "messages">,
++  anthropicClient: MessagesClient,
+   env: CompanyResearchEnv,
+   job: JobForResearch,
+   opts: { forceRefresh?: boolean } = {}
+diff --git a/packages/application-package/src/research/runCompanyResearch.ts b/packages/application-package/src/research/runCompanyResearch.ts
+index 6cf309d..bb3c81a 100644
+--- a/packages/application-package/src/research/runCompanyResearch.ts
++++ b/packages/application-package/src/research/runCompanyResearch.ts
+@@ -1,5 +1,6 @@
+ import { randomBytes } from "node:crypto";
+ import Anthropic from "@anthropic-ai/sdk";
++import type { MessagesClient } from "@ai-career/ai";
+ import type { Env } from "@ai-career/config";
+ import type { ResearchFactDraft, ResearchStatus } from "../types";
+ import { extractCitedFacts } from "./extractCitedFacts";
+@@ -34,7 +35,7 @@ export type CompanyResearchEnv = Pick<Env, "ANTHROPIC_MODEL_RESEARCH" | "COMPANY
+  * is a bug and is rethrown.
+  */
+ export async function runCompanyResearch(
+-  client: Pick<Anthropic, "messages">,
++  client: MessagesClient,
+   env: CompanyResearchEnv,
+   input: CompanyResearchInput
+ ): Promise<CompanyResearchResult> {

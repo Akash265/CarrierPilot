@@ -1,0 +1,390 @@
+diff --git a/apps/web/src/app/api/application-pitches/[jobId]/research/refresh/route.test.ts b/apps/web/src/app/api/application-pitches/[jobId]/research/refresh/route.test.ts
+index bc84811..8047088 100644
+--- a/apps/web/src/app/api/application-pitches/[jobId]/research/refresh/route.test.ts
++++ b/apps/web/src/app/api/application-pitches/[jobId]/research/refresh/route.test.ts
+@@ -1,7 +1,7 @@
+ // apps/web/src/app/api/application-pitches/[jobId]/research/refresh/route.test.ts
+ import { describe, it, expect, vi, beforeAll, beforeEach, afterAll } from "vitest";
+ import type postgres from "postgres";
+-import { openAdminDb, wipeMatchingData, insertJob } from "../../../../../../test/jobsDb";
++import { openAdminDb, wipeMatchingData, insertJob, insertAiSpend, aiCallRows } from "../../../../../../test/jobsDb";
+ 
+ vi.mock("@ai-career/config", () => ({
+   loadEnv: () => ({
+@@ -14,6 +14,8 @@ vi.mock("@ai-career/config", () => ({
+     EMBEDDING_PROVIDER: "voyage",
+     VOYAGE_API_KEY: "voyage-test",
+     VOYAGE_EMBEDDING_MODEL: "voyage-3.5",
++    AI_MONTHLY_BUDGET_USD: 5,
++    AI_BUDGET_WARN_PERCENT: 80,
+   }),
+ }));
+ vi.mock("@ai-career/application-package", async (importOriginal) => {
+@@ -75,4 +77,21 @@ describe("POST /api/application-pitches/[jobId]/research/refresh", () => {
+     expect(res.status).toBe(502);
+     expect((await res.json()).error).toMatch(/existing research was kept/i);
+   });
++
++  it("hands research a company_research client; a budget block answers 429 and is recorded", async () => {
++    const jobId = await insertJob(admin, USER, {});
++    await insertAiSpend(admin, USER, 5);
++    // Drive the real tracked client the route built: the gate blocks before the SDK is contacted.
++    vi.mocked(ensureCompanyResearch).mockImplementation(async (_db, _userId, client) => {
++      await client.messages.create({ model: "test-research-model", max_tokens: 1, messages: [{ role: "user", content: "x" }] });
++      throw new Error("unreachable: the budget gate should have thrown");
++    });
++
++    const res = await refresh(jobId);
++
++    expect(res.status).toBe(429);
++    expect((await res.json()).code).toBe("ai_budget_exceeded");
++    expect(await aiCallRows(admin, USER)).toContainEqual({ operation: "company_research", outcome: "blocked", error_code: "budget_exceeded" });
++  });
+ });
++
+diff --git a/apps/web/src/app/api/application-pitches/[jobId]/run/route.test.ts b/apps/web/src/app/api/application-pitches/[jobId]/run/route.test.ts
+index 65d31aa..381d3ac 100644
+--- a/apps/web/src/app/api/application-pitches/[jobId]/run/route.test.ts
++++ b/apps/web/src/app/api/application-pitches/[jobId]/run/route.test.ts
+@@ -1,7 +1,9 @@
+ // apps/web/src/app/api/application-pitches/[jobId]/run/route.test.ts
+ import { describe, it, expect, vi, beforeAll, beforeEach, afterAll } from "vitest";
+ import type postgres from "postgres";
+-import { openAdminDb, wipeMatchingData, insertJob, insertCareerGoal, insertMatch } from "../../../../../test/jobsDb";
++import {
++  openAdminDb, wipeMatchingData, insertJob, insertCareerGoal, insertMatch, insertAiSpend, aiCallRows, insertResumeEvidence, wipeResumeEvidence,
++} from "../../../../../test/jobsDb";
+ 
+ vi.mock("@ai-career/config", () => ({
+   loadEnv: () => ({
+@@ -14,6 +16,8 @@ vi.mock("@ai-career/config", () => ({
+     EMBEDDING_PROVIDER: "voyage",
+     VOYAGE_API_KEY: "voyage-test",
+     VOYAGE_EMBEDDING_MODEL: "voyage-3.5",
++    AI_MONTHLY_BUDGET_USD: 5,
++    AI_BUDGET_WARN_PERCENT: 80,
+   }),
+ }));
+ 
+@@ -25,9 +29,13 @@ let admin: postgres.Sql;
+ beforeAll(async () => {
+   admin = await openAdminDb();
+ });
+-beforeEach(() => wipeMatchingData(admin, USER));
++beforeEach(async () => {
++  await wipeMatchingData(admin, USER);
++  await wipeResumeEvidence(admin, USER);
++});
+ afterAll(async () => {
+   await wipeMatchingData(admin, USER);
++  await wipeResumeEvidence(admin, USER);
+   await admin.end();
+ });
+ 
+@@ -60,4 +68,22 @@ describe("POST /api/application-pitches/[jobId]/run", () => {
+     expect(res.status).toBe(409);
+     expect((await res.json()).error).toMatch(/profile/i);
+   });
++
++  it("answers 429 with the budget message once this month's AI spend reaches the ceiling, before any paid research call", async () => {
++    const goalId = await insertCareerGoal(admin, USER);
++    const jobId = await insertJob(admin, USER, {});
++    await insertMatch(admin, USER, jobId, goalId, { eligible: true });
++    await insertResumeEvidence(admin, USER);
++    await insertAiSpend(admin, USER, 5);
++
++    const res = await run(jobId);
++
++    expect(res.status).toBe(429);
++    const body = await res.json();
++    expect(body.code).toBe("ai_budget_exceeded");
++    expect(body.error).toMatch(/^Monthly AI budget reached/);
++    expect(await aiCallRows(admin, USER)).toContainEqual({ operation: "company_research", outcome: "blocked", error_code: "budget_exceeded" });
++    expect(await admin`SELECT 1 FROM company_research WHERE user_id = ${USER}`).toHaveLength(0);
++  });
+ });
++
+diff --git a/apps/web/src/app/api/cover-letters/[jobId]/run/route.test.ts b/apps/web/src/app/api/cover-letters/[jobId]/run/route.test.ts
+index 554cffe..0422704 100644
+--- a/apps/web/src/app/api/cover-letters/[jobId]/run/route.test.ts
++++ b/apps/web/src/app/api/cover-letters/[jobId]/run/route.test.ts
+@@ -1,7 +1,9 @@
+ // apps/web/src/app/api/cover-letters/[jobId]/run/route.test.ts
+ import { describe, it, expect, vi, beforeAll, beforeEach, afterAll } from "vitest";
+ import type postgres from "postgres";
+-import { openAdminDb, wipeMatchingData, insertJob, insertCareerGoal, insertMatch } from "../../../../../test/jobsDb";
++import {
++  openAdminDb, wipeMatchingData, insertJob, insertCareerGoal, insertMatch, insertAiSpend, aiCallRows, insertResumeEvidence, wipeResumeEvidence,
++} from "../../../../../test/jobsDb";
+ 
+ vi.mock("@ai-career/config", () => ({
+   loadEnv: () => ({
+@@ -14,6 +16,8 @@ vi.mock("@ai-career/config", () => ({
+     EMBEDDING_PROVIDER: "voyage",
+     VOYAGE_API_KEY: "voyage-test",
+     VOYAGE_EMBEDDING_MODEL: "voyage-3.5",
++    AI_MONTHLY_BUDGET_USD: 5,
++    AI_BUDGET_WARN_PERCENT: 80,
+   }),
+ }));
+ 
+@@ -25,9 +29,13 @@ let admin: postgres.Sql;
+ beforeAll(async () => {
+   admin = await openAdminDb();
+ });
+-beforeEach(() => wipeMatchingData(admin, USER));
++beforeEach(async () => {
++  await wipeMatchingData(admin, USER);
++  await wipeResumeEvidence(admin, USER);
++});
+ afterAll(async () => {
+   await wipeMatchingData(admin, USER);
++  await wipeResumeEvidence(admin, USER);
+   await admin.end();
+ });
+ 
+@@ -60,4 +68,22 @@ describe("POST /api/cover-letters/[jobId]/run", () => {
+     expect(res.status).toBe(409);
+     expect((await res.json()).error).toMatch(/profile/i);
+   });
++
++  it("answers 429 with the budget message once this month's AI spend reaches the ceiling, before any paid research call", async () => {
++    const goalId = await insertCareerGoal(admin, USER);
++    const jobId = await insertJob(admin, USER, {});
++    await insertMatch(admin, USER, jobId, goalId, { eligible: true });
++    await insertResumeEvidence(admin, USER);
++    await insertAiSpend(admin, USER, 5);
++
++    const res = await run(jobId);
++
++    expect(res.status).toBe(429);
++    const body = await res.json();
++    expect(body.code).toBe("ai_budget_exceeded");
++    expect(body.error).toMatch(/^Monthly AI budget reached/);
++    expect(await aiCallRows(admin, USER)).toContainEqual({ operation: "company_research", outcome: "blocked", error_code: "budget_exceeded" });
++    expect(await admin`SELECT 1 FROM company_research WHERE user_id = ${USER}`).toHaveLength(0);
++  });
+ });
++
+diff --git a/apps/web/src/app/api/interview-preps/[jobId]/run/route.test.ts b/apps/web/src/app/api/interview-preps/[jobId]/run/route.test.ts
+index c0a9c86..9fca691 100644
+--- a/apps/web/src/app/api/interview-preps/[jobId]/run/route.test.ts
++++ b/apps/web/src/app/api/interview-preps/[jobId]/run/route.test.ts
+@@ -1,7 +1,9 @@
+ // apps/web/src/app/api/interview-preps/[jobId]/run/route.test.ts
+ import { describe, it, expect, vi, beforeAll, beforeEach, afterAll } from "vitest";
+ import type postgres from "postgres";
+-import { openAdminDb, wipeMatchingData, insertJob, insertCareerGoal, insertMatch } from "../../../../../test/jobsDb";
++import {
++  openAdminDb, wipeMatchingData, insertJob, insertCareerGoal, insertMatch, insertAiSpend, aiCallRows, insertResumeEvidence, wipeResumeEvidence,
++} from "../../../../../test/jobsDb";
+ 
+ vi.mock("@ai-career/config", () => ({
+   loadEnv: () => ({
+@@ -14,6 +16,8 @@ vi.mock("@ai-career/config", () => ({
+     EMBEDDING_PROVIDER: "voyage",
+     VOYAGE_API_KEY: "voyage-test",
+     VOYAGE_EMBEDDING_MODEL: "voyage-3.5",
++    AI_MONTHLY_BUDGET_USD: 5,
++    AI_BUDGET_WARN_PERCENT: 80,
+   }),
+ }));
+ 
+@@ -25,9 +29,13 @@ let admin: postgres.Sql;
+ beforeAll(async () => {
+   admin = await openAdminDb();
+ });
+-beforeEach(() => wipeMatchingData(admin, USER));
++beforeEach(async () => {
++  await wipeMatchingData(admin, USER);
++  await wipeResumeEvidence(admin, USER);
++});
+ afterAll(async () => {
+   await wipeMatchingData(admin, USER);
++  await wipeResumeEvidence(admin, USER);
+   await admin.end();
+ });
+ 
+@@ -60,4 +68,22 @@ describe("POST /api/interview-preps/[jobId]/run", () => {
+     expect(res.status).toBe(409);
+     expect((await res.json()).error).toMatch(/profile/i);
+   });
++
++  it("answers 429 with the budget message once this month's AI spend reaches the ceiling, before any paid research call", async () => {
++    const goalId = await insertCareerGoal(admin, USER);
++    const jobId = await insertJob(admin, USER, {});
++    await insertMatch(admin, USER, jobId, goalId, { eligible: true });
++    await insertResumeEvidence(admin, USER);
++    await insertAiSpend(admin, USER, 5);
++
++    const res = await run(jobId);
++
++    expect(res.status).toBe(429);
++    const body = await res.json();
++    expect(body.code).toBe("ai_budget_exceeded");
++    expect(body.error).toMatch(/^Monthly AI budget reached/);
++    expect(await aiCallRows(admin, USER)).toContainEqual({ operation: "company_research", outcome: "blocked", error_code: "budget_exceeded" });
++    expect(await admin`SELECT 1 FROM company_research WHERE user_id = ${USER}`).toHaveLength(0);
++  });
+ });
++
+diff --git a/apps/web/src/test/jobsDb.ts b/apps/web/src/test/jobsDb.ts
+index 34f7c34..ea07ee3 100644
+--- a/apps/web/src/test/jobsDb.ts
++++ b/apps/web/src/test/jobsDb.ts
+@@ -354,3 +354,18 @@ export async function aiCallRows(adminSql: postgres.Sql, userId: string) {
+   return adminSql<{ operation: string; outcome: string; error_code: string | null }[]>`
+     SELECT operation, outcome, error_code FROM ai_calls WHERE user_id = ${userId} ORDER BY created_at, operation`;
+ }
++
++/** Phase 11a: one work-experience bullet, so the resume snapshot has evidence and generation gets past no_profile. */
++export async function insertResumeEvidence(adminSql: postgres.Sql, userId: string): Promise<void> {
++  const [exp] = await adminSql`
++    INSERT INTO work_experiences (user_id, company, title, display_order) VALUES (${userId}, 'Acme', 'Engineer', 0) RETURNING id`;
++  await adminSql`
++    INSERT INTO work_experience_bullets (user_id, work_experience_id, text, display_order)
++    VALUES (${userId}, ${exp.id}, 'Built a data pipeline', 0)`;
++}
++
++export async function wipeResumeEvidence(adminSql: postgres.Sql, userId: string): Promise<void> {
++  await adminSql`DELETE FROM work_experience_bullets WHERE user_id = ${userId}`;
++  await adminSql`DELETE FROM work_experiences WHERE user_id = ${userId}`;
++}
++
+diff --git a/packages/application-package/src/pipeline/runCoverLetterGeneration.test.ts b/packages/application-package/src/pipeline/runCoverLetterGeneration.test.ts
+index 72241ba..3346fa3 100644
+--- a/packages/application-package/src/pipeline/runCoverLetterGeneration.test.ts
++++ b/packages/application-package/src/pipeline/runCoverLetterGeneration.test.ts
+@@ -23,6 +23,12 @@ import type { CoverLetterDraft } from "../coverLetter/coverLetterSchema";
+ const USER = "00000000-0000-0000-0000-000000000012";
+ const ENV = { ANTHROPIC_MODEL_FAST: "fast-model", ANTHROPIC_MODEL_RESEARCH: "research-model", COMPANY_RESEARCH_MAX_SEARCHES: 5 };
+ const CLIENT = {} as Pick<Anthropic, "messages">;
++// One distinct fake per operation (Phase 11a), so tests can see which label each call was handed.
++const LABELLED = new Map<string, Pick<Anthropic, "messages">>();
++const CLIENT_FOR = (operation: string) => {
++  if (!LABELLED.has(operation)) LABELLED.set(operation, { ...CLIENT });
++  return LABELLED.get(operation)!;
++};
+ let testDb: TestDb;
+ 
+ function groundedDraft(input: GenerateCoverLetterInput): CoverLetterDraft {
+@@ -82,7 +88,7 @@ async function seed(opts: { match?: boolean; eligible?: boolean; profile?: boole
+   return job.id as string;
+ }
+ 
+-const run = (jobId: string) => runCoverLetterGeneration(testDb.db, { userId: USER, jobId, anthropicClient: CLIENT, env: ENV });
++const run = (jobId: string) => runCoverLetterGeneration(testDb.db, { userId: USER, jobId, anthropicFor: CLIENT_FOR, env: ENV });
+ 
+ describe("runCoverLetterGeneration", () => {
+   it("maps the gates to no_match / not_eligible / no_profile, the last before any paid research", async () => {
+@@ -192,4 +198,11 @@ describe("runCoverLetterGeneration", () => {
+     const [a, b] = await Promise.all([run(jobId), run(jobId)]);
+     expect([a.coverLetter.version, b.coverLetter.version].sort()).toEqual([1, 2]);
+   });
++
++  it("hands the cover-letter call the client labelled cover_letter_generation", async () => {
++    const jobId = await seed();
++    await run(jobId);
++    expect(vi.mocked(generateCoverLetter).mock.calls[0][0]).toBe(CLIENT_FOR("cover_letter_generation"));
++    expect(vi.mocked(runCompanyResearch).mock.calls[0][0]).toBe(CLIENT_FOR("company_research"));
++  });
+ });
+diff --git a/packages/application-package/src/pipeline/runInterviewPrepGeneration.test.ts b/packages/application-package/src/pipeline/runInterviewPrepGeneration.test.ts
+index fd68741..59d3f78 100644
+--- a/packages/application-package/src/pipeline/runInterviewPrepGeneration.test.ts
++++ b/packages/application-package/src/pipeline/runInterviewPrepGeneration.test.ts
+@@ -25,6 +25,12 @@ import type { InterviewPrepDraft } from "../interviewPrep/interviewPrepSchema";
+ const USER = "00000000-0000-0000-0000-000000000014";
+ const ENV = { ANTHROPIC_MODEL_FAST: "fast-model", ANTHROPIC_MODEL_RESEARCH: "research-model", COMPANY_RESEARCH_MAX_SEARCHES: 5 };
+ const CLIENT = {} as Pick<Anthropic, "messages">;
++// One distinct fake per operation (Phase 11a), so tests can see which label each call was handed.
++const LABELLED = new Map<string, Pick<Anthropic, "messages">>();
++const CLIENT_FOR = (operation: string) => {
++  if (!LABELLED.has(operation)) LABELLED.set(operation, { ...CLIENT });
++  return LABELLED.get(operation)!;
++};
+ const SQL_ID = "11111111-1111-1111-1111-111111111111";
+ const K8S_ID = "11111111-1111-1111-1111-111111111112";
+ let testDb: TestDb;
+@@ -87,7 +93,7 @@ async function seed(opts: { match?: boolean; eligible?: boolean; profile?: boole
+   return job.id as string;
+ }
+ 
+-const run = (jobId: string) => runInterviewPrepGeneration(testDb.db, { userId: USER, jobId, anthropicClient: CLIENT, env: ENV });
++const run = (jobId: string) => runInterviewPrepGeneration(testDb.db, { userId: USER, jobId, anthropicFor: CLIENT_FOR, env: ENV });
+ 
+ describe("runInterviewPrepGeneration", () => {
+   it("maps the gates like the pitch, checking the profile before any paid research", async () => {
+@@ -184,4 +190,11 @@ describe("runInterviewPrepGeneration", () => {
+     const [a, b] = await Promise.all([run(jobId), run(jobId)]);
+     expect([a.interviewPrep.version, b.interviewPrep.version].sort()).toEqual([1, 2]);
+   });
++
++  it("hands the interview-prep call the client labelled interview_prep_generation", async () => {
++    const jobId = await seed();
++    await run(jobId);
++    expect(vi.mocked(generateInterviewPrep).mock.calls[0][0]).toBe(CLIENT_FOR("interview_prep_generation"));
++    expect(vi.mocked(ensureJobRequirements).mock.calls[0][2]).toBe(CLIENT_FOR("job_requirements_extraction"));
++  });
+ });
+diff --git a/packages/application-package/src/pipeline/runPitchGeneration.test.ts b/packages/application-package/src/pipeline/runPitchGeneration.test.ts
+index 35faab9..9256eaf 100644
+--- a/packages/application-package/src/pipeline/runPitchGeneration.test.ts
++++ b/packages/application-package/src/pipeline/runPitchGeneration.test.ts
+@@ -19,11 +19,18 @@ import { runCompanyResearch } from "../research/runCompanyResearch";
+ import { generatePitch, PitchGenerationValidationError, type GeneratePitchInput } from "../pitch/generatePitch";
+ import { ensureJobRequirements, JobRequirementExtractionValidationError } from "@ai-career/resume-optimization";
+ import { runPitchGeneration, PitchGenerationError } from "./runPitchGeneration";
++import { AiBudgetExceededError } from "@ai-career/ai";
+ import type { PitchDraft } from "../pitch/pitchSchema";
+ 
+ const USER = "00000000-0000-0000-0000-0000000000c7";
+ const ENV = { ANTHROPIC_MODEL_FAST: "fast-model", ANTHROPIC_MODEL_RESEARCH: "research-model", COMPANY_RESEARCH_MAX_SEARCHES: 5 };
+ const CLIENT = {} as Pick<Anthropic, "messages">;
++// One distinct fake per operation (Phase 11a), so tests can see which label each call was handed.
++const LABELLED = new Map<string, Pick<Anthropic, "messages">>();
++const CLIENT_FOR = (operation: string) => {
++  if (!LABELLED.has(operation)) LABELLED.set(operation, { ...CLIENT });
++  return LABELLED.get(operation)!;
++};
+ let testDb: TestDb;
+ 
+ /** Cites the first evidence item of each required kind -- the ids only exist at runtime. */
+@@ -80,7 +87,7 @@ async function seed(opts: { match?: boolean; eligible?: boolean; profile?: boole
+   return job.id as string;
+ }
+ 
+-const run = (jobId: string) => runPitchGeneration(testDb.db, { userId: USER, jobId, anthropicClient: CLIENT, env: ENV });
++const run = (jobId: string) => runPitchGeneration(testDb.db, { userId: USER, jobId, anthropicFor: CLIENT_FOR, env: ENV });
+ 
+ describe("runPitchGeneration", () => {
+   it("throws no_match when there is no job_matches row", async () => {
+@@ -185,4 +192,28 @@ describe("runPitchGeneration", () => {
+   it("is a PitchGenerationError subclass of Error", () => {
+     expect(new PitchGenerationError("no_match")).toBeInstanceOf(Error);
+   });
++
++  it("hands research, requirements and the pitch each the client labelled with its own operation", async () => {
++    const jobId = await seed();
++    await run(jobId);
++    expect(vi.mocked(runCompanyResearch).mock.calls[0][0]).toBe(CLIENT_FOR("company_research"));
++    expect(vi.mocked(ensureJobRequirements).mock.calls[0][2]).toBe(CLIENT_FOR("job_requirements_extraction"));
++    expect(vi.mocked(generatePitch).mock.calls[0][0]).toBe(CLIENT_FOR("pitch_generation"));
++  });
++
++  it("lets a budget block from the pitch call propagate unchanged (not mapped to unknown)", async () => {
++    const jobId = await seed();
++    const blocked = new AiBudgetExceededError(20, 20, new Date("2026-11-01T00:00:00Z"));
++    vi.mocked(generatePitch).mockRejectedValueOnce(blocked);
++    await expect(run(jobId)).rejects.toBe(blocked);
++  });
++
++  it("lets a budget block from company research propagate without caching a failed research row", async () => {
++    const jobId = await seed();
++    const blocked = new AiBudgetExceededError(20, 20, new Date("2026-11-01T00:00:00Z"));
++    vi.mocked(runCompanyResearch).mockRejectedValueOnce(blocked);
++    await expect(run(jobId)).rejects.toBe(blocked);
++    const rows = await testDb.adminSql`SELECT status FROM company_research WHERE user_id = ${USER}`;
++    expect(rows).toEqual([]);
++  });
+ });

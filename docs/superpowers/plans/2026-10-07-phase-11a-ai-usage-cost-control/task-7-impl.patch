@@ -1,0 +1,185 @@
+diff --git a/apps/web/src/app/api/resume-optimizations/[jobId]/run/route.ts b/apps/web/src/app/api/resume-optimizations/[jobId]/run/route.ts
+index 005d015..1fe415a 100644
+--- a/apps/web/src/app/api/resume-optimizations/[jobId]/run/route.ts
++++ b/apps/web/src/app/api/resume-optimizations/[jobId]/run/route.ts
+@@ -2,10 +2,11 @@
+ import { NextResponse } from "next/server";
+ import { loadEnv } from "@ai-career/config";
+ import { closeDbClient, createDbClient } from "@ai-career/db";
+-import { createAnthropicClient } from "@ai-career/ai";
++import { AiBudgetExceededError, createAnthropicFor } from "@ai-career/ai";
+ import { runResumeOptimization, ResumeOptimizationError } from "@ai-career/resume-optimization";
+ import { toOptimizationView } from "../../../../../lib/resumeOptimization/serializeOptimization";
+ import { createUsageSink } from "../../../../../lib/aiUsage/createUsageSink";
++import { budgetExceededResponse } from "../../../../../lib/aiUsage/budgetResponse";
+ 
+ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+ 
+@@ -16,15 +17,17 @@ export async function POST(_request: Request, { params }: { params: Promise<{ jo
+   const env = loadEnv();
+   const db = createDbClient(env);
+   try {
++    const usageSink = createUsageSink(db, env);
+     const result = await runResumeOptimization(db, {
+       userId: env.DEFAULT_USER_ID,
+       jobId,
+-      anthropicClient: createAnthropicClient(env),
+-      usageSink: createUsageSink(db, env),
++      anthropicFor: createAnthropicFor(env, usageSink),
++      usageSink,
+       env,
+     });
+     return NextResponse.json({ optimization: toOptimizationView(result.optimization, result.evaluation) }, { status: 201 });
+   } catch (error) {
++    if (error instanceof AiBudgetExceededError) return budgetExceededResponse(error);
+     if (error instanceof ResumeOptimizationError) {
+       if (error.errorClass === "no_match") return NextResponse.json({ error: 'Run "Find Matches" for this job first' }, { status: 404 });
+       if (error.errorClass === "not_eligible") return NextResponse.json({ error: "This job is not an eligible match" }, { status: 400 });
+diff --git a/apps/web/src/lib/aiUsage/budgetResponse.ts b/apps/web/src/lib/aiUsage/budgetResponse.ts
+new file mode 100644
+index 0000000..2ff417d
+--- /dev/null
++++ b/apps/web/src/lib/aiUsage/budgetResponse.ts
+@@ -0,0 +1,22 @@
++import { NextResponse } from "next/server";
++import type { AiBudgetExceededError } from "@ai-career/ai";
++
++/**
++ * Phase 11a design §3.3. Every AI action panel already shows the response's `error` string, so the
++ * readable message goes there (no per-panel UI change); `code` lets anything else recognise the case.
++ */
++export function budgetExceededBody(error: AiBudgetExceededError, extra: Record<string, unknown> = {}) {
++  const resetsOn = error.resetsAt.toISOString().slice(0, 10);
++  return {
++    ...extra,
++    error: `Monthly AI budget reached ($${error.spentUsd.toFixed(2)} of $${error.ceilingUsd.toFixed(2)}). Raise AI_MONTHLY_BUDGET_USD or wait until ${resetsOn} (UTC).`,
++    code: "ai_budget_exceeded" as const,
++    spentUsd: error.spentUsd,
++    ceilingUsd: error.ceilingUsd,
++    resetsAt: error.resetsAt.toISOString(),
++  };
++}
++
++export function budgetExceededResponse(error: AiBudgetExceededError, extra: Record<string, unknown> = {}) {
++  return NextResponse.json(budgetExceededBody(error, extra), { status: 429 });
++}
+diff --git a/packages/resume-optimization/src/optimization/optimizeResume.ts b/packages/resume-optimization/src/optimization/optimizeResume.ts
+index 5e6a307..fdc7719 100644
+--- a/packages/resume-optimization/src/optimization/optimizeResume.ts
++++ b/packages/resume-optimization/src/optimization/optimizeResume.ts
+@@ -1,5 +1,6 @@
+ import { randomBytes } from "node:crypto";
+ import type Anthropic from "@anthropic-ai/sdk";
++import type { MessagesClient } from "@ai-career/ai";
+ import type { Env } from "@ai-career/config";
+ import { OptimizeResumeSchema, type OptimizeResumeDraft } from "./optimizeResumeSchema";
+ import type { EvidenceCatalogEntry } from "./buildResumeSnapshot";
+@@ -51,7 +52,7 @@ export interface OptimizeResumeInput {
+  * out for "already reviewed once."
+  */
+ export async function optimizeResume(
+-  client: Pick<Anthropic, "messages">,
++  client: MessagesClient,
+   env: Pick<Env, "ANTHROPIC_MODEL_FAST">,
+   input: OptimizeResumeInput
+ ): Promise<OptimizeResumeDraft> {
+diff --git a/packages/resume-optimization/src/pipeline/runResumeOptimization.ts b/packages/resume-optimization/src/pipeline/runResumeOptimization.ts
+index fc26203..57e993d 100644
+--- a/packages/resume-optimization/src/pipeline/runResumeOptimization.ts
++++ b/packages/resume-optimization/src/pipeline/runResumeOptimization.ts
+@@ -1,7 +1,7 @@
+ import { and, eq, max, sql } from "drizzle-orm";
+ import Anthropic from "@anthropic-ai/sdk";
+ import { schema, withUserContext, type DbClient } from "@ai-career/db";
+-import { embedTexts, type AiUsageSink } from "@ai-career/ai";
++import { embedTexts, type AiUsageSink, type AnthropicFor } from "@ai-career/ai";
+ import { ensureJobRequirements } from "../requirements/ensureJobRequirements";
+ import { JobRequirementExtractionValidationError } from "../requirements/extractJobRequirements";
+ import { buildResumeSnapshot } from "../optimization/buildResumeSnapshot";
+@@ -38,7 +38,8 @@ export interface RunResumeOptimizationEnv {
+ export interface RunResumeOptimizationOptions {
+   userId: string;
+   jobId: string;
+-  anthropicClient: Pick<Anthropic, "messages">;
++  /** One labelled, budget-checked Anthropic client per operation (Phase 11a). */
++  anthropicFor: AnthropicFor;
+   /** Where the similarity-embedding call is recorded and budget-checked (Phase 11a). */
+   usageSink: AiUsageSink;
+   env: RunResumeOptimizationEnv;
+@@ -57,6 +58,7 @@ const numOrNull = (n: number | null): string | null => (n === null ? null : Stri
+  * OptimizeResumeValidationError, Anthropic.APIError) are deliberately NOT swallowed here, unlike
+  * runMatching's "skip this job's explanation, keep going" rule -- this is a single user-triggered
+  * action on one job, not a batch run scoring many jobs, so there is nothing else to "keep going" to.
++ * (AiBudgetExceededError is not in that list: it propagates so the route can answer 429, Phase 11a.)
+  * They are instead mapped to ResumeOptimizationError("unknown") (D57's lesson, same distinction
+  * runMatching.ts's outer catch makes) so the caller (Task 12's API route) can tell "this call needs
+  * to surface a 502 and let the user retry" apart from a genuine bug, which is rethrown unchanged.
+@@ -65,7 +67,7 @@ export async function runResumeOptimization(
+   db: DbClient,
+   opts: RunResumeOptimizationOptions
+ ): Promise<RunResumeOptimizationResult> {
+-  const { userId, jobId, anthropicClient, usageSink, env } = opts;
++  const { userId, jobId, anthropicFor, usageSink, env } = opts;
+   const inUserContext = <T>(fn: (tx: DbClient) => Promise<T>) => withUserContext(db, userId, fn);
+ 
+   const [match] = await inUserContext((tx) => tx.select().from(jobMatches).where(eq(jobMatches.jobId, jobId)).limit(1));
+@@ -96,7 +98,7 @@ export async function runResumeOptimization(
+     // must never leave job_requirements half-replaced), and this is a single-job, user-triggered
+     // action, not a hot path serving concurrent traffic on the same job.
+     const requirements = await inUserContext((tx) =>
+-      ensureJobRequirements(tx, env, anthropicClient, {
++      ensureJobRequirements(tx, env, anthropicFor("job_requirements_extraction"), {
+         id: job.id, title: job.title, descriptionText: job.descriptionText, descriptionHash: job.descriptionHash,
+       })
+     );
+@@ -106,7 +108,7 @@ export async function runResumeOptimization(
+ 
+     snapshot = await inUserContext((tx) => buildResumeSnapshot(tx));
+ 
+-    draft = await optimizeResume(anthropicClient, env, {
++    draft = await optimizeResume(anthropicFor("resume_optimization"), env, {
+       jobTitle: job.title, companyName: job.companyName, requirements: requirementsForPrompt, catalog: snapshot.catalog,
+     });
+     guardResult = applyDeterministicGuard(snapshot.catalog, draft);
+diff --git a/packages/resume-optimization/src/requirements/ensureJobRequirements.ts b/packages/resume-optimization/src/requirements/ensureJobRequirements.ts
+index d4b1639..2dab2f2 100644
+--- a/packages/resume-optimization/src/requirements/ensureJobRequirements.ts
++++ b/packages/resume-optimization/src/requirements/ensureJobRequirements.ts
+@@ -1,7 +1,7 @@
+ import { eq } from "drizzle-orm";
+-import type Anthropic from "@anthropic-ai/sdk";
+ import { schema, type DbClient } from "@ai-career/db";
+ import type { Env } from "@ai-career/config";
++import type { MessagesClient } from "@ai-career/ai";
+ import { extractJobRequirements } from "./extractJobRequirements";
+ 
+ const { jobRequirements } = schema;
+@@ -22,7 +22,7 @@ export interface JobForRequirements {
+ export async function ensureJobRequirements(
+   tx: DbClient,
+   env: Pick<Env, "ANTHROPIC_MODEL_FAST">,
+-  anthropicClient: Pick<Anthropic, "messages">,
++  anthropicClient: MessagesClient,
+   job: JobForRequirements
+ ): Promise<(typeof jobRequirements.$inferSelect)[]> {
+   const existing = await tx.select().from(jobRequirements).where(eq(jobRequirements.jobId, job.id));
+diff --git a/packages/resume-optimization/src/requirements/extractJobRequirements.ts b/packages/resume-optimization/src/requirements/extractJobRequirements.ts
+index 95d50a4..0c324fc 100644
+--- a/packages/resume-optimization/src/requirements/extractJobRequirements.ts
++++ b/packages/resume-optimization/src/requirements/extractJobRequirements.ts
+@@ -1,5 +1,6 @@
+ import { randomBytes } from "node:crypto";
+ import type Anthropic from "@anthropic-ai/sdk";
++import type { MessagesClient } from "@ai-career/ai";
+ import type { Env } from "@ai-career/config";
+ import { JobRequirementExtractionSchema, type JobRequirementExtractionDraft } from "./jobRequirementExtractionSchema";
+ 
+@@ -29,7 +30,7 @@ export class JobRequirementExtractionValidationError extends Error {}
+  * random-delimiter defense as packages/ai/src/extractCareerGoal.ts (D20).
+  */
+ export async function extractJobRequirements(
+-  client: Pick<Anthropic, "messages">,
++  client: MessagesClient,
+   env: Pick<Env, "ANTHROPIC_MODEL_FAST">,
+   jobTitle: string,
+   descriptionText: string
