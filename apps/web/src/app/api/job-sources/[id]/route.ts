@@ -6,10 +6,11 @@ import { formatValidationError } from "../../../../lib/formatValidationError";
 import { readJsonBody } from "../../../../lib/readJsonBody";
 import { UpdateJobSourceSchema } from "../../../../lib/job-sources/jobSourceSchemas";
 import { serializeSource } from "../../../../lib/job-sources/serializeSource";
+import { withRouteErrors } from "../../../../lib/http/withRouteErrors";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-export async function PATCH(request: Request, { params }: { params: Promise<{ id: string }> }) {
+async function handlePATCH(request: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   if (!UUID_RE.test(id)) return NextResponse.json({ error: "Job source not found" }, { status: 404 });
 
@@ -50,3 +51,5 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
     await closeDbClient(db);
   }
 }
+
+export const PATCH = withRouteErrors("/api/job-sources/[id]", handlePATCH);

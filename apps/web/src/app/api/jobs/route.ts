@@ -3,8 +3,9 @@ import { loadEnv } from "@ai-career/config";
 import { closeDbClient, createDbClient, withUserContext } from "@ai-career/db";
 import { formatValidationError } from "../../../lib/formatValidationError";
 import { ListJobsQuerySchema, listJobs } from "../../../lib/jobs/listJobs";
+import { withRouteErrors } from "../../../lib/http/withRouteErrors";
 
-export async function GET(request: Request) {
+async function handleGET(request: Request) {
   const env = loadEnv();
   const parsed = ListJobsQuerySchema.safeParse(Object.fromEntries(new URL(request.url).searchParams));
   if (!parsed.success) {
@@ -19,3 +20,5 @@ export async function GET(request: Request) {
     await closeDbClient(db);
   }
 }
+
+export const GET = withRouteErrors("/api/jobs", handleGET);

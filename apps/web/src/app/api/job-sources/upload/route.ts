@@ -3,13 +3,14 @@ import { loadEnv } from "@ai-career/config";
 import { closeDbClient, createDbClient, withUserContext } from "@ai-career/db";
 import { UploadParseError, parseUploadFile, storeUpload } from "@ai-career/ingestion";
 import { enqueueIngestion } from "../../../../lib/job-ingestion/enqueue";
+import { withRouteErrors } from "../../../../lib/http/withRouteErrors";
 
 const MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024;
 // Content-Length covers the whole multipart envelope, so a file at exactly the cap is slightly larger.
 // This is only an early, coarse rejection; `file.size` below is the authoritative limit.
 const CONTENT_LENGTH_SLACK_BYTES = 64 * 1024;
 
-export async function POST(request: Request) {
+async function handlePOST(request: Request) {
   const env = loadEnv();
 
   // Reject an oversized upload from its declared length BEFORE request.formData() buffers the body.
@@ -62,3 +63,5 @@ export async function POST(request: Request) {
   }
   return NextResponse.json({ sourceId: stored.sourceId, count: stored.count, queued }, { status: 201 });
 }
+
+export const POST = withRouteErrors("/api/job-sources/upload", handlePOST);

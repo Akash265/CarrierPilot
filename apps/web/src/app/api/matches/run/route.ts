@@ -3,8 +3,9 @@ import { and, eq } from "drizzle-orm";
 import { loadEnv } from "@ai-career/config";
 import { closeDbClient, createDbClient, schema, withUserContext } from "@ai-career/db";
 import { enqueueMatching } from "../../../../lib/matching/enqueue";
+import { withRouteErrors } from "../../../../lib/http/withRouteErrors";
 
-export async function POST() {
+async function handlePOST() {
   const env = loadEnv();
   const db = createDbClient(env);
   let hasActiveGoal: boolean;
@@ -35,3 +36,5 @@ export async function POST() {
   }
   return NextResponse.json({ status: "queued" }, { status: 202 });
 }
+
+export const POST = withRouteErrors("/api/matches/run", handlePOST);

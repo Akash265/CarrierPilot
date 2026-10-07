@@ -2,8 +2,9 @@ import { NextResponse } from "next/server";
 import { desc } from "drizzle-orm";
 import { loadEnv } from "@ai-career/config";
 import { closeDbClient, createDbClient, schema, withUserContext } from "@ai-career/db";
+import { withRouteErrors } from "../../../../../lib/http/withRouteErrors";
 
-export async function GET() {
+async function handleGET() {
   const env = loadEnv();
   const db = createDbClient(env);
   try {
@@ -26,3 +27,5 @@ export async function GET() {
     await closeDbClient(db);
   }
 }
+
+export const GET = withRouteErrors("/api/matches/runs/latest", handleGET);

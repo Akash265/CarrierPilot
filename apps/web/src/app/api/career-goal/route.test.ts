@@ -95,6 +95,12 @@ describe("GET /api/career-goal", () => {
   it("fails loudly, rather than showing 'no goal', when the active goal has lost its constraints row", async () => {
     await adminSql`DELETE FROM career_goal_constraints WHERE user_id = ${TEST_USER_ID}`;
 
-    await expect(GET()).rejects.toThrow(/has no constraints/i);
+    // Phase 11b: the error no longer escapes to Next.js; withRouteErrors answers 500 with a request id and logs the
+    // error by name only, so the internal detail reaches neither the client nor the log.
+    const res = await GET();
+    expect(res.status).toBe(500);
+    const body = await res.json();
+    expect(body.error).toMatch(/^Something went wrong \(request [0-9a-f]{8}\)\. Details are in the server log\.$/);
+    expect(JSON.stringify(body)).not.toMatch(/constraints/i);
   });
 });

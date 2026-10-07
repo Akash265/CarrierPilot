@@ -3,11 +3,12 @@ import { loadEnv } from "@ai-career/config";
 import { closeDbClient, createDbClient } from "@ai-career/db";
 import { getSession } from "@ai-career/browser";
 import { toSessionView } from "../../../../lib/browser-automation/serializeSession";
+import { withRouteErrors } from "../../../../lib/http/withRouteErrors";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const notFound = () => NextResponse.json({ error: "Autofill session not found" }, { status: 404 });
 
-export async function GET(_request: Request, { params }: { params: Promise<{ id: string }> }) {
+async function handleGET(_request: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   if (!UUID_RE.test(id)) return notFound();
   const env = loadEnv();
@@ -19,3 +20,5 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
     await closeDbClient(db);
   }
 }
+
+export const GET = withRouteErrors("/api/automation-sessions/[id]", handleGET);

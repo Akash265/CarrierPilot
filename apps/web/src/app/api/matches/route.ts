@@ -4,8 +4,9 @@ import { closeDbClient, createDbClient, withUserContext } from "@ai-career/db";
 import { formatValidationError } from "../../../lib/formatValidationError";
 import { ListMatchesQuerySchema, listMatches } from "../../../lib/matching/listMatches";
 import { loadResponseModel } from "../../../lib/insights/responseModel";
+import { withRouteErrors } from "../../../lib/http/withRouteErrors";
 
-export async function GET(request: Request) {
+async function handleGET(request: Request) {
   const env = loadEnv();
   const parsed = ListMatchesQuerySchema.safeParse(Object.fromEntries(new URL(request.url).searchParams));
   if (!parsed.success) {
@@ -24,3 +25,5 @@ export async function GET(request: Request) {
     await closeDbClient(db);
   }
 }
+
+export const GET = withRouteErrors("/api/matches", handleGET);

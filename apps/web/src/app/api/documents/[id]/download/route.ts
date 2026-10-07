@@ -6,13 +6,14 @@ import { loadEnv } from "@ai-career/config";
 import { closeDbClient, createDbClient, schema, withUserContext } from "@ai-career/db";
 import { createStorageClient, getGeneratedDocument, statGeneratedDocument } from "@ai-career/storage";
 import { CONTENT_TYPES, contentDisposition } from "../../../../../lib/documents/serializeDocument";
+import { withRouteErrors } from "../../../../../lib/http/withRouteErrors";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const STORAGE_UNAVAILABLE_MESSAGE = "Document storage is unavailable. Try again.";
 const { generatedDocuments } = schema;
 
 /** The row is looked up under RLS first, so a known id of another user's document is a plain 404. */
-export async function GET(_request: Request, { params }: { params: Promise<{ id: string }> }) {
+async function handleGET(_request: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   if (!UUID_RE.test(id)) return NextResponse.json({ error: "Document not found" }, { status: 404 });
 
@@ -52,7 +53,7 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
  * JSON error page. Confirms the object with a cheap `statGeneratedDocument` (no download) rather than
  * `getGeneratedDocument`'s full stream, since a preflight only needs to know reachability.
  */
-export async function HEAD(_request: Request, { params }: { params: Promise<{ id: string }> }) {
+async function handleHEAD(_request: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   if (!UUID_RE.test(id)) return new Response(null, { status: 404 });
 
@@ -77,3 +78,6 @@ export async function HEAD(_request: Request, { params }: { params: Promise<{ id
     await closeDbClient(db);
   }
 }
+
+export const GET = withRouteErrors("/api/documents/[id]/download", handleGET);
+export const HEAD = withRouteErrors("/api/documents/[id]/download", handleHEAD);

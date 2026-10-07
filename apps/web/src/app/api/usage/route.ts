@@ -4,6 +4,7 @@ import { loadEnv } from "@ai-career/config";
 import { closeDbClient, createDbClient, schema, withUserContext } from "@ai-career/db";
 import { utcMonthStart } from "@ai-career/ai";
 import { summarizeUsage } from "../../../lib/aiUsage/summarizeUsage";
+import { withRouteErrors } from "../../../lib/http/withRouteErrors";
 
 const { aiCalls } = schema;
 
@@ -11,7 +12,7 @@ const { aiCalls } = schema;
  * Phase 11a design §9. Read-only: this UTC month's ai_calls rows summarized on every request (a single
  * user's month is at most thousands of rows). Metadata only -- the table holds no prompt or response text.
  */
-export async function GET() {
+async function handleGET() {
   const env = loadEnv();
   const db = createDbClient(env);
   const now = new Date();
@@ -39,3 +40,5 @@ export async function GET() {
     await closeDbClient(db);
   }
 }
+
+export const GET = withRouteErrors("/api/usage", handleGET);

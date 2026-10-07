@@ -3,10 +3,11 @@ import { eq } from "drizzle-orm";
 import { loadEnv } from "@ai-career/config";
 import { closeDbClient, createDbClient, schema, withUserContext } from "@ai-career/db";
 import { enqueueIngestion } from "../../../../../lib/job-ingestion/enqueue";
+import { withRouteErrors } from "../../../../../lib/http/withRouteErrors";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-export async function POST(_request: Request, { params }: { params: Promise<{ id: string }> }) {
+async function handlePOST(_request: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   if (!UUID_RE.test(id)) return NextResponse.json({ error: "Job source not found" }, { status: 404 });
 
@@ -42,3 +43,5 @@ export async function POST(_request: Request, { params }: { params: Promise<{ id
   }
   return NextResponse.json({ status: "queued" }, { status: 202 });
 }
+
+export const POST = withRouteErrors("/api/job-sources/[id]/run", handlePOST);

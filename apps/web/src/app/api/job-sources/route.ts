@@ -6,8 +6,9 @@ import { isUniqueViolation } from "../../../lib/isUniqueViolation";
 import { readJsonBody } from "../../../lib/readJsonBody";
 import { CreateJobSourceSchema } from "../../../lib/job-sources/jobSourceSchemas";
 import { listJobSourceViews, serializeSource } from "../../../lib/job-sources/serializeSource";
+import { withRouteErrors } from "../../../lib/http/withRouteErrors";
 
-export async function GET() {
+async function handleGET() {
   const env = loadEnv();
   const db = createDbClient(env);
   try {
@@ -18,7 +19,7 @@ export async function GET() {
   }
 }
 
-export async function POST(request: Request) {
+async function handlePOST(request: Request) {
   const env = loadEnv();
   const jsonBody = await readJsonBody(request);
   if (!jsonBody.ok) return jsonBody.response;
@@ -48,3 +49,6 @@ export async function POST(request: Request) {
     await closeDbClient(db);
   }
 }
+
+export const GET = withRouteErrors("/api/job-sources", handleGET);
+export const POST = withRouteErrors("/api/job-sources", handlePOST);

@@ -16,6 +16,7 @@ import {
 } from "@ai-career/ai";
 import { createUsageSink } from "../../../../lib/aiUsage/createUsageSink";
 import { budgetExceededResponse } from "../../../../lib/aiUsage/budgetResponse";
+import { withRouteErrors } from "../../../../lib/http/withRouteErrors";
 
 const MAX_RAW_TEXT_LENGTH = 4000;
 
@@ -34,7 +35,7 @@ async function extractWithRetry(
   }
 }
 
-export async function POST(request: Request) {
+async function handlePOST(request: Request) {
   const env = loadEnv();
   const jsonBody = await readJsonBody(request);
   if (!jsonBody.ok) return jsonBody.response;
@@ -140,3 +141,5 @@ export async function POST(request: Request) {
     await closeDbClient(db);
   }
 }
+
+export const POST = withRouteErrors("/api/career-goal/parse", handlePOST);

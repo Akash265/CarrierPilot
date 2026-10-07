@@ -4,8 +4,9 @@ import { ConfirmedProfileSchema } from "../../../../lib/profile/confirmedProfile
 import { formatValidationError } from "../../../../lib/formatValidationError";
 import { readJsonBody } from "../../../../lib/readJsonBody";
 import { saveConfirmedProfile } from "../../../../lib/profile/saveProfile";
+import { withRouteErrors } from "../../../../lib/http/withRouteErrors";
 
-export async function POST(request: Request) {
+async function handlePOST(request: Request) {
   const env = loadEnv();
   const jsonBody = await readJsonBody(request);
   if (!jsonBody.ok) return jsonBody.response;
@@ -18,3 +19,5 @@ export async function POST(request: Request) {
   const result = await saveConfirmedProfile(env, parsed.data);
   return NextResponse.json({ status: "saved", factsGenerated: result.factsGenerated });
 }
+
+export const POST = withRouteErrors("/api/profile/confirm", handlePOST);

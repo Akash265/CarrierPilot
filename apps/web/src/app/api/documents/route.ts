@@ -13,6 +13,7 @@ import { formatValidationError } from "../../../lib/formatValidationError";
 import { listDocuments } from "../../../lib/documents/listDocuments";
 import { toDocumentView } from "../../../lib/documents/serializeDocument";
 import { exportErrorResponse } from "../../../lib/documents/exportErrors";
+import { withRouteErrors } from "../../../lib/http/withRouteErrors";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const ExportBodySchema = z
@@ -66,7 +67,7 @@ async function sourceVersion(db: DbClient, userId: string, row: GeneratedDocumen
   });
 }
 
-export async function POST(request: Request) {
+async function handlePOST(request: Request) {
   const json = await readJsonBody(request);
   if (!json.ok) return json.response;
   const parsed = ExportBodySchema.safeParse(json.body);
@@ -87,7 +88,7 @@ export async function POST(request: Request) {
   }
 }
 
-export async function GET(request: Request) {
+async function handleGET(request: Request) {
   const jobId = new URL(request.url).searchParams.get("jobId");
   if (!jobId || !UUID_RE.test(jobId)) return NextResponse.json({ error: "Job not found" }, { status: 404 });
 
@@ -100,3 +101,6 @@ export async function GET(request: Request) {
     await closeDbClient(db);
   }
 }
+
+export const POST = withRouteErrors("/api/documents", handlePOST);
+export const GET = withRouteErrors("/api/documents", handleGET);

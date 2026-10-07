@@ -4,8 +4,9 @@ import { sql } from "drizzle-orm";
 import Redis from "ioredis";
 import { loadEnv } from "@ai-career/config";
 import { getLangfuseExportFailures, isLangfuseConfigured } from "@ai-career/ai";
+import { withRouteErrors } from "../../../lib/http/withRouteErrors";
 
-export async function GET() {
+async function handleGET() {
   const env = loadEnv();
   const checks = { database: false, redis: false };
 
@@ -46,3 +47,5 @@ export async function GET() {
   const aiUsage = { langfuseEnabled: isLangfuseConfigured(env), langfuseExportFailures: getLangfuseExportFailures() };
   return NextResponse.json({ status, checks, aiUsage }, { status: status === "ok" ? 200 : 503 });
 }
+
+export const GET = withRouteErrors("/api/health", handleGET);
