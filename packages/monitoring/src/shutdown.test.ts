@@ -54,4 +54,32 @@ describe("createShutdown", () => {
       vi.useRealTimers();
     }
   });
+
+  it("defaults to an 8 s deadline, inside Docker's 10 s stop grace period, so the exit is ours and logged", async () => {
+    vi.useFakeTimers();
+    try {
+      const log = logger();
+      const exit = vi.fn();
+      void createShutdown({ logger: log, steps: () => new Promise<void>(() => undefined), exit })();
+      await vi.advanceTimersByTimeAsync(7_999);
+      expect(exit).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(log.error).toHaveBeenCalledWith("shutdown_timed_out", { timeoutMs: 8_000 });
+      expect(exit).toHaveBeenCalledWith(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps the deadline timer ref'd, so the process cannot go idle and exit 0 before it fires", () => {
+    const spy = vi.spyOn(globalThis, "setTimeout");
+    try {
+      void createShutdown({ logger: logger(), steps: () => new Promise<void>(() => undefined), exit: vi.fn() })();
+      const timer = spy.mock.results[0]?.value as NodeJS.Timeout;
+      expect(timer.hasRef()).toBe(true);
+      clearTimeout(timer);
+    } finally {
+      spy.mockRestore();
+    }
+  });
 });

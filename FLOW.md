@@ -1624,7 +1624,7 @@ worker main.ts → (right after Redis opens) startHeartbeat(connection, "<worker
                   SET careerpilot:worker:<worker> {startedAt, beatAt, pid, stoppedAt:null}  now + every interval
 shutdown = createShutdown({ logger, steps })     packages/monitoring/src/shutdown.ts   (D174)
   SIGINT/SIGTERM (any number) → steps once: worker.close → heartbeat.stop() (SET ... stoppedAt, ≤ 2 s) → connection.quit → db
-  → exit 0 | step throws → shutdown_failed, exit 1 | still waiting after 10 s → shutdown_timed_out, exit 1
+  → exit 0 | step throws → shutdown_failed, exit 1 | still waiting after 8 s → shutdown_timed_out, exit 1
 
 GET /api/status                               apps/web/src/app/api/status/route.ts → loadStatus(env)   apps/web/src/lib/status/loadStatus.ts
  ├─ loadEnv() throws → 200 unavailableReport() (status_config_invalid logged)          (D174)

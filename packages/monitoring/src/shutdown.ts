@@ -4,7 +4,10 @@ export interface ShutdownOptions {
   logger: Logger;
   /** Closes the worker, queues, heartbeat, Redis and the database, in order. */
   steps: () => Promise<void>;
-  /** After this, the process exits 1 even if a step is still waiting (default 10 s). */
+  /**
+   * After this, the process exits 1 even if a step is still waiting. The default, 8 s, sits inside Docker's 10 s stop
+   * grace period, so a stuck shutdown ends in our logged exit rather than an unlogged SIGKILL.
+   */
   timeoutMs?: number;
   /** Injectable for tests. */
   exit?: (code: number) => void;
@@ -18,7 +21,7 @@ export interface ShutdownOptions {
  */
 export function createShutdown(opts: ShutdownOptions): () => Promise<void> {
   const exit = opts.exit ?? ((code: number) => process.exit(code));
-  const timeoutMs = opts.timeoutMs ?? 10_000;
+  const timeoutMs = opts.timeoutMs ?? 8_000;
   let running: Promise<void> | null = null;
   let exited = false;
   const exitOnce = (code: number) => {
@@ -33,7 +36,8 @@ export function createShutdown(opts: ShutdownOptions): () => Promise<void> {
       opts.logger.error("shutdown_timed_out", { timeoutMs });
       exitOnce(1);
     }, timeoutMs);
-    deadline.unref?.();
+    // Deliberately ref'd: if the steps drop every other handle while still pending, an unref'd deadline would let the
+    // process go idle and exit 0, hiding the stuck shutdown.
     running = (async () => {
       try {
         await opts.steps();
