@@ -1,0 +1,510 @@
+diff --git a/apps/web/package.json b/apps/web/package.json
+index 719b2e8..dc4cce6 100644
+--- a/apps/web/package.json
++++ b/apps/web/package.json
+@@ -20,6 +20,7 @@
+     "@ai-career/document-export": "workspace:*",
+     "@ai-career/ingestion": "workspace:*",
+     "@ai-career/insights": "workspace:*",
++    "@ai-career/logging": "workspace:*",
+     "@ai-career/matching": "workspace:*",
+     "@ai-career/resume-optimization": "workspace:*",
+     "@ai-career/storage": "workspace:*",
+diff --git a/apps/web/src/lib/insights/responseModel.ts b/apps/web/src/lib/insights/responseModel.ts
+index 72994da..e4e6e86 100644
+--- a/apps/web/src/lib/insights/responseModel.ts
++++ b/apps/web/src/lib/insights/responseModel.ts
+@@ -1,4 +1,5 @@
+ import { createHash } from "node:crypto";
++import { log } from "../log";
+ import type { DbClient } from "@ai-career/db";
+ import {
+   buildOutcomeDataset, describeFactors, loadInsightInputs, summarizeModel, trainResponseModel, trainingRows,
+@@ -44,11 +45,11 @@ function cacheKey(records: readonly OutcomeRecord[], env: ResponseModelEnv): str
+ }
+ 
+ /**
+- * Phase 10b spec §5: the model must never make a request fail. The error is logged by class name only
+- * (CLAUDE.md §9 -- no application content) and reported as `no_pattern`, which keeps the default ranking.
++ * Phase 10b spec §5: the model must never make a request fail. The error is logged by class name and
++ * stack frames only, never its message (CLAUDE.md §9 -- no application content) and reported as `no_pattern`, which keeps the default ranking.
+  */
+ function failed(error: unknown, env: ResponseModelEnv): LoadedResponseModel {
+-  console.error(JSON.stringify({ event: "response_model_failed", error: error instanceof Error ? error.name : "unknown" }));
++  log.error("response_model_failed", { error });
+   const result: ModelResult = {
+     status: "no_pattern", decided: 0, responses: 0, nonResponses: 0,
+     minDecided: env.OUTCOME_MODEL_MIN_DECIDED, minPerClass: env.OUTCOME_MODEL_MIN_PER_CLASS,
+diff --git a/apps/web/src/lib/log.ts b/apps/web/src/lib/log.ts
+new file mode 100644
+index 0000000..57f642e
+--- /dev/null
++++ b/apps/web/src/lib/log.ts
+@@ -0,0 +1,4 @@
++import { createLogger } from "@ai-career/logging";
++
++/** The web app's logger (Phase 11b). Level and D9 values are process-wide; see lib/http/withRouteErrors.ts. */
++export const log = createLogger({ service: "web" });
+diff --git a/packages/ai/package.json b/packages/ai/package.json
+index 18e19e7..2259976 100644
+--- a/packages/ai/package.json
++++ b/packages/ai/package.json
+@@ -14,11 +14,12 @@
+   },
+   "dependencies": {
+     "@ai-career/config": "workspace:*",
++    "@ai-career/logging": "workspace:*",
+     "@anthropic-ai/sdk": "^0.128.0",
+-    "zod": "^3.24.0",
+-    "pdf-parse": "^1.1.1",
++    "file-type": "^19.6.0",
+     "mammoth": "^1.8.0",
+-    "file-type": "^19.6.0"
++    "pdf-parse": "^1.1.1",
++    "zod": "^3.24.0"
+   },
+   "devDependencies": {
+     "vitest": "^2.1.0",
+diff --git a/packages/ai/src/usage/track.ts b/packages/ai/src/usage/track.ts
+index b1b45b3..48fe308 100644
+--- a/packages/ai/src/usage/track.ts
++++ b/packages/ai/src/usage/track.ts
+@@ -1,4 +1,5 @@
+ import { randomUUID } from "node:crypto";
++import { createLogger } from "@ai-career/logging";
+ import { AiBudgetExceededError, checkBudget, type BudgetEnv } from "./budget";
+ import { estimateCostUsd } from "./prices";
+ import { ZERO_USAGE, type AiCallEvent, type AiOperation, type AiProvider, type AiUsageSink, type UsageCounts } from "./types";
+@@ -29,13 +30,15 @@ export interface TrackedResult<T> {
+   servedModel?: string;
+ }
+ 
++const log = createLogger({ service: "ai" });
++
+ /** A failed `record` must never fail a call that already happened (and may have been paid for). */
+ async function safeRecord(sink: AiUsageSink, event: AiCallEvent): Promise<void> {
+   try {
+     await sink.record(event);
+   } catch (error) {
+-    const code = typeof (error as { code?: unknown })?.code === "string" ? (error as { code: string }).code : "unknown";
+-    console.error(JSON.stringify({ event: "ai_usage_record_failed", operation: event.operation, code }));
++    // The logger keeps the error's name, a code-like `code` (e.g. a Postgres SQLSTATE) and frames -- never its message.
++    log.error("ai_usage_record_failed", { operation: event.operation, error });
+   }
+ }
+ 
+diff --git a/pnpm-lock.yaml b/pnpm-lock.yaml
+index 1673e14..cb32c4c 100644
+--- a/pnpm-lock.yaml
++++ b/pnpm-lock.yaml
+@@ -44,6 +44,9 @@ importers:
+       '@ai-career/insights':
+         specifier: workspace:*
+         version: link:../../packages/insights
++      '@ai-career/logging':
++        specifier: workspace:*
++        version: link:../../packages/logging
+       '@ai-career/matching':
+         specifier: workspace:*
+         version: link:../../packages/matching
+@@ -129,6 +132,9 @@ importers:
+       '@ai-career/config':
+         specifier: workspace:*
+         version: link:../config
++      '@ai-career/logging':
++        specifier: workspace:*
++        version: link:../logging
+       '@anthropic-ai/sdk':
+         specifier: ^0.128.0
+         version: 0.128.0(zod@3.25.76)
+@@ -630,6 +636,9 @@ importers:
+       '@ai-career/db':
+         specifier: workspace:*
+         version: link:../../packages/db
++      '@ai-career/logging':
++        specifier: workspace:*
++        version: link:../../packages/logging
+       '@ai-career/storage':
+         specifier: workspace:*
+         version: link:../../packages/storage
+@@ -682,6 +691,9 @@ importers:
+       '@ai-career/ingestion':
+         specifier: workspace:*
+         version: link:../../packages/ingestion
++      '@ai-career/logging':
++        specifier: workspace:*
++        version: link:../../packages/logging
+       bullmq:
+         specifier: ^5.34.0
+         version: 5.81.5
+@@ -728,6 +740,9 @@ importers:
+       '@ai-career/db':
+         specifier: workspace:*
+         version: link:../../packages/db
++      '@ai-career/logging':
++        specifier: workspace:*
++        version: link:../../packages/logging
+       '@ai-career/storage':
+         specifier: workspace:*
+         version: link:../../packages/storage
+@@ -777,6 +792,9 @@ importers:
+       '@ai-career/db':
+         specifier: workspace:*
+         version: link:../../packages/db
++      '@ai-career/logging':
++        specifier: workspace:*
++        version: link:../../packages/logging
+       '@ai-career/matching':
+         specifier: workspace:*
+         version: link:../../packages/matching
+diff --git a/services/browser-worker/package.json b/services/browser-worker/package.json
+index 29849f1..cd6159e 100644
+--- a/services/browser-worker/package.json
++++ b/services/browser-worker/package.json
+@@ -13,6 +13,7 @@
+     "@ai-career/browser": "workspace:*",
+     "@ai-career/config": "workspace:*",
+     "@ai-career/db": "workspace:*",
++    "@ai-career/logging": "workspace:*",
+     "@ai-career/storage": "workspace:*",
+     "bullmq": "^5.34.0",
+     "ioredis": "^5.4.0",
+diff --git a/services/browser-worker/src/main.ts b/services/browser-worker/src/main.ts
+index 98f1b28..585a1a1 100644
+--- a/services/browser-worker/src/main.ts
++++ b/services/browser-worker/src/main.ts
+@@ -1,20 +1,22 @@
+ import IORedis from "ioredis";
+ import { loadEnv } from "@ai-career/config";
+-import { closeDbClient, createDbClient } from "@ai-career/db";
++import { closeDbClient, createDbClient, loadRedactionValues } from "@ai-career/db";
++import { createLogger, initProcessLogging } from "@ai-career/logging";
+ import { createStorageClient } from "@ai-career/storage";
+ import { sweepInterruptedSessions } from "@ai-career/browser";
+ import { minioFetcher } from "./attachments";
+ import { ReleasedWindows, removeStaleSessionDirs } from "./browser";
+ import { createBrowserWorker } from "./worker";
+ 
+-// Structured logs only: ids, statuses and error classes -- never field values, labels or URLs (CLAUDE.md §9).
+-const log = (event: string, fields: Record<string, unknown> = {}) =>
+-  console.log(JSON.stringify({ event, at: new Date().toISOString(), ...fields }));
+-const safeErrorLabel = (error: unknown): string => (error instanceof Error ? error.name : "unknown");
++// Structured logs only: ids, statuses and error classes -- never field values, labels or URLs (CLAUDE.md §9, Phase 11b).
++const log = createLogger({ service: "browser-worker" });
+ 
+ async function main(): Promise<void> {
+   const env = loadEnv();
+   const db = createDbClient(env);
++  const stopRedactionRefresh = await initProcessLogging({
++    level: env.LOG_LEVEL, load: () => loadRedactionValues(db, env.DEFAULT_USER_ID), logger: log,
++  });
+   const connection = new IORedis(env.REDIS_URL, { maxRetriesPerRequest: null });
+   const released = new ReleasedWindows();
+ 
+@@ -33,9 +35,9 @@ async function main(): Promise<void> {
+     timeoutMs: env.BROWSER_SESSION_TIMEOUT_MIN * 60_000,
+     released,
+   });
+-  worker.on("completed", (job, result) => log("autofill_completed", { sessionId: job.data.sessionId, result }));
+-  worker.on("failed", (job, error) => log("autofill_failed", { sessionId: job?.data.sessionId, error: safeErrorLabel(error) }));
+-  log("worker_started", { sweptSessions: swept, removedTempDirs, headless: env.BROWSER_HEADLESS });
++  worker.on("completed", (job, result) => log.info("autofill_completed", { sessionId: job.data.sessionId, result }));
++  worker.on("failed", (job, error) => log.error("autofill_failed", { sessionId: job?.data.sessionId, error }));
++  log.info("worker_started", { sweptSessions: swept, removedTempDirs, headless: env.BROWSER_HEADLESS });
+ 
+   let stopping = false;
+   const shutdown = async () => {
+@@ -43,6 +45,7 @@ async function main(): Promise<void> {
+     // touch the worker/connection/db, the rest of which are not safe to close twice.
+     if (stopping) return;
+     stopping = true;
++    stopRedactionRefresh();
+     // force: an active session may be waiting minutes for the user; the next start sweeps it to failed.
+     await worker.close(true);
+     // closeAll also closes the one active (in-progress) window, if any -- see ReleasedWindows.setActive.
+@@ -56,6 +59,6 @@ async function main(): Promise<void> {
+ }
+ 
+ main().catch((error) => {
+-  log("worker_crashed", { error: safeErrorLabel(error) });
++  log.error("worker_crashed", { error });
+   process.exit(1);
+ });
+diff --git a/services/job-ingestion/package.json b/services/job-ingestion/package.json
+index 9daaf31..2381dbf 100644
+--- a/services/job-ingestion/package.json
++++ b/services/job-ingestion/package.json
+@@ -16,6 +16,7 @@
+     "@ai-career/config": "workspace:*",
+     "@ai-career/db": "workspace:*",
+     "@ai-career/ingestion": "workspace:*",
++    "@ai-career/logging": "workspace:*",
+     "bullmq": "^5.34.0",
+     "drizzle-orm": "^0.36.0",
+     "ioredis": "^5.4.0"
+diff --git a/services/job-ingestion/src/main.ts b/services/job-ingestion/src/main.ts
+index 2666382..a5cf2c4 100644
+--- a/services/job-ingestion/src/main.ts
++++ b/services/job-ingestion/src/main.ts
+@@ -1,25 +1,27 @@
+ import IORedis from "ioredis";
+ import { Queue } from "bullmq";
+ import { loadEnv } from "@ai-career/config";
+-import { closeDbClient, createDbClient } from "@ai-career/db";
++import { closeDbClient, createDbClient, loadRedactionValues } from "@ai-career/db";
++import { createLogger, initProcessLogging } from "@ai-career/logging";
+ import { INGEST_QUEUE_NAME, createAdapterFor, type IngestJobData } from "@ai-career/ingestion";
+ import { reconcileSchedules } from "./reconcile";
+ import { createIngestWorker } from "./worker";
+ 
+-// Structured logs only, and never posting content: ids, counts and error CLASSES (CLAUDE.md §9, D29).
+-const log = (event: string, fields: Record<string, unknown> = {}) =>
+-  console.log(JSON.stringify({ event, at: new Date().toISOString(), ...fields }));
++// Structured logs only, and never posting content: ids, counts and error classes (CLAUDE.md §9, D29, Phase 11b).
++const log = createLogger({ service: "job-ingestion" });
+ 
+-const safeErrorLabel = (error: unknown): string =>
+-  error instanceof Error && (error.name === "UnrecoverableError" || error.name === "IngestError")
+-    ? error.message
+-    : error instanceof Error
+-      ? error.name
+-      : "unknown";
++/** Our own error classes carry a fixed error class as their message, so that one message is safe to log. */
++const failureFields = (error: unknown) => ({
++  error,
++  ...(error instanceof Error && (error.name === "UnrecoverableError" || error.name === "IngestError") ? { errorClass: error.message } : {}),
++});
+ 
+ async function main(): Promise<void> {
+   const env = loadEnv();
+   const db = createDbClient(env);
++  const stopRedactionRefresh = await initProcessLogging({
++    level: env.LOG_LEVEL, load: () => loadRedactionValues(db, env.DEFAULT_USER_ID), logger: log,
++  });
+   // BullMQ workers require maxRetriesPerRequest: null on their connection.
+   const connection = new IORedis(env.REDIS_URL, { maxRetriesPerRequest: null });
+   const queue = new Queue<IngestJobData>(INGEST_QUEUE_NAME, { connection });
+@@ -30,28 +32,29 @@ async function main(): Promise<void> {
+     leverBaseUrl: env.LEVER_API_BASE,
+   });
+   const worker = createIngestWorker({ connection, db, userId: env.DEFAULT_USER_ID, adapterFor });
+-  worker.on("completed", (job) => log("ingest_completed", { jobId: job.id }));
+-  worker.on("failed", (job, error) => log("ingest_failed", { jobId: job?.id, error: safeErrorLabel(error) }));
++  worker.on("completed", (job) => log.info("ingest_completed", { jobId: job.id }));
++  worker.on("failed", (job, error) => log.error("ingest_failed", { jobId: job?.id, ...failureFields(error) }));
+ 
+   const everyMs = env.INGEST_INTERVAL_MINUTES * 60_000;
+   const reconcile = async (refresh: boolean) => {
+     try {
+       const plan = await reconcileSchedules({ db, userId: env.DEFAULT_USER_ID, queue, everyMs, refresh });
+       if (refresh || plan.upsert.length > 0 || plan.remove.length > 0) {
+-        log("schedules_reconciled", { upserted: plan.upsert.length, removed: plan.remove.length });
++        log.info("schedules_reconciled", { upserted: plan.upsert.length, removed: plan.remove.length });
+       }
+     } catch (error) {
+-      log("schedule_reconcile_failed", { error: safeErrorLabel(error) });
++      log.error("schedule_reconcile_failed", failureFields(error));
+     }
+   };
+ 
+   await reconcile(true);
+   // The database is the source of truth: pick up sources enabled/disabled from the web app.
+   const timer = setInterval(() => void reconcile(false), 60_000);
+-  log("worker_started", { everyMinutes: env.INGEST_INTERVAL_MINUTES });
++  log.info("worker_started", { everyMinutes: env.INGEST_INTERVAL_MINUTES });
+ 
+   const shutdown = async () => {
+     clearInterval(timer);
++    stopRedactionRefresh();
+     await worker.close();
+     await queue.close();
+     await connection.quit();
+@@ -63,6 +66,6 @@ async function main(): Promise<void> {
+ }
+ 
+ main().catch((error) => {
+-  log("worker_crashed", { error: safeErrorLabel(error) });
++  log.error("worker_crashed", failureFields(error));
+   process.exit(1);
+ });
+diff --git a/services/maintenance-worker/package.json b/services/maintenance-worker/package.json
+index cf536ea..c6b6bf3 100644
+--- a/services/maintenance-worker/package.json
++++ b/services/maintenance-worker/package.json
+@@ -15,6 +15,7 @@
+     "@ai-career/applications": "workspace:*",
+     "@ai-career/config": "workspace:*",
+     "@ai-career/db": "workspace:*",
++    "@ai-career/logging": "workspace:*",
+     "@ai-career/storage": "workspace:*",
+     "bullmq": "^5.34.0",
+     "ioredis": "^5.4.0",
+diff --git a/services/maintenance-worker/src/main.ts b/services/maintenance-worker/src/main.ts
+index 6090dc7..428df59 100644
+--- a/services/maintenance-worker/src/main.ts
++++ b/services/maintenance-worker/src/main.ts
+@@ -1,31 +1,34 @@
+ import IORedis from "ioredis";
+ import { Queue } from "bullmq";
+ import { loadEnv } from "@ai-career/config";
+-import { closeDbClient, createDbClient } from "@ai-career/db";
++import { closeDbClient, createDbClient, loadRedactionValues } from "@ai-career/db";
++import { createLogger, initProcessLogging } from "@ai-career/logging";
+ import { createStorageClient } from "@ai-career/storage";
+ import { createRetentionStorage } from "./storageAdapter";
+ import { createMaintenanceWorker, scheduleRetention } from "./worker";
+ import { MAINTENANCE_QUEUE_NAME } from "./queue";
+ 
+-// Structured logs only: ids, counts and error classes -- never document or note content (CLAUDE.md §9).
+-const log = (event: string, fields: Record<string, unknown> = {}) =>
+-  console.log(JSON.stringify({ event, at: new Date().toISOString(), ...fields }));
+-const safeErrorLabel = (error: unknown): string => (error instanceof Error ? error.name : "unknown");
++// Structured logs only: ids, counts and error classes -- never document or note content (CLAUDE.md §9, Phase 11b).
++const log = createLogger({ service: "maintenance-worker" });
+ 
+ async function main(): Promise<void> {
+   const env = loadEnv();
+   const db = createDbClient(env);
++  const stopRedactionRefresh = await initProcessLogging({
++    level: env.LOG_LEVEL, load: () => loadRedactionValues(db, env.DEFAULT_USER_ID), logger: log,
++  });
+   const connection = new IORedis(env.REDIS_URL, { maxRetriesPerRequest: null });
+   const queue = new Queue(MAINTENANCE_QUEUE_NAME, { connection });
+   const storage = createRetentionStorage(createStorageClient(env));
+ 
+   const worker = createMaintenanceWorker({ connection, db, storage, userId: env.DEFAULT_USER_ID, retentionDays: env.RETENTION_DAYS });
+-  worker.on("completed", (job, result) => log("maintenance_completed", { jobId: job.id, name: job.name, ...result }));
+-  worker.on("failed", (job, error) => log("maintenance_failed", { jobId: job?.id, name: job?.name, error: safeErrorLabel(error) }));
++  worker.on("completed", (job, result) => log.info("maintenance_completed", { jobId: job.id, name: job.name, ...result }));
++  worker.on("failed", (job, error) => log.error("maintenance_failed", { jobId: job?.id, name: job?.name, error }));
+   await scheduleRetention(queue);
+-  log("worker_started", { retentionDays: env.RETENTION_DAYS });
++  log.info("worker_started", { retentionDays: env.RETENTION_DAYS });
+ 
+   const shutdown = async () => {
++    stopRedactionRefresh();
+     await worker.close();
+     await queue.close();
+     await connection.quit();
+@@ -37,6 +40,6 @@ async function main(): Promise<void> {
+ }
+ 
+ main().catch((error) => {
+-  log("worker_crashed", { error: safeErrorLabel(error) });
++  log.error("worker_crashed", { error });
+   process.exit(1);
+ });
+diff --git a/services/maintenance-worker/src/runOnce.ts b/services/maintenance-worker/src/runOnce.ts
+index 005fa55..348dca5 100644
+--- a/services/maintenance-worker/src/runOnce.ts
++++ b/services/maintenance-worker/src/runOnce.ts
+@@ -1,24 +1,31 @@
+ import { loadEnv } from "@ai-career/config";
+-import { closeDbClient, createDbClient } from "@ai-career/db";
++import { closeDbClient, createDbClient, loadRedactionValues } from "@ai-career/db";
++import { createLogger, initProcessLogging } from "@ai-career/logging";
+ import { createStorageClient } from "@ai-career/storage";
+ import { runRetentionSweep } from "@ai-career/applications";
+ import { createRetentionStorage } from "./storageAdapter";
+ 
++const log = createLogger({ service: "maintenance-worker" });
++
+ /** `pnpm retention:run`: one sweep now, same code path as the daily job. Prints counts only. */
+ async function main(): Promise<void> {
+   const env = loadEnv();
+   const db = createDbClient(env);
++  const stopRedactionRefresh = await initProcessLogging({
++    level: env.LOG_LEVEL, load: () => loadRedactionValues(db, env.DEFAULT_USER_ID), logger: log,
++  });
+   try {
+     const result = await runRetentionSweep({
+       db, storage: createRetentionStorage(createStorageClient(env)), userId: env.DEFAULT_USER_ID, retentionDays: env.RETENTION_DAYS,
+     });
+-    console.log(JSON.stringify({ event: "retention_run", ...result }));
++    log.info("retention_run", { ...result });
+   } finally {
++    stopRedactionRefresh();
+     await closeDbClient(db);
+   }
+ }
+ 
+ main().catch((error) => {
+-  console.log(JSON.stringify({ event: "retention_run_failed", error: error instanceof Error ? error.name : "unknown" }));
++  log.error("retention_run_failed", { error });
+   process.exit(1);
+ });
+diff --git a/services/matching-worker/package.json b/services/matching-worker/package.json
+index ea06a9d..e0f2114 100644
+--- a/services/matching-worker/package.json
++++ b/services/matching-worker/package.json
+@@ -16,6 +16,7 @@
+     "@ai-career/ai": "workspace:*",
+     "@ai-career/config": "workspace:*",
+     "@ai-career/db": "workspace:*",
++    "@ai-career/logging": "workspace:*",
+     "@ai-career/matching": "workspace:*",
+     "@anthropic-ai/sdk": "^0.128.0",
+     "bullmq": "^5.34.0",
+diff --git a/services/matching-worker/src/main.ts b/services/matching-worker/src/main.ts
+index 7480778..25dc04c 100644
+--- a/services/matching-worker/src/main.ts
++++ b/services/matching-worker/src/main.ts
+@@ -1,22 +1,25 @@
+ import IORedis from "ioredis";
+ import { loadEnv } from "@ai-career/config";
+-import { DbUsageSink, closeDbClient, createDbClient } from "@ai-career/db";
++import { DbUsageSink, closeDbClient, createDbClient, loadRedactionValues } from "@ai-career/db";
++import { createLogger, initProcessLogging } from "@ai-career/logging";
+ import { createAnthropicFor, withLangfuseExport, type AiUsageSink } from "@ai-career/ai";
+ import { createMatchingWorker } from "./worker";
+ 
+-const log = (event: string, fields: Record<string, unknown> = {}) =>
+-  console.log(JSON.stringify({ event, at: new Date().toISOString(), ...fields }));
++// Structured logs only: ids and error classes, never job or profile content (CLAUDE.md §9, Phase 11b).
++const log = createLogger({ service: "matching-worker" });
+ 
+-const safeErrorLabel = (error: unknown): string =>
+-  error instanceof Error && (error.name === "UnrecoverableError" || error.name === "MatchingError")
+-    ? error.message
+-    : error instanceof Error
+-      ? error.name
+-      : "unknown";
++/** Our own error classes carry a fixed error class as their message, so that one message is safe to log. */
++const failureFields = (error: unknown) => ({
++  error,
++  ...(error instanceof Error && (error.name === "UnrecoverableError" || error.name === "MatchingError") ? { errorClass: error.message } : {}),
++});
+ 
+ async function main(): Promise<void> {
+   const env = loadEnv();
+   const db = createDbClient(env);
++  const stopRedactionRefresh = await initProcessLogging({
++    level: env.LOG_LEVEL, load: () => loadRedactionValues(db, env.DEFAULT_USER_ID), logger: log,
++  });
+   const connection = new IORedis(env.REDIS_URL, { maxRetriesPerRequest: null });
+ 
+   const aiFor = (userId: string) => {
+@@ -26,11 +29,12 @@ async function main(): Promise<void> {
+   };
+ 
+   const worker = createMatchingWorker({ connection, db, aiFor, env });
+-  worker.on("completed", (job) => log("matching_completed", { jobId: job.id }));
+-  worker.on("failed", (job, error) => log("matching_failed", { jobId: job?.id, error: safeErrorLabel(error) }));
+-  log("worker_started", {});
++  worker.on("completed", (job) => log.info("matching_completed", { jobId: job.id }));
++  worker.on("failed", (job, error) => log.error("matching_failed", { jobId: job?.id, ...failureFields(error) }));
++  log.info("worker_started");
+ 
+   const shutdown = async () => {
++    stopRedactionRefresh();
+     await worker.close();
+     await connection.quit();
+     await closeDbClient(db);
+@@ -41,6 +45,6 @@ async function main(): Promise<void> {
+ }
+ 
+ main().catch((error) => {
+-  log("worker_crashed", { error: safeErrorLabel(error) });
++  log.error("worker_crashed", failureFields(error));
+   process.exit(1);
+ });

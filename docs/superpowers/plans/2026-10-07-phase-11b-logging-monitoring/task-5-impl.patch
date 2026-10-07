@@ -1,0 +1,136 @@
+diff --git a/apps/web/src/instrumentation.ts b/apps/web/src/instrumentation.ts
+new file mode 100644
+index 0000000..029c686
+--- /dev/null
++++ b/apps/web/src/instrumentation.ts
+@@ -0,0 +1,12 @@
++import type { Instrumentation } from "next";
++
++/**
++ * Phase 11b design §4.3. Next.js also compiles this file for the Edge runtime, where the logger's Node streams do not
++ * exist, so the Node-only code is imported only inside the Node.js branch (the pattern Next.js documents for
++ * instrumentation); the Edge bundle drops it. No route runs on the Edge runtime today.
++ */
++export const onRequestError: Instrumentation.onRequestError = async (error, request, context) => {
++  if (process.env.NEXT_RUNTIME !== "nodejs") return;
++  const { logRenderFailure } = await import("./lib/renderErrors");
++  await logRenderFailure(error, request, context);
++};
+diff --git a/apps/web/src/lib/http/withRouteErrors.ts b/apps/web/src/lib/http/withRouteErrors.ts
+new file mode 100644
+index 0000000..e6e46fd
+--- /dev/null
++++ b/apps/web/src/lib/http/withRouteErrors.ts
+@@ -0,0 +1,43 @@
++import { randomUUID } from "node:crypto";
++import { log } from "../log";
++import { refreshWebRedactions } from "../webLogging";
++
++export interface RouteErrorDeps {
++  refreshRedactions: () => Promise<void>;
++}
++
++/**
++ * Phase 11b design §4.1. Wraps a route handler so an error that escapes it never reaches Next.js's default handler
++ * (which prints the raw message): it is logged as `request_failed` with the error's name, a code-like code and
++ * repo-relative frames -- never its message -- plus the route pattern, method and scrubbed path (query string
++ * dropped), and answered with a 500 carrying a request id. Responses the handler returns itself are untouched.
++ */
++export function makeWithRouteErrors(deps: RouteErrorDeps) {
++  return function withRouteErrors<A extends unknown[]>(route: string, handler: (...args: A) => Promise<Response>): (...args: A) => Promise<Response> {
++    return async (...args: A) => {
++      try {
++        return await handler(...args);
++      } catch (error) {
++        const requestId = randomUUID().replace(/-/g, "").slice(0, 8);
++        try {
++          await deps.refreshRedactions();
++        } catch {
++          // Scrubbing still applies with the values already loaded (and the email pattern).
++        }
++        const request = args[0] instanceof Request ? args[0] : null;
++        log.error("request_failed", {
++          requestId,
++          route,
++          ...(request ? { method: request.method, path: new URL(request.url).pathname } : {}),
++          error,
++        });
++        return Response.json(
++          { error: `Something went wrong (request ${requestId}). Details are in the server log.`, requestId },
++          { status: 500, headers: { "x-request-id": requestId } }
++        );
++      }
++    };
++  };
++}
++
++export const withRouteErrors = makeWithRouteErrors({ refreshRedactions: refreshWebRedactions });
+diff --git a/apps/web/src/lib/renderErrors.ts b/apps/web/src/lib/renderErrors.ts
+new file mode 100644
+index 0000000..4259b24
+--- /dev/null
++++ b/apps/web/src/lib/renderErrors.ts
+@@ -0,0 +1,21 @@
++import type { Instrumentation } from "next";
++import { log } from "./log";
++import { refreshWebRedactions } from "./webLogging";
++
++type OnRequestErrorArgs = Parameters<Instrumentation.onRequestError>;
++
++/**
++ * Phase 11b design §4.3: errors Next.js captures outside our wrapped route handlers (page/server-component
++ * rendering), logged the same message-free way as `request_failed`. Next.js still prints its own line for these;
++ * our pages are client components fetching wrapped routes, so this path is rare.
++ */
++export async function logRenderFailure(error: OnRequestErrorArgs[0], request: OnRequestErrorArgs[1], context: OnRequestErrorArgs[2]): Promise<void> {
++  await refreshWebRedactions();
++  log.error("render_failed", {
++    path: request.path.split("?")[0],
++    method: request.method,
++    routePath: context.routePath,
++    routeType: context.routeType,
++    error,
++  });
++}
+diff --git a/apps/web/src/lib/webLogging.ts b/apps/web/src/lib/webLogging.ts
+new file mode 100644
+index 0000000..f054c4e
+--- /dev/null
++++ b/apps/web/src/lib/webLogging.ts
+@@ -0,0 +1,36 @@
++import { loadEnv } from "@ai-career/config";
++import { closeDbClient, createDbClient, loadRedactionValues } from "@ai-career/db";
++import { configureLogging, createRedactionRefresher, defaultRedactor, type RedactionRefresher } from "@ai-career/logging";
++import { log } from "./log";
++
++let refresher: RedactionRefresher | null = null;
++
++/**
++ * Phase 11b design §3.4 for the web process: on first use, sets the process-wide log level and creates a refresher
++ * for the D9 values (one short-lived DB connection per load, like every route); afterwards reloads them at most
++ * once a minute. Called on the error path only -- errors are rare, and awaiting here means even the first error
++ * after boot is scrubbed. Never throws: without a config or a database only the email pattern applies.
++ */
++export async function refreshWebRedactions(): Promise<void> {
++  try {
++    if (!refresher) {
++      const env = loadEnv();
++      configureLogging({ level: env.LOG_LEVEL });
++      refresher = createRedactionRefresher(
++        defaultRedactor(),
++        async () => {
++          const db = createDbClient(env);
++          try {
++            return await loadRedactionValues(db, env.DEFAULT_USER_ID);
++          } finally {
++            await closeDbClient(db);
++          }
++        },
++        { logger: log }
++      );
++    }
++    await refresher.refreshIfStale();
++  } catch {
++    // loadEnv failed: nothing to load from. The email pattern still applies.
++  }
++}

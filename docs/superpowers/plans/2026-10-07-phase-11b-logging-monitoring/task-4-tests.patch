@@ -1,0 +1,141 @@
+diff --git a/apps/web/src/app/api/matches/route.test.ts b/apps/web/src/app/api/matches/route.test.ts
+index 958ea8d..6756af9 100644
+--- a/apps/web/src/app/api/matches/route.test.ts
++++ b/apps/web/src/app/api/matches/route.test.ts
+@@ -186,16 +186,20 @@ describe("GET /api/matches", () => {
+     vi.mocked(trainResponseModel).mockImplementationOnce(() => {
+       throw new RangeError("secret application text");
+     });
+-    const log = vi.spyOn(console, "error").mockImplementation(() => undefined);
++    const written: string[] = [];
++    const log = vi.spyOn(process.stderr, "write").mockImplementation((chunk) => (written.push(String(chunk)), true));
+ 
+     const res = await list("?rank=personal");
++    log.mockRestore();
+     expect(res.status).toBe(200);
+     const body = await res.json();
+     expect(body.ranking).toBe("default");
+     expect(body.model.status).toBe("no_pattern");
+     expect(body.matches.map((m: { jobTitle: string }) => m.jobTitle)).toEqual(["Weak skills", "Strong skills"]);
+     expect(body.matches.every((m: { match: { personal: unknown } }) => m.match.personal === null)).toBe(true);
+-    expect(log).toHaveBeenCalledWith(JSON.stringify({ event: "response_model_failed", error: "RangeError" }));
+-    expect(log.mock.calls.flat().join(" ")).not.toContain("secret");
++    const failures = written.filter((l) => l.includes("response_model_failed"));
++    expect(failures).toHaveLength(1);
++    expect(JSON.parse(failures[0])).toMatchObject({ level: "error", service: "web", event: "response_model_failed", error: { name: "RangeError" } });
++    expect(written.join(" ")).not.toContain("secret");
+   });
+ });
+diff --git a/apps/web/src/lib/insights/responseModel.test.ts b/apps/web/src/lib/insights/responseModel.test.ts
+index 135936a..e5b1b42 100644
+--- a/apps/web/src/lib/insights/responseModel.test.ts
++++ b/apps/web/src/lib/insights/responseModel.test.ts
+@@ -42,12 +42,15 @@ describe("trainResponseModelSafely", () => {
+     vi.mocked(trainResponseModel).mockImplementationOnce(() => {
+       throw new RangeError("secret application text");
+     });
+-    const log = vi.spyOn(console, "error").mockImplementation(() => undefined);
++    const written: string[] = [];
++    const log = vi.spyOn(process.stderr, "write").mockImplementation((chunk) => (written.push(String(chunk)), true));
+     const { result, summary } = trainResponseModelSafely([], ENV);
++    log.mockRestore();
+     expect(result).toMatchObject({ status: "no_pattern", model: null, blendWeight: null });
+     expect(summary.status).toBe("no_pattern");
+-    expect(log).toHaveBeenCalledWith(JSON.stringify({ event: "response_model_failed", error: "RangeError" }));
+-    expect(log.mock.calls.flat().join(" ")).not.toContain("secret");
++    expect(written).toHaveLength(1);
++    expect(JSON.parse(written[0])).toMatchObject({ level: "error", service: "web", event: "response_model_failed", error: { name: "RangeError" } });
++    expect(written.join(" ")).not.toContain("secret");
+   });
+ });
+ 
+@@ -87,7 +90,7 @@ describe("trainResponseModelSafely cache", () => {
+     vi.mocked(trainResponseModel).mockImplementationOnce(() => {
+       throw new RangeError("boom");
+     });
+-    vi.spyOn(console, "error").mockImplementation(() => undefined);
++    vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+     expect(trainResponseModelSafely(history(), ENV).result.status).toBe("no_pattern");
+     const retry = trainResponseModelSafely(history(), ENV);
+     expect(trainResponseModel).toHaveBeenCalledTimes(2);
+diff --git a/packages/ai/src/usage/anthropicFor.test.ts b/packages/ai/src/usage/anthropicFor.test.ts
+index ba080ea..7bccca0 100644
+--- a/packages/ai/src/usage/anthropicFor.test.ts
++++ b/packages/ai/src/usage/anthropicFor.test.ts
+@@ -167,19 +167,23 @@ describe("createAnthropicFor", () => {
+     expect(sink.events[0].outcome).toBe("ok");
+   });
+ 
+-  it("still returns the result when recording fails, logging only a code (no content)", async () => {
+-    const errorLog = vi.spyOn(console, "error").mockImplementation(() => undefined);
++  it("still returns the result when recording fails, logging the error's name and code only (no content)", async () => {
++    const written: string[] = [];
++    const errorWrite = vi.spyOn(process.stderr, "write").mockImplementation((chunk) => (written.push(String(chunk)), true));
+     const msg = message({ input_tokens: 1, output_tokens: 1 } as Anthropic.Usage);
+     const sink: AiUsageSink = {
+       spendSinceUsd: async () => 0,
+       record: async () => { throw Object.assign(new Error("insert failed SENTINEL-PROMPT-TEXT"), { code: "53300" }); },
+     };
+     const result = await createAnthropicFor(ENV, sink, { client: fakeClient(async () => msg) })("resume_extraction").messages.create(PARAMS);
++    errorWrite.mockRestore();
+     expect(result).toBe(msg);
+-    expect(errorLog).toHaveBeenCalledTimes(1);
+-    const logged = String(errorLog.mock.calls[0][0]);
+-    expect(JSON.parse(logged)).toEqual({ event: "ai_usage_record_failed", operation: "resume_extraction", code: "53300" });
+-    expect(logged).not.toContain("SENTINEL");
++    const lines = written.filter((w) => w.includes("ai_usage_record_failed"));
++    expect(lines).toHaveLength(1);
++    expect(JSON.parse(lines[0])).toMatchObject({
++      level: "error", service: "ai", event: "ai_usage_record_failed", operation: "resume_extraction", error: { name: "Error", code: "53300" },
++    });
++    expect(lines[0]).not.toContain("SENTINEL");
+   });
+ 
+   it("never puts prompt or response text into the recorded event", async () => {
+diff --git a/packages/logging/src/noConsole.test.ts b/packages/logging/src/noConsole.test.ts
+new file mode 100644
+index 0000000..ef283f7
+--- /dev/null
++++ b/packages/logging/src/noConsole.test.ts
+@@ -0,0 +1,41 @@
++import { describe, it, expect } from "vitest";
++import { readdirSync, readFileSync, statSync } from "node:fs";
++import path from "node:path";
++import { fileURLToPath } from "node:url";
++
++/**
++ * Phase 11b structural guard: production code logs only through @ai-career/logging, whose lines are sanitized and
++ * scrubbed. A bare console call can print an error message or content verbatim. Tests, evals and E2E helpers may
++ * print freely.
++ */
++const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
++const SKIP_DIRS = new Set(["node_modules", ".next", "dist", "eval", "e2e", "test", "testing", "fixtures"]);
++
++function sourceFiles(dir: string): string[] {
++  const out: string[] = [];
++  for (const name of readdirSync(dir)) {
++    const full = path.join(dir, name);
++    if (statSync(full).isDirectory()) {
++      if (!SKIP_DIRS.has(name)) out.push(...sourceFiles(full));
++    } else if (/\.(ts|tsx|mts)$/.test(name) && !/\.test\.tsx?$/.test(name)) {
++      out.push(full);
++    }
++  }
++  return out;
++}
++
++const files = ["apps", "services", "packages"].flatMap((top) => sourceFiles(path.join(REPO, top)));
++
++describe("no console calls in production code", () => {
++  it("scans a realistic number of files", () => {
++    expect(files.length).toBeGreaterThan(100);
++  });
++
++  it("finds no console.* outside tests, evals and E2E helpers", () => {
++    const offenders = files
++      .filter((f) => /\bconsole\.[a-z]+\s*\(/.test(readFileSync(f, "utf8")))
++      .map((f) => path.relative(REPO, f))
++      .sort();
++    expect(offenders).toEqual([]);
++  });
++});

@@ -1,0 +1,283 @@
+diff --git a/packages/monitoring/eslint.config.mjs b/packages/monitoring/eslint.config.mjs
+new file mode 100644
+index 0000000..f4e3ba6
+--- /dev/null
++++ b/packages/monitoring/eslint.config.mjs
+@@ -0,0 +1,3 @@
++import baseConfig from "../../eslint.config.base.mjs";
++
++export default baseConfig;
+diff --git a/packages/monitoring/package.json b/packages/monitoring/package.json
+new file mode 100644
+index 0000000..8ec46b5
+--- /dev/null
++++ b/packages/monitoring/package.json
+@@ -0,0 +1,25 @@
++{
++  "name": "@ai-career/monitoring",
++  "version": "0.0.0",
++  "private": true,
++  "type": "module",
++  "main": "src/index.ts",
++  "types": "src/index.ts",
++  "scripts": {
++    "test": "vitest run",
++    "typecheck": "tsc --noEmit",
++    "lint": "eslint src"
++  },
++  "dependencies": {
++    "@ai-career/logging": "workspace:*",
++    "bullmq": "^5.34.0",
++    "ioredis": "^5.4.0"
++  },
++  "devDependencies": {
++    "vitest": "^2.1.0",
++    "typescript": "^5.7.0",
++    "@types/node": "^22.10.0",
++    "eslint": "^9.0.0",
++    "typescript-eslint": "^8.0.0"
++  }
++}
+diff --git a/packages/monitoring/src/heartbeat.test.ts b/packages/monitoring/src/heartbeat.test.ts
+new file mode 100644
+index 0000000..f8c8e68
+--- /dev/null
++++ b/packages/monitoring/src/heartbeat.test.ts
+@@ -0,0 +1,71 @@
++import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
++import { randomUUID } from "node:crypto";
++import IORedis from "ioredis";
++import { startHeartbeat } from "./heartbeat";
++import { readWorkerStatus } from "./status";
++
++const redis = new IORedis(process.env.REDIS_URL ?? "redis://localhost:6379", { maxRetriesPerRequest: null });
++const prefix = `test-${randomUUID()}:worker:`;
++
++beforeAll(() => redis.ping());
++afterAll(async () => {
++  const keys = await redis.keys(`${prefix}*`);
++  if (keys.length > 0) await redis.del(...keys);
++  await redis.quit();
++});
++
++describe("startHeartbeat / readWorkerStatus", () => {
++  it("reports every known worker, never_seen before any heartbeat, with optional flags", async () => {
++    const statuses = await readWorkerStatus(redis, new Date(), { keyPrefix: prefix, staleAfterMs: 90_000 });
++    expect(statuses.map((s) => [s.worker, s.optional, s.state])).toEqual([
++      ["job-ingestion", false, "never_seen"],
++      ["matching", false, "never_seen"],
++      ["maintenance", true, "never_seen"],
++      ["browser", true, "never_seen"],
++    ]);
++  });
++
++  it("writes immediately, beats on an interval, and records a clean stop", async () => {
++    let now = new Date("2026-10-07T12:00:00.000Z");
++    const heartbeat = await startHeartbeat(redis, "matching", { keyPrefix: prefix, intervalMs: 20, now: () => now });
++    const first = JSON.parse((await redis.get(`${prefix}matching`))!);
++    expect(first).toEqual({ startedAt: "2026-10-07T12:00:00.000Z", beatAt: "2026-10-07T12:00:00.000Z", pid: process.pid, stoppedAt: null });
++
++    now = new Date("2026-10-07T12:00:30.000Z");
++    await vi.waitFor(async () => expect(JSON.parse((await redis.get(`${prefix}matching`))!).beatAt).toBe("2026-10-07T12:00:30.000Z"));
++    let [, matching] = await readWorkerStatus(redis, now, { keyPrefix: prefix, staleAfterMs: 90_000 });
++    expect(matching).toMatchObject({ worker: "matching", state: "running", startedAt: "2026-10-07T12:00:00.000Z", lastSeenAt: "2026-10-07T12:00:30.000Z", stoppedAt: null });
++
++    now = new Date("2026-10-07T12:01:00.000Z");
++    await heartbeat.stop();
++    [, matching] = await readWorkerStatus(redis, new Date("2026-10-07T15:00:00.000Z"), { keyPrefix: prefix, staleAfterMs: 90_000 });
++    expect(matching).toMatchObject({ state: "stopped", stoppedAt: "2026-10-07T12:01:00.000Z", lastSeenAt: "2026-10-07T12:01:00.000Z" });
++
++    // No beats after stop.
++    const afterStop = await redis.get(`${prefix}matching`);
++    await new Promise((r) => setTimeout(r, 60));
++    expect(await redis.get(`${prefix}matching`)).toBe(afterStop);
++  });
++
++  it("shows a worker that died without stopping as stale once the threshold passes", async () => {
++    const now = new Date("2026-10-07T12:00:00.000Z");
++    const heartbeat = await startHeartbeat(redis, "job-ingestion", { keyPrefix: prefix, intervalMs: 60_000, now: () => now });
++    const statuses = await readWorkerStatus(redis, new Date(now.getTime() + 5_001), { keyPrefix: prefix, staleAfterMs: 5_000 });
++    expect(statuses[0]).toMatchObject({ worker: "job-ingestion", state: "stale" });
++    await heartbeat.stop();
++  });
++
++  it("treats a malformed stored value as stale with no times", async () => {
++    await redis.set(`${prefix}maintenance`, "{not json");
++    const statuses = await readWorkerStatus(redis, new Date(), { keyPrefix: prefix, staleAfterMs: 90_000 });
++    expect(statuses[2]).toEqual({ worker: "maintenance", optional: true, state: "stale", startedAt: null, lastSeenAt: null, stoppedAt: null });
++  });
++
++  it("never throws when Redis rejects a write, and logs only the error name", async () => {
++    const failing = { set: async () => { throw new Error("READONLY You can't write against a read only replica SENTINEL"); } };
++    const logger = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() };
++    const heartbeat = await startHeartbeat(failing, "browser", { keyPrefix: prefix, intervalMs: 60_000, logger });
++    await expect(heartbeat.stop()).resolves.toBeUndefined();
++    expect(logger.error).toHaveBeenCalledWith("heartbeat_failed", { worker: "browser", error: expect.any(Error) });
++  });
++});
+diff --git a/packages/monitoring/src/queueStatus.test.ts b/packages/monitoring/src/queueStatus.test.ts
+new file mode 100644
+index 0000000..d133ac8
+--- /dev/null
++++ b/packages/monitoring/src/queueStatus.test.ts
+@@ -0,0 +1,54 @@
++import { describe, it, expect, afterAll } from "vitest";
++import { randomUUID } from "node:crypto";
++import IORedis from "ioredis";
++import { Queue, Worker, UnrecoverableError } from "bullmq";
++import { readQueueStatus } from "./status";
++
++const connection = new IORedis(process.env.REDIS_URL ?? "redis://localhost:6379", { maxRetriesPerRequest: null });
++const codeQueue = `test-queue-${randomUUID()}`;
++const messageQueue = `test-queue-${randomUUID()}`;
++const emptyQueue = `test-queue-${randomUUID()}`;
++const queues: Queue[] = [];
++
++afterAll(async () => {
++  for (const q of queues) {
++    await q.obliterate({ force: true });
++    await q.close();
++  }
++  await connection.quit();
++});
++
++async function failOne(name: string, error: Error) {
++  const queue = new Queue(name, { connection });
++  queues.push(queue);
++  const job = await queue.add("job", {}, { attempts: 1, removeOnFail: false });
++  const worker = new Worker(name, async () => { throw error; }, { connection });
++  await new Promise<void>((resolve) => worker.on("failed", () => resolve()));
++  await worker.close();
++  return { queue, job };
++}
++
++describe("readQueueStatus", () => {
++  it("counts jobs by state and shows the last failure's code when it is one of ours", async () => {
++    const { queue } = await failOne(codeQueue, new UnrecoverableError("no_active_goal"));
++    await queue.add("waiting", {});
++    await queue.add("later", {}, { delay: 60_000 });
++
++    const [status] = await readQueueStatus(connection, [codeQueue]);
++    expect(status).toMatchObject({ queue: codeQueue, waiting: 1, active: 0, delayed: 1, failed: 1, lastFailedCode: "no_active_goal" });
++    expect(Date.parse(status.lastFailedAt!)).toBeGreaterThan(Date.now() - 60_000);
++  });
++
++  it("withholds a failure reason that is a raw message", async () => {
++    await failOne(messageQueue, new Error("insert failed for Jane Doe SENTINEL"));
++    const [status] = await readQueueStatus(connection, [messageQueue]);
++    expect(status).toMatchObject({ failed: 1, lastFailedCode: null });
++    expect(status.lastFailedAt).not.toBeNull();
++    expect(JSON.stringify(status)).not.toContain("SENTINEL");
++  });
++
++  it("reports an empty queue with zero counts and no failure", async () => {
++    const [status] = await readQueueStatus(connection, [emptyQueue]);
++    expect(status).toEqual({ queue: emptyQueue, waiting: 0, active: 0, delayed: 0, failed: 0, lastFailedAt: null, lastFailedCode: null });
++  });
++});
+diff --git a/packages/monitoring/src/workerState.test.ts b/packages/monitoring/src/workerState.test.ts
+new file mode 100644
+index 0000000..0326a13
+--- /dev/null
++++ b/packages/monitoring/src/workerState.test.ts
+@@ -0,0 +1,43 @@
++import { describe, it, expect } from "vitest";
++import { workerState, failureCode } from "./workerState";
++
++const NOW = new Date("2026-10-07T12:00:00.000Z");
++const at = (secondsAgo: number) => new Date(NOW.getTime() - secondsAgo * 1000).toISOString();
++
++describe("workerState", () => {
++  it("is never_seen without a heartbeat", () => {
++    expect(workerState(null, NOW, 90_000)).toBe("never_seen");
++  });
++
++  it("is running up to and including the stale threshold, stale after it", () => {
++    expect(workerState({ startedAt: at(600), beatAt: at(90), pid: 1, stoppedAt: null }, NOW, 90_000)).toBe("running");
++    expect(workerState({ startedAt: at(600), beatAt: at(90.001), pid: 1, stoppedAt: null }, NOW, 90_000)).toBe("stale");
++  });
++
++  it("is stopped after a clean stop, however long ago", () => {
++    expect(workerState({ startedAt: at(9000), beatAt: at(3600), pid: 1, stoppedAt: at(3600) }, NOW, 90_000)).toBe("stopped");
++  });
++
++  it("is running again once a restarted worker beats after an old stop", () => {
++    expect(workerState({ startedAt: at(10), beatAt: at(5), pid: 2, stoppedAt: at(3600) }, NOW, 90_000)).toBe("running");
++  });
++
++  it("treats an unparseable beat time as stale", () => {
++    expect(workerState({ startedAt: "x", beatAt: "not a date", pid: 1, stoppedAt: null }, NOW, 90_000)).toBe("stale");
++  });
++});
++
++describe("failureCode", () => {
++  it("passes our own codes through", () => {
++    expect(failureCode("no_active_goal")).toBe("no_active_goal");
++    expect(failureCode("ingest:rate_limited")).toBe("ingest:rate_limited");
++  });
++
++  it("withholds anything that is not code-shaped (it may be a raw error message)", () => {
++    expect(failureCode("duplicate key value violates unique constraint")).toBeNull();
++    expect(failureCode("Jane Doe")).toBeNull();
++    expect(failureCode("")).toBeNull();
++    expect(failureCode(undefined)).toBeNull();
++    expect(failureCode("a".repeat(81))).toBeNull();
++  });
++});
+diff --git a/packages/monitoring/tsconfig.json b/packages/monitoring/tsconfig.json
+new file mode 100644
+index 0000000..7ef7d5e
+--- /dev/null
++++ b/packages/monitoring/tsconfig.json
+@@ -0,0 +1,12 @@
++{
++  "compilerOptions": {
++    "strict": true,
++    "target": "ES2022",
++    "module": "ESNext",
++    "moduleResolution": "Bundler",
++    "esModuleInterop": true,
++    "skipLibCheck": true,
++    "noEmit": true
++  },
++  "include": ["src"]
++}
+diff --git a/pnpm-lock.yaml b/pnpm-lock.yaml
+index cb32c4c..14852d4 100644
+--- a/pnpm-lock.yaml
++++ b/pnpm-lock.yaml
+@@ -554,6 +554,34 @@ importers:
+         specifier: ^2.1.0
+         version: 2.1.9(@types/node@22.20.1)(jsdom@25.0.1)(lightningcss@1.32.0)
+ 
++  packages/monitoring:
++    dependencies:
++      '@ai-career/logging':
++        specifier: workspace:*
++        version: link:../logging
++      bullmq:
++        specifier: ^5.34.0
++        version: 5.81.5
++      ioredis:
++        specifier: ^5.4.0
++        version: 5.11.1
++    devDependencies:
++      '@types/node':
++        specifier: ^22.10.0
++        version: 22.20.1
++      eslint:
++        specifier: ^9.0.0
++        version: 9.39.5(jiti@2.7.0)
++      typescript:
++        specifier: ^5.7.0
++        version: 5.9.3
++      typescript-eslint:
++        specifier: ^8.0.0
++        version: 8.69.0(eslint@9.39.5(jiti@2.7.0))(typescript@5.9.3)
++      vitest:
++        specifier: ^2.1.0
++        version: 2.1.9(@types/node@22.20.1)(jsdom@25.0.1)(lightningcss@1.32.0)
++
+   packages/resume-optimization:
+     dependencies:
+       '@ai-career/ai':

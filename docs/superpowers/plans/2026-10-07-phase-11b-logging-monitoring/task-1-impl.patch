@@ -1,0 +1,31 @@
+diff --git a/.env.example b/.env.example
+index f5a49cc..7d608ae 100644
+--- a/.env.example
++++ b/.env.example
+@@ -82,6 +82,11 @@ VOYAGE_EMBEDDING_MODEL=voyage-3.5
+ # LANGFUSE_PUBLIC_KEY=
+ # LANGFUSE_SECRET_KEY=
+ 
++# Phase 11b. Minimum log level: debug | info | warn | error (default info).
++# LOG_LEVEL=info
++# Milliseconds without a heartbeat before /status calls a worker "stale" (workers beat every 30 s). Minimum 1000.
++# STATUS_STALE_AFTER_MS=90000
++
+ # Phase 8 browser autofill (services/browser-worker, run on the host, not in Docker).
+ # Override the Chrome binary the worker launches; omitted, it uses Playwright's "chrome" channel.
+ # BROWSER_EXECUTABLE_PATH=
+diff --git a/packages/config/src/env.ts b/packages/config/src/env.ts
+index 4502c11..828d3c8 100644
+--- a/packages/config/src/env.ts
++++ b/packages/config/src/env.ts
+@@ -67,6 +67,10 @@ const envSchema = z
+     LANGFUSE_HOST: z.preprocess(blankAsUnset, z.string().url().regex(/^https?:\/\//i, "must be an http(s) URL").optional()),
+     LANGFUSE_PUBLIC_KEY: z.preprocess(blankAsUnset, z.string().min(1).optional()),
+     LANGFUSE_SECRET_KEY: z.preprocess(blankAsUnset, z.string().min(1).optional()),
++    // Phase 11b (design §3, §5.2). Minimum level the structured logger writes, and how long a worker may go without
++    // a heartbeat (they beat every 30 s) before /status calls it "stale".
++    LOG_LEVEL: z.preprocess(blankAsUnset, z.enum(["debug", "info", "warn", "error"]).default("info")),
++    STATUS_STALE_AFTER_MS: z.preprocess(blankAsUnset, z.coerce.number().int().min(1000).default(90_000)),
+   })
+   .superRefine((val, ctx) => {
+     if (val.EMBEDDING_PROVIDER === "voyage" && !val.VOYAGE_API_KEY) {

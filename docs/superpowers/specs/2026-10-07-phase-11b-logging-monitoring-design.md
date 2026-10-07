@@ -1,7 +1,7 @@
 # Phase 11b — Structured Logging, PII Scrubbing & Monitoring: Design
 
 Date: 2026-10-07
-Status: Approved in brainstorming (sections 1–3) on 2026-10-07; awaiting written-spec review.
+Status: Approved in brainstorming (sections 1–3) and as a written spec on 2026-10-07. §10 records what planning changed; where it disagrees with an earlier section, §10 wins.
 Spec sources: project spec §21 (Phase 11 — "monitoring"), §23 principle 12 ("Every important AI workflow should be observable"); CLAUDE.md §9 ("Do not log resume contents unnecessarily", "Do not expose personal information in debugging output"); DECISIONS.md D9 (PII log scrubbing — decided in Phase 0, never built); architecture §9 ("Structured logging only; no resume/profile content in production logs regardless of scrubbing (defense in depth)"). Follows Phase 11a (D154–D164) and the D165 CI fix; decisions start at **D166**.
 
 ## 1. Scope
@@ -176,3 +176,19 @@ DECISIONS D166+ (logger design, never logging messages, D9 + email pattern, `wit
 - **Under-redaction:** names in other forms ("Jon" for "Jonathan") are not caught (D9's accepted limit); mitigated by never logging messages or content.
 - **Wrapper drift:** a new route without the wrapper — caught by the guard test.
 - **Heartbeat clock skew:** workers and web share the host clock (single machine); a container clock drift would show false "stale" — documented.
+
+## 10. Planning refinements (2026-10-07)
+
+Found while writing and dry-running the implementation plan. Each supersedes the earlier text it names.
+
+1. **Process-wide logging settings (§3.1, §3.4).** `configureLogging({ level })` and `defaultRedactor()` hold the process's level and D9 values, read at write time, so loggers that library code creates at import time (`packages/ai`, web's `lib/log.ts`) follow them; a logger's own `level`/`redactor` options still override. `initProcessLogging({ level, load, logger, intervalMs? })` is the one call each long-running process makes: it sets the level, loads the values before returning, refreshes every 60 s and returns a stop function.
+2. **Event levels and fields (§3.5).** Failures log at `error`, everything else at `info`. The old `at` field becomes the logger's `ts`. Worker failures log `error` (sanitized) plus, for the ingestion/matching workers' own error classes, `errorClass`.
+3. **Worker heartbeat tests (§7).** The worker entry points (`services/*/src/main.ts`) start real workers and have no unit tests. The wiring is pinned by a structural test (`packages/monitoring/src/allWorkersBeat.test.ts`) and exercised by the E2E, instead of "each worker test asserts it starts and stops its heartbeat".
+4. **Shutdown runs once (new).** A second SIGINT/SIGTERM (a double Ctrl-C, or dotenv-cli forwarding the signal) re-entered the ingestion, matching and maintenance workers' shutdown; with the awaited `heartbeat.stop()`, the second run closed Redis under the first and the process crashed with an unhandled "Connection is closed". Those three adopt the browser worker's `stopping` guard; the structural test requires it in all four.
+5. **`onRequestError` (§4.3).** Next.js also compiles `instrumentation.ts` for the Edge runtime, where the logger's Node streams do not exist (a static import produced a build warning). The logging lives in `apps/web/src/lib/renderErrors.ts` and is imported dynamically only when `NEXT_RUNTIME === "nodejs"`.
+6. **Redis in `/api/status` (§5.3).** Opened with `lazyConnect` and connected explicitly before `ping`: with the offline queue disabled, a command sent before the socket is ready is rejected, which made a healthy Redis read as unavailable.
+7. **Two route tests change (§4.1).** `/api/career-goal` (active goal missing its constraints) and `/api/job-sources/upload` (storing fails) expected the error to escape; they now assert the 500 body and that the internal detail does not leak. `/api/matches`' test of `response_model_failed` reads the logger's stderr line instead of a `console.error` spy.
+8. **Tests and the developer's database (§3.4).** The web test script loads the repo's `.env` (the developer's database). Route tests already mock `loadEnv` with the test database, so a redaction refresh inside them reads the test database; the instrumentation test mocks the refresh. A `vi.mock` in the shared setup file does not apply to other test files here and is not used.
+9. **E2E (§7).** No seed data is needed. The script spawns the matching worker itself as one `node --import tsx src/main.ts` process (so SIGKILL/SIGTERM reach the worker, not a wrapper) with the test database, and checks running → stale (after a SIGKILL, `STATUS_STALE_AFTER_MS=5000`) → running → stopped (SIGTERM, exit code 0). The forced route error is an `AggregateError` with `code: "ECONNREFUSED"` (Node tries IPv6 and IPv4); its frames are all Node internals, so `frames` is empty. Test ids: `…0c01`/`…0c02` (DB test), `…0c03` (status route test).
+10. **Patch scaffolding.** For the two new packages, the tests patch also carries the package scaffold (`package.json`, `tsconfig.json`, `eslint.config.mjs`) and its `pnpm-lock.yaml` entry, so `pnpm install --frozen-lockfile` and the red test run work before the implementation exists.
+

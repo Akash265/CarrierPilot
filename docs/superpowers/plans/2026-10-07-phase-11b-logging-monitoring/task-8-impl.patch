@@ -1,0 +1,220 @@
+diff --git a/pnpm-lock.yaml b/pnpm-lock.yaml
+index 14852d4..e753e5a 100644
+--- a/pnpm-lock.yaml
++++ b/pnpm-lock.yaml
+@@ -667,6 +667,9 @@ importers:
+       '@ai-career/logging':
+         specifier: workspace:*
+         version: link:../../packages/logging
++      '@ai-career/monitoring':
++        specifier: workspace:*
++        version: link:../../packages/monitoring
+       '@ai-career/storage':
+         specifier: workspace:*
+         version: link:../../packages/storage
+@@ -722,6 +725,9 @@ importers:
+       '@ai-career/logging':
+         specifier: workspace:*
+         version: link:../../packages/logging
++      '@ai-career/monitoring':
++        specifier: workspace:*
++        version: link:../../packages/monitoring
+       bullmq:
+         specifier: ^5.34.0
+         version: 5.81.5
+@@ -771,6 +777,9 @@ importers:
+       '@ai-career/logging':
+         specifier: workspace:*
+         version: link:../../packages/logging
++      '@ai-career/monitoring':
++        specifier: workspace:*
++        version: link:../../packages/monitoring
+       '@ai-career/storage':
+         specifier: workspace:*
+         version: link:../../packages/storage
+@@ -826,6 +835,9 @@ importers:
+       '@ai-career/matching':
+         specifier: workspace:*
+         version: link:../../packages/matching
++      '@ai-career/monitoring':
++        specifier: workspace:*
++        version: link:../../packages/monitoring
+       '@anthropic-ai/sdk':
+         specifier: ^0.128.0
+         version: 0.128.0(zod@3.25.76)
+diff --git a/services/browser-worker/package.json b/services/browser-worker/package.json
+index cd6159e..037995a 100644
+--- a/services/browser-worker/package.json
++++ b/services/browser-worker/package.json
+@@ -14,6 +14,7 @@
+     "@ai-career/config": "workspace:*",
+     "@ai-career/db": "workspace:*",
+     "@ai-career/logging": "workspace:*",
++    "@ai-career/monitoring": "workspace:*",
+     "@ai-career/storage": "workspace:*",
+     "bullmq": "^5.34.0",
+     "ioredis": "^5.4.0",
+diff --git a/services/browser-worker/src/main.ts b/services/browser-worker/src/main.ts
+index 585a1a1..b867ff0 100644
+--- a/services/browser-worker/src/main.ts
++++ b/services/browser-worker/src/main.ts
+@@ -2,6 +2,7 @@ import IORedis from "ioredis";
+ import { loadEnv } from "@ai-career/config";
+ import { closeDbClient, createDbClient, loadRedactionValues } from "@ai-career/db";
+ import { createLogger, initProcessLogging } from "@ai-career/logging";
++import { startHeartbeat } from "@ai-career/monitoring";
+ import { createStorageClient } from "@ai-career/storage";
+ import { sweepInterruptedSessions } from "@ai-career/browser";
+ import { minioFetcher } from "./attachments";
+@@ -37,6 +38,8 @@ async function main(): Promise<void> {
+   });
+   worker.on("completed", (job, result) => log.info("autofill_completed", { sessionId: job.data.sessionId, result }));
+   worker.on("failed", (job, error) => log.error("autofill_failed", { sessionId: job?.data.sessionId, error }));
++  // Phase 11b: /status shows this worker running while it beats, and stopped after a clean shutdown.
++  const heartbeat = await startHeartbeat(connection, "browser");
+   log.info("worker_started", { sweptSessions: swept, removedTempDirs, headless: env.BROWSER_HEADLESS });
+ 
+   let stopping = false;
+@@ -50,6 +53,7 @@ async function main(): Promise<void> {
+     await worker.close(true);
+     // closeAll also closes the one active (in-progress) window, if any -- see ReleasedWindows.setActive.
+     await released.closeAll();
++    await heartbeat.stop();
+     await connection.quit();
+     await closeDbClient(db);
+     process.exit(0);
+diff --git a/services/job-ingestion/package.json b/services/job-ingestion/package.json
+index 2381dbf..24f45ba 100644
+--- a/services/job-ingestion/package.json
++++ b/services/job-ingestion/package.json
+@@ -17,6 +17,7 @@
+     "@ai-career/db": "workspace:*",
+     "@ai-career/ingestion": "workspace:*",
+     "@ai-career/logging": "workspace:*",
++    "@ai-career/monitoring": "workspace:*",
+     "bullmq": "^5.34.0",
+     "drizzle-orm": "^0.36.0",
+     "ioredis": "^5.4.0"
+diff --git a/services/job-ingestion/src/main.ts b/services/job-ingestion/src/main.ts
+index a5cf2c4..02689b0 100644
+--- a/services/job-ingestion/src/main.ts
++++ b/services/job-ingestion/src/main.ts
+@@ -3,6 +3,7 @@ import { Queue } from "bullmq";
+ import { loadEnv } from "@ai-career/config";
+ import { closeDbClient, createDbClient, loadRedactionValues } from "@ai-career/db";
+ import { createLogger, initProcessLogging } from "@ai-career/logging";
++import { startHeartbeat } from "@ai-career/monitoring";
+ import { INGEST_QUEUE_NAME, createAdapterFor, type IngestJobData } from "@ai-career/ingestion";
+ import { reconcileSchedules } from "./reconcile";
+ import { createIngestWorker } from "./worker";
+@@ -50,13 +51,21 @@ async function main(): Promise<void> {
+   await reconcile(true);
+   // The database is the source of truth: pick up sources enabled/disabled from the web app.
+   const timer = setInterval(() => void reconcile(false), 60_000);
++  // Phase 11b: /status shows this worker running while it beats, and stopped after a clean shutdown.
++  const heartbeat = await startHeartbeat(connection, "job-ingestion");
+   log.info("worker_started", { everyMinutes: env.INGEST_INTERVAL_MINUTES });
+ 
++  // Both signal handlers can fire for one shutdown (a double Ctrl-C, or a wrapper forwarding the signal); only the
++  // first run may close the worker, heartbeat, Redis and database -- a second connection.quit() crashes the process.
++  let stopping = false;
+   const shutdown = async () => {
++    if (stopping) return;
++    stopping = true;
+     clearInterval(timer);
+     stopRedactionRefresh();
+     await worker.close();
+     await queue.close();
++    await heartbeat.stop();
+     await connection.quit();
+     await closeDbClient(db);
+     process.exit(0);
+diff --git a/services/maintenance-worker/package.json b/services/maintenance-worker/package.json
+index c6b6bf3..fde07ad 100644
+--- a/services/maintenance-worker/package.json
++++ b/services/maintenance-worker/package.json
+@@ -16,6 +16,7 @@
+     "@ai-career/config": "workspace:*",
+     "@ai-career/db": "workspace:*",
+     "@ai-career/logging": "workspace:*",
++    "@ai-career/monitoring": "workspace:*",
+     "@ai-career/storage": "workspace:*",
+     "bullmq": "^5.34.0",
+     "ioredis": "^5.4.0",
+diff --git a/services/maintenance-worker/src/main.ts b/services/maintenance-worker/src/main.ts
+index 428df59..72e7e7a 100644
+--- a/services/maintenance-worker/src/main.ts
++++ b/services/maintenance-worker/src/main.ts
+@@ -3,6 +3,7 @@ import { Queue } from "bullmq";
+ import { loadEnv } from "@ai-career/config";
+ import { closeDbClient, createDbClient, loadRedactionValues } from "@ai-career/db";
+ import { createLogger, initProcessLogging } from "@ai-career/logging";
++import { startHeartbeat } from "@ai-career/monitoring";
+ import { createStorageClient } from "@ai-career/storage";
+ import { createRetentionStorage } from "./storageAdapter";
+ import { createMaintenanceWorker, scheduleRetention } from "./worker";
+@@ -25,12 +26,20 @@ async function main(): Promise<void> {
+   worker.on("completed", (job, result) => log.info("maintenance_completed", { jobId: job.id, name: job.name, ...result }));
+   worker.on("failed", (job, error) => log.error("maintenance_failed", { jobId: job?.id, name: job?.name, error }));
+   await scheduleRetention(queue);
++  // Phase 11b: /status shows this worker running while it beats, and stopped after a clean shutdown.
++  const heartbeat = await startHeartbeat(connection, "maintenance");
+   log.info("worker_started", { retentionDays: env.RETENTION_DAYS });
+ 
++  // Both signal handlers can fire for one shutdown (a double Ctrl-C, or a wrapper forwarding the signal); only the
++  // first run may close the worker, heartbeat, Redis and database -- a second connection.quit() crashes the process.
++  let stopping = false;
+   const shutdown = async () => {
++    if (stopping) return;
++    stopping = true;
+     stopRedactionRefresh();
+     await worker.close();
+     await queue.close();
++    await heartbeat.stop();
+     await connection.quit();
+     await closeDbClient(db);
+     process.exit(0);
+diff --git a/services/matching-worker/package.json b/services/matching-worker/package.json
+index e0f2114..07f8225 100644
+--- a/services/matching-worker/package.json
++++ b/services/matching-worker/package.json
+@@ -18,6 +18,7 @@
+     "@ai-career/db": "workspace:*",
+     "@ai-career/logging": "workspace:*",
+     "@ai-career/matching": "workspace:*",
++    "@ai-career/monitoring": "workspace:*",
+     "@anthropic-ai/sdk": "^0.128.0",
+     "bullmq": "^5.34.0",
+     "drizzle-orm": "^0.36.0",
+diff --git a/services/matching-worker/src/main.ts b/services/matching-worker/src/main.ts
+index 25dc04c..5d7c52e 100644
+--- a/services/matching-worker/src/main.ts
++++ b/services/matching-worker/src/main.ts
+@@ -2,6 +2,7 @@ import IORedis from "ioredis";
+ import { loadEnv } from "@ai-career/config";
+ import { DbUsageSink, closeDbClient, createDbClient, loadRedactionValues } from "@ai-career/db";
+ import { createLogger, initProcessLogging } from "@ai-career/logging";
++import { startHeartbeat } from "@ai-career/monitoring";
+ import { createAnthropicFor, withLangfuseExport, type AiUsageSink } from "@ai-career/ai";
+ import { createMatchingWorker } from "./worker";
+ 
+@@ -31,11 +32,19 @@ async function main(): Promise<void> {
+   const worker = createMatchingWorker({ connection, db, aiFor, env });
+   worker.on("completed", (job) => log.info("matching_completed", { jobId: job.id }));
+   worker.on("failed", (job, error) => log.error("matching_failed", { jobId: job?.id, ...failureFields(error) }));
++  // Phase 11b: /status shows this worker running while it beats, and stopped after a clean shutdown.
++  const heartbeat = await startHeartbeat(connection, "matching");
+   log.info("worker_started");
+ 
++  // Both signal handlers can fire for one shutdown (a double Ctrl-C, or a wrapper forwarding the signal); only the
++  // first run may close the worker, heartbeat, Redis and database -- a second connection.quit() crashes the process.
++  let stopping = false;
+   const shutdown = async () => {
++    if (stopping) return;
++    stopping = true;
+     stopRedactionRefresh();
+     await worker.close();
++    await heartbeat.stop();
+     await connection.quit();
+     await closeDbClient(db);
+     process.exit(0);

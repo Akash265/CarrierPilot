@@ -1,0 +1,169 @@
+diff --git a/apps/web/src/instrumentation.test.ts b/apps/web/src/instrumentation.test.ts
+new file mode 100644
+index 0000000..85dd19c
+--- /dev/null
++++ b/apps/web/src/instrumentation.test.ts
+@@ -0,0 +1,46 @@
++import { describe, it, expect, vi, afterEach } from "vitest";
++
++// The real refresher would load D9 values from the database named in .env; a unit test must not touch it.
++vi.mock("./lib/webLogging", () => ({ refreshWebRedactions: vi.fn(async () => undefined) }));
++import { refreshWebRedactions } from "./lib/webLogging";
++import { onRequestError } from "./instrumentation";
++
++const ORIGINAL_RUNTIME = process.env.NEXT_RUNTIME;
++afterEach(() => {
++  vi.restoreAllMocks();
++  vi.mocked(refreshWebRedactions).mockClear();
++  if (ORIGINAL_RUNTIME === undefined) delete process.env.NEXT_RUNTIME;
++  else process.env.NEXT_RUNTIME = ORIGINAL_RUNTIME;
++});
++
++const fail = () =>
++  onRequestError(
++    Object.assign(new Error("SENTINEL page content"), { digest: "123" }),
++    { path: "/matches/abc?q=secret", method: "GET", headers: {} },
++    { routerKind: "App Router", routePath: "/matches/[jobId]", routeType: "render", renderSource: "server-rendering", revalidateReason: undefined }
++  );
++
++describe("onRequestError", () => {
++  it("on Node.js, logs a render failure by route and error name, never the message or query string", async () => {
++    process.env.NEXT_RUNTIME = "nodejs";
++    const lines: string[] = [];
++    vi.spyOn(process.stderr, "write").mockImplementation((chunk) => (lines.push(String(chunk)), true));
++    await fail();
++    expect(lines).toHaveLength(1);
++    expect(JSON.parse(lines[0])).toMatchObject({
++      level: "error", service: "web", event: "render_failed", path: "/matches/abc", method: "GET", routePath: "/matches/[jobId]", routeType: "render",
++      error: { name: "Error" },
++    });
++    expect(lines[0]).not.toContain("SENTINEL");
++    expect(lines[0]).not.toContain("secret");
++    expect(refreshWebRedactions).toHaveBeenCalledTimes(1);
++  });
++
++  it("does nothing outside the Node.js runtime", async () => {
++    process.env.NEXT_RUNTIME = "edge";
++    const write = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
++    await fail();
++    expect(write).not.toHaveBeenCalled();
++    expect(refreshWebRedactions).not.toHaveBeenCalled();
++  });
++});
+diff --git a/apps/web/src/lib/http/withRouteErrors.test.ts b/apps/web/src/lib/http/withRouteErrors.test.ts
+new file mode 100644
+index 0000000..3b5a88d
+--- /dev/null
++++ b/apps/web/src/lib/http/withRouteErrors.test.ts
+@@ -0,0 +1,111 @@
++import { describe, it, expect, vi, afterEach } from "vitest";
++import { defaultRedactor } from "@ai-career/logging";
++import { makeWithRouteErrors } from "./withRouteErrors";
++
++const SENTINEL = "SENTINEL resume text: Built a pipeline";
++
++function captureStderr() {
++  const lines: string[] = [];
++  const spy = vi.spyOn(process.stderr, "write").mockImplementation((chunk) => (lines.push(String(chunk)), true));
++  return { lines, restore: () => spy.mockRestore() };
++}
++
++afterEach(() => {
++  vi.restoreAllMocks();
++  defaultRedactor().setValues([]);
++});
++
++describe("withRouteErrors", () => {
++  it("returns the handler's own response untouched, including deliberate errors", async () => {
++    const refresh = vi.fn(async () => undefined);
++    const withRouteErrors = makeWithRouteErrors({ refreshRedactions: refresh });
++    const GET = withRouteErrors("/api/things", async () => Response.json({ error: "Not found" }, { status: 404 }));
++    const res = await GET();
++    expect(res.status).toBe(404);
++    expect(await res.json()).toEqual({ error: "Not found" });
++    expect(refresh).not.toHaveBeenCalled();
++  });
++
++  it("turns an escaped error into a 500 with a request id, and logs only its name, code and frames", async () => {
++    defaultRedactor().setValues(["Jane Doe"]);
++    const refresh = vi.fn(async () => undefined);
++    const withRouteErrors = makeWithRouteErrors({ refreshRedactions: refresh });
++    const POST = withRouteErrors<[Request, { params: Promise<{ id: string }> }]>("/api/profile/[id]", async () => {
++      throw Object.assign(new Error(`duplicate key for Jane Doe: ${SENTINEL}`), { code: "23505" });
++    });
++    const err = captureStderr();
++    const res = await POST(new Request("http://localhost/api/profile/Jane%20Doe?q=jane@example.com", { method: "POST" }), {
++      params: Promise.resolve({ id: "x" }),
++    });
++    err.restore();
++
++    expect(res.status).toBe(500);
++    const body = await res.json();
++    expect(body.requestId).toMatch(/^[0-9a-f]{8}$/);
++    expect(body.error).toBe(`Something went wrong (request ${body.requestId}). Details are in the server log.`);
++    expect(res.headers.get("x-request-id")).toBe(body.requestId);
++    expect(refresh).toHaveBeenCalledTimes(1);
++
++    expect(err.lines).toHaveLength(1);
++    const line = JSON.parse(err.lines[0]);
++    expect(line).toMatchObject({
++      level: "error", service: "web", event: "request_failed", requestId: body.requestId, method: "POST", route: "/api/profile/[id]",
++      error: { name: "Error", code: "23505" },
++    });
++    expect(line.path).toBe("/api/profile/Jane%20Doe");
++    expect(err.lines[0]).not.toContain("SENTINEL");
++    expect(err.lines[0]).not.toContain("jane@example.com");
++    expect(err.lines[0]).not.toContain("q=");
++  });
++
++  it("scrubs a known profile value that appears in the path", async () => {
++    defaultRedactor().setValues(["janedoe"]);
++    const withRouteErrors = makeWithRouteErrors({ refreshRedactions: async () => undefined });
++    const GET = withRouteErrors<[Request]>("/api/x/[slug]", async () => {
++      throw new TypeError("boom");
++    });
++    const err = captureStderr();
++    await GET(new Request("http://localhost/api/x/janedoe"));
++    err.restore();
++    expect(JSON.parse(err.lines[0]).path).toBe("/api/x/[REDACTED]");
++  });
++
++  it("works for handlers without a request argument", async () => {
++    const withRouteErrors = makeWithRouteErrors({ refreshRedactions: async () => undefined });
++    const GET = withRouteErrors("/api/health", async () => {
++      throw new Error("x");
++    });
++    const err = captureStderr();
++    const res = await GET();
++    err.restore();
++    expect(res.status).toBe(500);
++    const line = JSON.parse(err.lines[0]);
++    expect(line).toMatchObject({ event: "request_failed", route: "/api/health" });
++    expect(line).not.toHaveProperty("method");
++    expect(line).not.toHaveProperty("path");
++  });
++
++  it("still answers 500 when refreshing the redaction values fails", async () => {
++    const withRouteErrors = makeWithRouteErrors({ refreshRedactions: async () => { throw new Error("db down"); } });
++    const GET = withRouteErrors("/api/x", async () => {
++      throw new Error("x");
++    });
++    const err = captureStderr();
++    const res = await GET();
++    err.restore();
++    expect(res.status).toBe(500);
++    expect(err.lines.some((l) => l.includes("request_failed"))).toBe(true);
++  });
++
++  it("gives each failure its own request id", async () => {
++    const withRouteErrors = makeWithRouteErrors({ refreshRedactions: async () => undefined });
++    const GET = withRouteErrors("/api/x", async () => {
++      throw new Error("x");
++    });
++    const err = captureStderr();
++    const a = await (await GET()).json();
++    const b = await (await GET()).json();
++    err.restore();
++    expect(a.requestId).not.toBe(b.requestId);
++  });
++});

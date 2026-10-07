@@ -1,0 +1,43 @@
+diff --git a/packages/monitoring/src/allWorkersBeat.test.ts b/packages/monitoring/src/allWorkersBeat.test.ts
+new file mode 100644
+index 0000000..12a27b1
+--- /dev/null
++++ b/packages/monitoring/src/allWorkersBeat.test.ts
+@@ -0,0 +1,37 @@
++import { describe, it, expect } from "vitest";
++import { readFileSync } from "node:fs";
++import path from "node:path";
++import { fileURLToPath } from "node:url";
++
++/**
++ * Phase 11b design §5.1: every worker process beats under its /status name and records a clean stop on SIGINT/SIGTERM
++ * before closing its Redis connection. The entry points are not unit-testable (they start real workers), so this
++ * pins the wiring structurally; the E2E exercises it for real.
++ */
++const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
++const WIRING: Array<[string, string]> = [
++  ["services/job-ingestion/src/main.ts", "job-ingestion"],
++  ["services/matching-worker/src/main.ts", "matching"],
++  ["services/maintenance-worker/src/main.ts", "maintenance"],
++  ["services/browser-worker/src/main.ts", "browser"],
++];
++
++describe("every worker beats", () => {
++  it.each(WIRING)("%s beats as %s and stops before closing Redis", (file, name) => {
++    const source = readFileSync(path.join(REPO, file), "utf8");
++    expect(source).toContain(`const heartbeat = await startHeartbeat(connection, "${name}");`);
++    const shutdown = source.slice(source.indexOf("const shutdown = async () => {"));
++    const stopAt = shutdown.indexOf("await heartbeat.stop();");
++    expect(stopAt).toBeGreaterThan(0);
++    expect(stopAt).toBeLessThan(shutdown.indexOf("await connection.quit();"));
++  });
++
++  // Found while wiring heartbeats: a second SIGINT/SIGTERM (a double Ctrl-C, or a wrapper forwarding the signal)
++  // re-entered shutdown, and the second run's connection.quit() closed Redis under the first run's -- an unhandled
++  // "Connection is closed" crash. Every worker's shutdown must run once.
++  it.each(WIRING)("%s runs its shutdown only once", (file) => {
++    const source = readFileSync(path.join(REPO, file), "utf8");
++    const shutdown = source.slice(source.indexOf("const shutdown = async () => {"));
++    expect(shutdown).toMatch(/^const shutdown = async \(\) => \{\s*(\/\/[^\n]*\s*)*if \(stopping\) return;\s*stopping = true;/);
++  });
++});

@@ -1,0 +1,370 @@
+diff --git a/packages/logging/eslint.config.mjs b/packages/logging/eslint.config.mjs
+new file mode 100644
+index 0000000..f4e3ba6
+--- /dev/null
++++ b/packages/logging/eslint.config.mjs
+@@ -0,0 +1,3 @@
++import baseConfig from "../../eslint.config.base.mjs";
++
++export default baseConfig;
+diff --git a/packages/logging/package.json b/packages/logging/package.json
+new file mode 100644
+index 0000000..8a442d6
+--- /dev/null
++++ b/packages/logging/package.json
+@@ -0,0 +1,20 @@
++{
++  "name": "@ai-career/logging",
++  "version": "0.0.0",
++  "private": true,
++  "type": "module",
++  "main": "src/index.ts",
++  "types": "src/index.ts",
++  "scripts": {
++    "test": "vitest run",
++    "typecheck": "tsc --noEmit",
++    "lint": "eslint src"
++  },
++  "devDependencies": {
++    "vitest": "^2.1.0",
++    "typescript": "^5.7.0",
++    "@types/node": "^22.10.0",
++    "eslint": "^9.0.0",
++    "typescript-eslint": "^8.0.0"
++  }
++}
+diff --git a/packages/logging/src/logger.test.ts b/packages/logging/src/logger.test.ts
+new file mode 100644
+index 0000000..d587838
+--- /dev/null
++++ b/packages/logging/src/logger.test.ts
+@@ -0,0 +1,106 @@
++import { describe, it, expect } from "vitest";
++import { configureLogging, createLogger, defaultRedactor, type LogLevel } from "./logger";
++import { Redactor } from "./redactor";
++
++function capture(level?: LogLevel, redactor?: Redactor) {
++  const lines: { level: LogLevel; obj: Record<string, unknown>; raw: string }[] = [];
++  const log = createLogger({ service: "test-svc", level, redactor, write: (raw, lvl) => lines.push({ level: lvl, obj: JSON.parse(raw), raw }) });
++  return { log, lines };
++}
++
++describe("createLogger", () => {
++  it("writes one JSON line with ts, level, service, event and the fields", () => {
++    const { log, lines } = capture();
++    log.info("matching_completed", { jobId: "42", count: 3 });
++    expect(lines).toHaveLength(1);
++    expect(lines[0].obj).toEqual({ ts: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/), level: "info", service: "test-svc", event: "matching_completed", jobId: "42", count: 3 });
++    expect(lines[0].raw).not.toContain("\n");
++  });
++
++  it("filters below the configured level (default info)", () => {
++    const { log, lines } = capture();
++    log.debug("noisy");
++    log.warn("careful");
++    expect(lines.map((l) => l.obj.event)).toEqual(["careful"]);
++    const debug = capture("debug");
++    debug.log.debug("noisy");
++    expect(debug.lines).toHaveLength(1);
++    const errorOnly = capture("error");
++    errorOnly.log.warn("careful");
++    errorOnly.log.error("broken");
++    expect(errorOnly.lines.map((l) => l.obj.event)).toEqual(["broken"]);
++  });
++
++  it("does not let fields overwrite ts, level, service or event", () => {
++    const { log, lines } = capture();
++    log.error("real_event", { event: "fake", level: "debug", service: "other", ts: "x", keep: 1 });
++    expect(lines[0].obj).toMatchObject({ event: "real_event", level: "error", service: "test-svc", keep: 1 });
++    expect(lines[0].obj.ts).not.toBe("x");
++  });
++
++  it("scrubs string fields with the redactor and never writes error messages", () => {
++    const redactor = new Redactor();
++    redactor.setValues(["Jane Doe"]);
++    const { log, lines } = capture(undefined, redactor);
++    const err = new Error("duplicate key: Jane Doe SENTINEL");
++    log.error("request_failed", { path: "/api/profile/Jane Doe", error: err });
++    expect(lines[0].raw).not.toContain("Jane Doe");
++    expect(lines[0].raw).not.toContain("SENTINEL");
++    expect(lines[0].obj).toMatchObject({ path: "/api/profile/[REDACTED]", error: { name: "Error" } });
++  });
++
++  it("routes warn and error to stderr and the rest to stdout by default", () => {
++    const writes: string[] = [];
++    const origOut = process.stdout.write.bind(process.stdout);
++    const origErr = process.stderr.write.bind(process.stderr);
++    process.stdout.write = ((chunk: string) => (writes.push(`out:${chunk}`), true)) as typeof process.stdout.write;
++    process.stderr.write = ((chunk: string) => (writes.push(`err:${chunk}`), true)) as typeof process.stderr.write;
++    try {
++      const log = createLogger({ service: "s" });
++      log.info("a");
++      log.warn("b");
++      log.error("c");
++    } finally {
++      process.stdout.write = origOut;
++      process.stderr.write = origErr;
++    }
++    expect(writes.map((w) => w.slice(0, 4))).toEqual(["out:", "err:", "err:"]);
++    expect(writes.every((w) => w.endsWith("\n"))).toBe(true);
++  });
++
++  it("never throws, even when a write fails", () => {
++    const log = createLogger({ service: "s", write: () => { throw new Error("EPIPE"); } });
++    expect(() => log.error("x", { a: 1 })).not.toThrow();
++  });
++
++  it("uses the process-wide level and redactor from configureLogging, read at write time", () => {
++    const lines: string[] = [];
++    const log = createLogger({ service: "lib", write: (raw) => lines.push(raw) });
++    try {
++      configureLogging({ level: "error" });
++      log.warn("dropped");
++      defaultRedactor().setValues(["Jane Doe"]);
++      log.error("kept", { who: "Jane Doe" });
++      expect(lines).toHaveLength(1);
++      expect(JSON.parse(lines[0])).toMatchObject({ event: "kept", who: "[REDACTED]" });
++    } finally {
++      configureLogging({ level: "info" });
++      defaultRedactor().setValues([]);
++    }
++  });
++
++  it("lets a logger's own options override the process-wide ones", () => {
++    const lines: string[] = [];
++    const own = new Redactor();
++    const log = createLogger({ service: "x", level: "debug", redactor: own, write: (raw) => lines.push(raw) });
++    try {
++      configureLogging({ level: "error" });
++      defaultRedactor().setValues(["Jane Doe"]);
++      log.debug("kept", { who: "Jane Doe" });
++      expect(JSON.parse(lines[0])).toMatchObject({ who: "Jane Doe" });
++    } finally {
++      configureLogging({ level: "info" });
++      defaultRedactor().setValues([]);
++    }
++  });
++});
+diff --git a/packages/logging/src/redactor.test.ts b/packages/logging/src/redactor.test.ts
+new file mode 100644
+index 0000000..7c20394
+--- /dev/null
++++ b/packages/logging/src/redactor.test.ts
+@@ -0,0 +1,53 @@
++import { describe, it, expect } from "vitest";
++import { Redactor } from "./redactor";
++
++describe("Redactor", () => {
++  it("replaces each known value case-insensitively", () => {
++    const r = new Redactor();
++    r.setValues(["Jane Doe", "+44 7700 900123"]);
++    expect(r.redact("user JANE DOE called from +44 7700 900123 and jane doe again")).toBe(
++      "user [REDACTED] called from [REDACTED] and [REDACTED] again"
++    );
++  });
++
++  it("replaces the longest value first, so a full value wins over a value it contains", () => {
++    const r = new Redactor();
++    r.setValues(["Main", "12 Main Street"]);
++    expect(r.redact("lives at 12 Main Street")).toBe("lives at [REDACTED]");
++  });
++
++  it("escapes regex metacharacters in values", () => {
++    const r = new Redactor();
++    r.setValues(["https://linkedin.com/in/jane.doe?x=(1)"]);
++    expect(r.redact("profile https://linkedin.com/in/jane.doe?x=(1) end")).toBe("profile [REDACTED] end");
++    expect(r.redact("profile https://linkedin.com/in/janeXdoe?x=(1) end")).toContain("janeXdoe");
++  });
++
++  it("trims values and ignores ones shorter than 3 characters", () => {
++    const r = new Redactor();
++    r.setValues(["  Jo  ", "", "  Ann  ", "a"]);
++    expect(r.redact("Jo and Ann and a")).toBe("Jo and [REDACTED] and a");
++  });
++
++  it("always redacts email addresses, even with no known values", () => {
++    const r = new Redactor();
++    expect(r.redact("contact recruiter.name+tag@example.co.uk now")).toBe("contact [REDACTED_EMAIL] now");
++  });
++
++  it("redacts a known email as a known value before the generic pattern", () => {
++    const r = new Redactor();
++    r.setValues(["jane@example.com"]);
++    expect(r.redact("from jane@example.com")).toBe("from [REDACTED]");
++  });
++
++  it("replaces the whole set on setValues", () => {
++    const r = new Redactor();
++    r.setValues(["Alice Smith"]);
++    r.setValues(["Bob Jones"]);
++    expect(r.redact("Alice Smith and Bob Jones")).toBe("Alice Smith and [REDACTED]");
++  });
++
++  it("leaves text without matches unchanged", () => {
++    expect(new Redactor().redact("matching run 42 completed")).toBe("matching run 42 completed");
++  });
++});
+diff --git a/packages/logging/src/sanitize.test.ts b/packages/logging/src/sanitize.test.ts
+new file mode 100644
+index 0000000..7d614e9
+--- /dev/null
++++ b/packages/logging/src/sanitize.test.ts
+@@ -0,0 +1,111 @@
++import { describe, it, expect } from "vitest";
++import { sanitize, serializeError } from "./sanitize";
++import { Redactor } from "./redactor";
++
++const SENTINEL = "SENTINEL-MESSAGE-resume text: Built a pipeline at Acme";
++const redactor = new Redactor();
++redactor.setValues(["Jane Doe"]);
++
++function errorWithStack(name: string, stack: string, extra: Record<string, unknown> = {}): Error {
++  const e = new Error(SENTINEL);
++  e.name = name;
++  e.stack = stack;
++  return Object.assign(e, extra);
++}
++
++describe("serializeError", () => {
++  it("keeps the name and repo-relative frames, never the message", () => {
++    const e = errorWithStack(
++      "TypeError",
++      [
++        `TypeError: ${SENTINEL}`,
++        "    at buildSnapshot (/Users/x/project/packages/resume-optimization/src/build.ts:12:5)",
++        "    at async handler (file:///Users/x/project/apps/web/src/app/api/x/route.ts:30:9)",
++        "    at process.processTicksAndRejections (node:internal/process/task_queues:95:5)",
++        "    at Object.query (/Users/x/project/node_modules/.pnpm/postgres@3.4.9/node_modules/postgres/src/query.js:10:2)",
++        "    at /app/services/matching-worker/src/main.ts:5:1",
++        "    at chunk (/Users/x/project/apps/web/.next/server/chunks/123.js:1:4500)",
++      ].join("\n")
++    );
++    const out = serializeError(e);
++    expect(out).toEqual({
++      name: "TypeError",
++      frames: [
++        "packages/resume-optimization/src/build.ts:12:5",
++        "apps/web/src/app/api/x/route.ts:30:9",
++        "services/matching-worker/src/main.ts:5:1",
++        ".next/server/chunks/123.js:1:4500",
++      ],
++    });
++    expect(JSON.stringify(out)).not.toContain("SENTINEL");
++  });
++
++  it("keeps a code-like code (Postgres SQLSTATE, Node errno) and drops anything else", () => {
++    expect(serializeError(errorWithStack("PostgresError", "PostgresError: x", { code: "23505" }))).toMatchObject({ code: "23505" });
++    expect(serializeError(errorWithStack("Error", "Error: x", { code: "ECONNREFUSED" }))).toMatchObject({ code: "ECONNREFUSED" });
++    expect(serializeError(errorWithStack("Error", "Error: x", { code: "Key (email)=(jane@example.com) exists" }))).not.toHaveProperty("code");
++    expect(serializeError(errorWithStack("Error", "Error: x", { code: 42 }))).not.toHaveProperty("code");
++  });
++
++  it("caps frames at 8", () => {
++    const stack = ["Error: x", ...Array.from({ length: 12 }, (_, i) => `    at f${i} (/r/packages/a/src/f.ts:${i + 1}:1)`)].join("\n");
++    expect(serializeError(errorWithStack("Error", stack)).frames).toHaveLength(8);
++  });
++
++  it("reports a cause by name only", () => {
++    const cause = errorWithStack("PostgresError", "PostgresError: secret");
++    const e = errorWithStack("MatchingError", "MatchingError: unknown", { cause });
++    const out = serializeError(e);
++    expect(out).toMatchObject({ name: "MatchingError", causeName: "PostgresError" });
++    expect(JSON.stringify(out)).not.toContain("secret");
++  });
++
++  it("handles an error without a stack", () => {
++    const e = new Error(SENTINEL);
++    e.stack = undefined;
++    expect(serializeError(e)).toEqual({ name: "Error", frames: [] });
++  });
++});
++
++describe("sanitize", () => {
++  it("scrubs strings and passes numbers, booleans and null through", () => {
++    expect(sanitize({ who: "Jane Doe", mail: "x@y.io", n: 3, ok: true, none: null }, redactor)).toEqual({
++      who: "[REDACTED]", mail: "[REDACTED_EMAIL]", n: 3, ok: true, none: null,
++    });
++  });
++
++  it("drops undefined, functions and symbols; converts Date and bigint", () => {
++    const out = sanitize({ u: undefined, f: () => 1, s: Symbol("x"), d: new Date("2026-10-07T00:00:00Z"), b: BigInt(12) }, redactor);
++    expect(out).toEqual({ d: "2026-10-07T00:00:00.000Z", b: "12" });
++  });
++
++  it("truncates strings over 500 characters", () => {
++    const out = sanitize({ s: "a".repeat(600) }, redactor) as { s: string };
++    expect(out.s).toBe("a".repeat(500) + "…[truncated]");
++  });
++
++  it("serializes nested errors without their message", () => {
++    const out = sanitize({ error: errorWithStack("TypeError", `TypeError: ${SENTINEL}`) }, redactor);
++    expect(out).toEqual({ error: { name: "TypeError", frames: [] } });
++  });
++
++  it("stops at depth 3", () => {
++    expect(sanitize({ a: { b: { c: { d: 1 } } } }, redactor)).toEqual({ a: { b: { c: "[depth]" } } });
++  });
++
++  it("caps arrays at 50 items", () => {
++    const out = sanitize({ xs: Array.from({ length: 53 }, (_, i) => i) }, redactor) as { xs: unknown[] };
++    expect(out.xs).toHaveLength(51);
++    expect(out.xs[50]).toBe("[+3 more]");
++  });
++
++  it("replaces a cycle instead of recursing forever", () => {
++    const a: Record<string, unknown> = { name: "a" };
++    a.self = a;
++    expect(sanitize({ a }, redactor)).toEqual({ a: { name: "a", self: "[circular]" } });
++  });
++
++  it("does not scrub keys", () => {
++    expect(sanitize({ "Jane Doe": 1 }, redactor)).toEqual({ "Jane Doe": 1 });
++  });
++});
+diff --git a/packages/logging/tsconfig.json b/packages/logging/tsconfig.json
+new file mode 100644
+index 0000000..7ef7d5e
+--- /dev/null
++++ b/packages/logging/tsconfig.json
+@@ -0,0 +1,12 @@
++{
++  "compilerOptions": {
++    "strict": true,
++    "target": "ES2022",
++    "module": "ESNext",
++    "moduleResolution": "Bundler",
++    "esModuleInterop": true,
++    "skipLibCheck": true,
++    "noEmit": true
++  },
++  "include": ["src"]
++}
+diff --git a/pnpm-lock.yaml b/pnpm-lock.yaml
+index 7733227..1673e14 100644
+--- a/pnpm-lock.yaml
++++ b/pnpm-lock.yaml
+@@ -484,6 +484,24 @@ importers:
+         specifier: ^2.1.0
+         version: 2.1.9(@types/node@22.20.1)(jsdom@25.0.1)(lightningcss@1.32.0)
+ 
++  packages/logging:
++    devDependencies:
++      '@types/node':
++        specifier: ^22.10.0
++        version: 22.20.1
++      eslint:
++        specifier: ^9.0.0
++        version: 9.39.5(jiti@2.7.0)
++      typescript:
++        specifier: ^5.7.0
++        version: 5.9.3
++      typescript-eslint:
++        specifier: ^8.0.0
++        version: 8.69.0(eslint@9.39.5(jiti@2.7.0))(typescript@5.9.3)
++      vitest:
++        specifier: ^2.1.0
++        version: 2.1.9(@types/node@22.20.1)(jsdom@25.0.1)(lightningcss@1.32.0)
++
+   packages/matching:
+     dependencies:
+       '@ai-career/ai':

@@ -1,0 +1,79 @@
+diff --git a/apps/web/src/app/api/career-goal/route.test.ts b/apps/web/src/app/api/career-goal/route.test.ts
+index ea165d6..d0bd8df 100644
+--- a/apps/web/src/app/api/career-goal/route.test.ts
++++ b/apps/web/src/app/api/career-goal/route.test.ts
+@@ -95,6 +95,12 @@ describe("GET /api/career-goal", () => {
+   it("fails loudly, rather than showing 'no goal', when the active goal has lost its constraints row", async () => {
+     await adminSql`DELETE FROM career_goal_constraints WHERE user_id = ${TEST_USER_ID}`;
+ 
+-    await expect(GET()).rejects.toThrow(/has no constraints/i);
++    // Phase 11b: the error no longer escapes to Next.js; withRouteErrors answers 500 with a request id and logs the
++    // error by name only, so the internal detail reaches neither the client nor the log.
++    const res = await GET();
++    expect(res.status).toBe(500);
++    const body = await res.json();
++    expect(body.error).toMatch(/^Something went wrong \(request [0-9a-f]{8}\)\. Details are in the server log\.$/);
++    expect(JSON.stringify(body)).not.toMatch(/constraints/i);
+   });
+ });
+diff --git a/apps/web/src/app/api/job-sources/upload/route.test.ts b/apps/web/src/app/api/job-sources/upload/route.test.ts
+index f52be75..2c5dbb7 100644
+--- a/apps/web/src/app/api/job-sources/upload/route.test.ts
++++ b/apps/web/src/app/api/job-sources/upload/route.test.ts
+@@ -154,8 +154,10 @@ describe("POST /api/job-sources/upload", () => {
+       await vi.importActual<typeof import("@ai-career/ingestion")>("@ai-career/ingestion").then((m) => m.storeUpload(tx, input));
+       throw new Error("secret-internal-detail");
+     });
+-    // The route lets the error propagate: Next.js turns that into a bare 500, so no response body exists to leak it.
+-    await expect(POST(upload())).rejects.toThrow("secret-internal-detail");
++    // Phase 11b: the error is caught by withRouteErrors -- a 500 with a request id, never the internal detail.
++    const res = await POST(upload());
++    expect(res.status).toBe(500);
++    expect(JSON.stringify(await res.json())).not.toContain("secret-internal-detail");
+     expect(await sourceCount()).toBe(0);
+     expect(await rawCount()).toBe(0);
+     expect(enqueueIngestion).not.toHaveBeenCalled();
+diff --git a/apps/web/src/lib/http/allRoutesWrapped.test.ts b/apps/web/src/lib/http/allRoutesWrapped.test.ts
+new file mode 100644
+index 0000000..56bd55c
+--- /dev/null
++++ b/apps/web/src/lib/http/allRoutesWrapped.test.ts
+@@ -0,0 +1,38 @@
++import { describe, it, expect } from "vitest";
++import { readdirSync, readFileSync, statSync } from "node:fs";
++import path from "node:path";
++import { fileURLToPath } from "node:url";
++
++/**
++ * Phase 11b design §4.2: every exported HTTP-method handler goes through withRouteErrors with its own route pattern,
++ * so no error can escape to Next.js's default handler (which prints the raw message).
++ */
++const API_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../app/api");
++const METHODS = "GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS";
++
++function routeFiles(dir: string): string[] {
++  return readdirSync(dir).flatMap((name) => {
++    const full = path.join(dir, name);
++    if (statSync(full).isDirectory()) return routeFiles(full);
++    return name === "route.ts" ? [full] : [];
++  });
++}
++
++const files = routeFiles(API_DIR);
++const patternOf = (file: string) => `/api/${path.relative(API_DIR, path.dirname(file)).split(path.sep).join("/")}`;
++
++describe("every API route handler is wrapped in withRouteErrors", () => {
++  it("finds all 40 route files", () => {
++    expect(files.length).toBeGreaterThanOrEqual(40);
++  });
++
++  it.each(files.map((f) => [patternOf(f), f]))("%s", (pattern, file) => {
++    const source = readFileSync(file, "utf8");
++    expect(source, "no unwrapped `export (async) function <METHOD>`").not.toMatch(new RegExp(`^export (async )?function (${METHODS})\\b`, "m"));
++    const exported = [...source.matchAll(new RegExp(`^export const (${METHODS}) = (.*)$`, "gm"))];
++    expect(exported.length, "exports at least one handler").toBeGreaterThan(0);
++    for (const [, , rhs] of exported) {
++      expect(rhs).toMatch(new RegExp(`^withRouteErrors\\("${pattern.replace(/[[\]]/g, "\\$&")}", `));
++    }
++  });
++});

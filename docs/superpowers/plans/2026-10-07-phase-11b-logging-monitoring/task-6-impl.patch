@@ -1,0 +1,1030 @@
+diff --git a/apps/web/src/app/api/application-pitches/[jobId]/edit/route.ts b/apps/web/src/app/api/application-pitches/[jobId]/edit/route.ts
+index 1b22c36..2128aea 100644
+--- a/apps/web/src/app/api/application-pitches/[jobId]/edit/route.ts
++++ b/apps/web/src/app/api/application-pitches/[jobId]/edit/route.ts
+@@ -6,10 +6,11 @@ import { createEditedPitch, EditPitchBodySchema, PitchEditError } from "@ai-care
+ import { readJsonBody } from "../../../../../lib/readJsonBody";
+ import { formatValidationError } from "../../../../../lib/formatValidationError";
+ import { toPitchView } from "../../../../../lib/applicationPitch/serializePitch";
++import { withRouteErrors } from "../../../../../lib/http/withRouteErrors";
+ 
+ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+ 
+-export async function POST(request: Request, { params }: { params: Promise<{ jobId: string }> }) {
++async function handlePOST(request: Request, { params }: { params: Promise<{ jobId: string }> }) {
+   const { jobId } = await params;
+   if (!UUID_RE.test(jobId)) return NextResponse.json({ error: "Job not found" }, { status: 404 });
+ 
+@@ -32,3 +33,5 @@ export async function POST(request: Request, { params }: { params: Promise<{ job
+     await closeDbClient(db);
+   }
+ }
++
++export const POST = withRouteErrors("/api/application-pitches/[jobId]/edit", handlePOST);
+diff --git a/apps/web/src/app/api/application-pitches/[jobId]/research/refresh/route.ts b/apps/web/src/app/api/application-pitches/[jobId]/research/refresh/route.ts
+index ed50eb7..cdad957 100644
+--- a/apps/web/src/app/api/application-pitches/[jobId]/research/refresh/route.ts
++++ b/apps/web/src/app/api/application-pitches/[jobId]/research/refresh/route.ts
+@@ -8,11 +8,12 @@ import { ensureCompanyResearch, CompanyResearchRefreshFailedError } from "@ai-ca
+ import { toResearchView } from "../../../../../../lib/applicationPitch/serializePitch";
+ import { createUsageSink } from "../../../../../../lib/aiUsage/createUsageSink";
+ import { budgetExceededResponse } from "../../../../../../lib/aiUsage/budgetResponse";
++import { withRouteErrors } from "../../../../../../lib/http/withRouteErrors";
+ 
+ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+ const { jobs } = schema;
+ 
+-export async function POST(_request: Request, { params }: { params: Promise<{ jobId: string }> }) {
++async function handlePOST(_request: Request, { params }: { params: Promise<{ jobId: string }> }) {
+   const { jobId } = await params;
+   if (!UUID_RE.test(jobId)) return NextResponse.json({ error: "Job not found" }, { status: 404 });
+ 
+@@ -41,3 +42,5 @@ export async function POST(_request: Request, { params }: { params: Promise<{ jo
+     await closeDbClient(db);
+   }
+ }
++
++export const POST = withRouteErrors("/api/application-pitches/[jobId]/research/refresh", handlePOST);
+diff --git a/apps/web/src/app/api/application-pitches/[jobId]/route.ts b/apps/web/src/app/api/application-pitches/[jobId]/route.ts
+index c225445..5f0a149 100644
+--- a/apps/web/src/app/api/application-pitches/[jobId]/route.ts
++++ b/apps/web/src/app/api/application-pitches/[jobId]/route.ts
+@@ -4,10 +4,11 @@ import { loadEnv } from "@ai-career/config";
+ import { closeDbClient, createDbClient, withUserContext } from "@ai-career/db";
+ import { listPitches } from "../../../../lib/applicationPitch/listPitches";
+ import { loadResearchForJob } from "../../../../lib/applicationPitch/loadResearchForJob";
++import { withRouteErrors } from "../../../../lib/http/withRouteErrors";
+ 
+ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+ 
+-export async function GET(_request: Request, { params }: { params: Promise<{ jobId: string }> }) {
++async function handleGET(_request: Request, { params }: { params: Promise<{ jobId: string }> }) {
+   const { jobId } = await params;
+   if (!UUID_RE.test(jobId)) return NextResponse.json({ error: "Job not found" }, { status: 404 });
+ 
+@@ -23,3 +24,5 @@ export async function GET(_request: Request, { params }: { params: Promise<{ job
+     await closeDbClient(db);
+   }
+ }
++
++export const GET = withRouteErrors("/api/application-pitches/[jobId]", handleGET);
+diff --git a/apps/web/src/app/api/application-pitches/[jobId]/run/route.ts b/apps/web/src/app/api/application-pitches/[jobId]/run/route.ts
+index d327818..1e3f7e7 100644
+--- a/apps/web/src/app/api/application-pitches/[jobId]/run/route.ts
++++ b/apps/web/src/app/api/application-pitches/[jobId]/run/route.ts
+@@ -7,10 +7,11 @@ import { runPitchGeneration, PitchGenerationError } from "@ai-career/application
+ import { toPitchView, toResearchView } from "../../../../../lib/applicationPitch/serializePitch";
+ import { createUsageSink } from "../../../../../lib/aiUsage/createUsageSink";
+ import { budgetExceededResponse } from "../../../../../lib/aiUsage/budgetResponse";
++import { withRouteErrors } from "../../../../../lib/http/withRouteErrors";
+ 
+ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+ 
+-export async function POST(_request: Request, { params }: { params: Promise<{ jobId: string }> }) {
++async function handlePOST(_request: Request, { params }: { params: Promise<{ jobId: string }> }) {
+   const { jobId } = await params;
+   if (!UUID_RE.test(jobId)) return NextResponse.json({ error: "Job not found" }, { status: 404 });
+ 
+@@ -37,3 +38,5 @@ export async function POST(_request: Request, { params }: { params: Promise<{ jo
+     await closeDbClient(db);
+   }
+ }
++
++export const POST = withRouteErrors("/api/application-pitches/[jobId]/run", handlePOST);
+diff --git a/apps/web/src/app/api/applications/[id]/events/route.ts b/apps/web/src/app/api/applications/[id]/events/route.ts
+index b34f428..68b798c 100644
+--- a/apps/web/src/app/api/applications/[id]/events/route.ts
++++ b/apps/web/src/app/api/applications/[id]/events/route.ts
+@@ -6,10 +6,11 @@ import { readJsonBody } from "../../../../../lib/readJsonBody";
+ import { formatValidationError } from "../../../../../lib/formatValidationError";
+ import { toEventView } from "../../../../../lib/applications/serializeApplication";
+ import { applicationErrorResponse } from "../../../../../lib/applications/errorResponse";
++import { withRouteErrors } from "../../../../../lib/http/withRouteErrors";
+ 
+ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+ 
+-export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
++async function handlePOST(request: Request, { params }: { params: Promise<{ id: string }> }) {
+   const { id } = await params;
+   if (!UUID_RE.test(id)) return NextResponse.json({ error: "Application not found" }, { status: 404 });
+   const json = await readJsonBody(request);
+@@ -29,3 +30,5 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
+     await closeDbClient(db);
+   }
+ }
++
++export const POST = withRouteErrors("/api/applications/[id]/events", handlePOST);
+diff --git a/apps/web/src/app/api/applications/[id]/route.ts b/apps/web/src/app/api/applications/[id]/route.ts
+index a4bd512..df19ad5 100644
+--- a/apps/web/src/app/api/applications/[id]/route.ts
++++ b/apps/web/src/app/api/applications/[id]/route.ts
+@@ -6,12 +6,13 @@ import { readJsonBody } from "../../../../lib/readJsonBody";
+ import { formatValidationError } from "../../../../lib/formatValidationError";
+ import { toApplicationView, toEventView } from "../../../../lib/applications/serializeApplication";
+ import { applicationErrorResponse } from "../../../../lib/applications/errorResponse";
++import { withRouteErrors } from "../../../../lib/http/withRouteErrors";
+ 
+ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+ const notFound = () => NextResponse.json({ error: "Application not found" }, { status: 404 });
+ type Ctx = { params: Promise<{ id: string }> };
+ 
+-export async function GET(_request: Request, { params }: Ctx) {
++async function handleGET(_request: Request, { params }: Ctx) {
+   const { id } = await params;
+   if (!UUID_RE.test(id)) return notFound();
+   const env = loadEnv();
+@@ -25,7 +26,7 @@ export async function GET(_request: Request, { params }: Ctx) {
+   }
+ }
+ 
+-export async function PATCH(request: Request, { params }: Ctx) {
++async function handlePATCH(request: Request, { params }: Ctx) {
+   const { id } = await params;
+   if (!UUID_RE.test(id)) return notFound();
+   const json = await readJsonBody(request);
+@@ -46,7 +47,7 @@ export async function PATCH(request: Request, { params }: Ctx) {
+   }
+ }
+ 
+-export async function DELETE(_request: Request, { params }: Ctx) {
++async function handleDELETE(_request: Request, { params }: Ctx) {
+   const { id } = await params;
+   if (!UUID_RE.test(id)) return notFound();
+   const env = loadEnv();
+@@ -57,3 +58,7 @@ export async function DELETE(_request: Request, { params }: Ctx) {
+     await closeDbClient(db);
+   }
+ }
++
++export const GET = withRouteErrors("/api/applications/[id]", handleGET);
++export const PATCH = withRouteErrors("/api/applications/[id]", handlePATCH);
++export const DELETE = withRouteErrors("/api/applications/[id]", handleDELETE);
+diff --git a/apps/web/src/app/api/applications/[id]/status/route.ts b/apps/web/src/app/api/applications/[id]/status/route.ts
+index 75025b4..ea36afe 100644
+--- a/apps/web/src/app/api/applications/[id]/status/route.ts
++++ b/apps/web/src/app/api/applications/[id]/status/route.ts
+@@ -6,10 +6,11 @@ import { readJsonBody } from "../../../../../lib/readJsonBody";
+ import { formatValidationError } from "../../../../../lib/formatValidationError";
+ import { toApplicationView } from "../../../../../lib/applications/serializeApplication";
+ import { applicationErrorResponse } from "../../../../../lib/applications/errorResponse";
++import { withRouteErrors } from "../../../../../lib/http/withRouteErrors";
+ 
+ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+ 
+-export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
++async function handlePOST(request: Request, { params }: { params: Promise<{ id: string }> }) {
+   const { id } = await params;
+   if (!UUID_RE.test(id)) return NextResponse.json({ error: "Application not found" }, { status: 404 });
+   const json = await readJsonBody(request);
+@@ -29,3 +30,5 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
+     await closeDbClient(db);
+   }
+ }
++
++export const POST = withRouteErrors("/api/applications/[id]/status", handlePOST);
+diff --git a/apps/web/src/app/api/applications/for-job/[jobId]/route.ts b/apps/web/src/app/api/applications/for-job/[jobId]/route.ts
+index 85590a5..4734edd 100644
+--- a/apps/web/src/app/api/applications/for-job/[jobId]/route.ts
++++ b/apps/web/src/app/api/applications/for-job/[jobId]/route.ts
+@@ -2,10 +2,11 @@ import { NextResponse } from "next/server";
+ import { loadEnv } from "@ai-career/config";
+ import { closeDbClient, createDbClient } from "@ai-career/db";
+ import { getApplicationForJob, listDocumentOptions } from "@ai-career/applications";
++import { withRouteErrors } from "../../../../../lib/http/withRouteErrors";
+ 
+ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+ 
+-export async function GET(_request: Request, { params }: { params: Promise<{ jobId: string }> }) {
++async function handleGET(_request: Request, { params }: { params: Promise<{ jobId: string }> }) {
+   const { jobId } = await params;
+   if (!UUID_RE.test(jobId)) return NextResponse.json({ error: "Job not found" }, { status: 404 });
+   const env = loadEnv();
+@@ -21,3 +22,5 @@ export async function GET(_request: Request, { params }: { params: Promise<{ job
+     await closeDbClient(db);
+   }
+ }
++
++export const GET = withRouteErrors("/api/applications/for-job/[jobId]", handleGET);
+diff --git a/apps/web/src/app/api/applications/route.ts b/apps/web/src/app/api/applications/route.ts
+index 9146b29..42022ff 100644
+--- a/apps/web/src/app/api/applications/route.ts
++++ b/apps/web/src/app/api/applications/route.ts
+@@ -8,8 +8,9 @@ import { readJsonBody } from "../../../lib/readJsonBody";
+ import { formatValidationError } from "../../../lib/formatValidationError";
+ import { toApplicationView } from "../../../lib/applications/serializeApplication";
+ import { applicationErrorResponse } from "../../../lib/applications/errorResponse";
++import { withRouteErrors } from "../../../lib/http/withRouteErrors";
+ 
+-export async function GET(request: Request) {
++async function handleGET(request: Request) {
+   const params = new URL(request.url).searchParams;
+   const status = params.get("status");
+   if (status !== null && !(APPLICATION_STATUSES as readonly string[]).includes(status)) {
+@@ -29,7 +30,7 @@ export async function GET(request: Request) {
+   }
+ }
+ 
+-export async function POST(request: Request) {
++async function handlePOST(request: Request) {
+   const json = await readJsonBody(request);
+   if (!json.ok) return json.response;
+   const parsed = CreateApplicationBodySchema.safeParse(json.body);
+@@ -48,3 +49,6 @@ export async function POST(request: Request) {
+     await closeDbClient(db);
+   }
+ }
++
++export const GET = withRouteErrors("/api/applications", handleGET);
++export const POST = withRouteErrors("/api/applications", handlePOST);
+diff --git a/apps/web/src/app/api/automation-sessions/[id]/cancel/route.ts b/apps/web/src/app/api/automation-sessions/[id]/cancel/route.ts
+index 290575a..5a5a047 100644
+--- a/apps/web/src/app/api/automation-sessions/[id]/cancel/route.ts
++++ b/apps/web/src/app/api/automation-sessions/[id]/cancel/route.ts
+@@ -4,10 +4,11 @@ import { closeDbClient, createDbClient } from "@ai-career/db";
+ import { requestCancel } from "@ai-career/browser";
+ import { toSessionView } from "../../../../../lib/browser-automation/serializeSession";
+ import { automationErrorResponse } from "../../../../../lib/browser-automation/errorResponse";
++import { withRouteErrors } from "../../../../../lib/http/withRouteErrors";
+ 
+ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+ 
+-export async function POST(_request: Request, { params }: { params: Promise<{ id: string }> }) {
++async function handlePOST(_request: Request, { params }: { params: Promise<{ id: string }> }) {
+   const { id } = await params;
+   if (!UUID_RE.test(id)) return NextResponse.json({ error: "Autofill session not found" }, { status: 404 });
+   const env = loadEnv();
+@@ -23,3 +24,5 @@ export async function POST(_request: Request, { params }: { params: Promise<{ id
+     await closeDbClient(db);
+   }
+ }
++
++export const POST = withRouteErrors("/api/automation-sessions/[id]/cancel", handlePOST);
+diff --git a/apps/web/src/app/api/automation-sessions/[id]/route.ts b/apps/web/src/app/api/automation-sessions/[id]/route.ts
+index 6760428..f5f7e12 100644
+--- a/apps/web/src/app/api/automation-sessions/[id]/route.ts
++++ b/apps/web/src/app/api/automation-sessions/[id]/route.ts
+@@ -3,11 +3,12 @@ import { loadEnv } from "@ai-career/config";
+ import { closeDbClient, createDbClient } from "@ai-career/db";
+ import { getSession } from "@ai-career/browser";
+ import { toSessionView } from "../../../../lib/browser-automation/serializeSession";
++import { withRouteErrors } from "../../../../lib/http/withRouteErrors";
+ 
+ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+ const notFound = () => NextResponse.json({ error: "Autofill session not found" }, { status: 404 });
+ 
+-export async function GET(_request: Request, { params }: { params: Promise<{ id: string }> }) {
++async function handleGET(_request: Request, { params }: { params: Promise<{ id: string }> }) {
+   const { id } = await params;
+   if (!UUID_RE.test(id)) return notFound();
+   const env = loadEnv();
+@@ -19,3 +20,5 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
+     await closeDbClient(db);
+   }
+ }
++
++export const GET = withRouteErrors("/api/automation-sessions/[id]", handleGET);
+diff --git a/apps/web/src/app/api/automation-sessions/route.ts b/apps/web/src/app/api/automation-sessions/route.ts
+index fd7bc6e..204e801 100644
+--- a/apps/web/src/app/api/automation-sessions/route.ts
++++ b/apps/web/src/app/api/automation-sessions/route.ts
+@@ -8,13 +8,14 @@ import { formatValidationError } from "../../../lib/formatValidationError";
+ import { enqueueAutofill } from "../../../lib/browser-automation/enqueue";
+ import { toSessionView } from "../../../lib/browser-automation/serializeSession";
+ import { automationErrorResponse } from "../../../lib/browser-automation/errorResponse";
++import { withRouteErrors } from "../../../lib/http/withRouteErrors";
+ 
+ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+ const CreateBodySchema = z.object({ jobId: z.string().uuid() }).strict();
+ const jobNotFound = () => NextResponse.json({ error: "Job not found" }, { status: 404 });
+ 
+ /** Everything AutofillPanel renders, in one request (design §6). */
+-export async function GET(request: Request) {
++async function handleGET(request: Request) {
+   const jobId = new URL(request.url).searchParams.get("jobId");
+   if (jobId === null) return NextResponse.json({ error: "jobId is required" }, { status: 400 });
+   if (!UUID_RE.test(jobId)) return jobNotFound();
+@@ -29,7 +30,7 @@ export async function GET(request: Request) {
+   }
+ }
+ 
+-export async function POST(request: Request) {
++async function handlePOST(request: Request) {
+   const json = await readJsonBody(request);
+   if (!json.ok) return json.response;
+   const parsed = CreateBodySchema.safeParse(json.body);
+@@ -54,3 +55,6 @@ export async function POST(request: Request) {
+     await closeDbClient(db);
+   }
+ }
++
++export const GET = withRouteErrors("/api/automation-sessions", handleGET);
++export const POST = withRouteErrors("/api/automation-sessions", handlePOST);
+diff --git a/apps/web/src/app/api/career-goal/confirm/route.ts b/apps/web/src/app/api/career-goal/confirm/route.ts
+index 5f0ade3..b28de4b 100644
+--- a/apps/web/src/app/api/career-goal/confirm/route.ts
++++ b/apps/web/src/app/api/career-goal/confirm/route.ts
+@@ -8,8 +8,9 @@ import {
+   CareerGoalNotFoundError,
+   CareerGoalStateError,
+ } from "../../../../lib/career-goal/saveCareerGoal";
++import { withRouteErrors } from "../../../../lib/http/withRouteErrors";
+ 
+-export async function POST(request: Request) {
++async function handlePOST(request: Request) {
+   const env = loadEnv();
+   const jsonBody = await readJsonBody(request);
+   if (!jsonBody.ok) return jsonBody.response;
+@@ -32,3 +33,5 @@ export async function POST(request: Request) {
+ 
+   return NextResponse.json({ status: "confirmed" });
+ }
++
++export const POST = withRouteErrors("/api/career-goal/confirm", handlePOST);
+diff --git a/apps/web/src/app/api/career-goal/parse/route.ts b/apps/web/src/app/api/career-goal/parse/route.ts
+index e5d13b8..fb9391f 100644
+--- a/apps/web/src/app/api/career-goal/parse/route.ts
++++ b/apps/web/src/app/api/career-goal/parse/route.ts
+@@ -16,6 +16,7 @@ import {
+ } from "@ai-career/ai";
+ import { createUsageSink } from "../../../../lib/aiUsage/createUsageSink";
+ import { budgetExceededResponse } from "../../../../lib/aiUsage/budgetResponse";
++import { withRouteErrors } from "../../../../lib/http/withRouteErrors";
+ 
+ const MAX_RAW_TEXT_LENGTH = 4000;
+ 
+@@ -34,7 +35,7 @@ async function extractWithRetry(
+   }
+ }
+ 
+-export async function POST(request: Request) {
++async function handlePOST(request: Request) {
+   const env = loadEnv();
+   const jsonBody = await readJsonBody(request);
+   if (!jsonBody.ok) return jsonBody.response;
+@@ -140,3 +141,5 @@ export async function POST(request: Request) {
+     await closeDbClient(db);
+   }
+ }
++
++export const POST = withRouteErrors("/api/career-goal/parse", handlePOST);
+diff --git a/apps/web/src/app/api/career-goal/route.ts b/apps/web/src/app/api/career-goal/route.ts
+index 8ff7807..b599461 100644
+--- a/apps/web/src/app/api/career-goal/route.ts
++++ b/apps/web/src/app/api/career-goal/route.ts
+@@ -2,8 +2,9 @@ import { NextResponse } from "next/server";
+ import { loadEnv } from "@ai-career/config";
+ import { createDbClient, closeDbClient, withUserContext } from "@ai-career/db";
+ import { getCareerGoalState } from "../../../lib/career-goal/serializeCareerGoal";
++import { withRouteErrors } from "../../../lib/http/withRouteErrors";
+ 
+-export async function GET() {
++async function handleGET() {
+   const env = loadEnv();
+   const db = createDbClient(env);
+   try {
+@@ -13,3 +14,5 @@ export async function GET() {
+     await closeDbClient(db);
+   }
+ }
++
++export const GET = withRouteErrors("/api/career-goal", handleGET);
+diff --git a/apps/web/src/app/api/cover-letters/[jobId]/edit/route.ts b/apps/web/src/app/api/cover-letters/[jobId]/edit/route.ts
+index 2a69850..f9922ee 100644
+--- a/apps/web/src/app/api/cover-letters/[jobId]/edit/route.ts
++++ b/apps/web/src/app/api/cover-letters/[jobId]/edit/route.ts
+@@ -6,10 +6,11 @@ import { createEditedCoverLetter, EditCoverLetterBodySchema, CoverLetterEditErro
+ import { readJsonBody } from "../../../../../lib/readJsonBody";
+ import { formatValidationError } from "../../../../../lib/formatValidationError";
+ import { toCoverLetterView } from "../../../../../lib/coverLetter/serializeCoverLetter";
++import { withRouteErrors } from "../../../../../lib/http/withRouteErrors";
+ 
+ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+ 
+-export async function POST(request: Request, { params }: { params: Promise<{ jobId: string }> }) {
++async function handlePOST(request: Request, { params }: { params: Promise<{ jobId: string }> }) {
+   const { jobId } = await params;
+   if (!UUID_RE.test(jobId)) return NextResponse.json({ error: "Job not found" }, { status: 404 });
+ 
+@@ -36,3 +37,5 @@ export async function POST(request: Request, { params }: { params: Promise<{ job
+     await closeDbClient(db);
+   }
+ }
++
++export const POST = withRouteErrors("/api/cover-letters/[jobId]/edit", handlePOST);
+diff --git a/apps/web/src/app/api/cover-letters/[jobId]/route.ts b/apps/web/src/app/api/cover-letters/[jobId]/route.ts
+index 5be7211..2edda54 100644
+--- a/apps/web/src/app/api/cover-letters/[jobId]/route.ts
++++ b/apps/web/src/app/api/cover-letters/[jobId]/route.ts
+@@ -4,10 +4,11 @@ import { loadEnv } from "@ai-career/config";
+ import { closeDbClient, createDbClient, withUserContext } from "@ai-career/db";
+ import { listCoverLetters } from "../../../../lib/coverLetter/listCoverLetters";
+ import { loadResearchForJob } from "../../../../lib/applicationPitch/loadResearchForJob";
++import { withRouteErrors } from "../../../../lib/http/withRouteErrors";
+ 
+ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+ 
+-export async function GET(_request: Request, { params }: { params: Promise<{ jobId: string }> }) {
++async function handleGET(_request: Request, { params }: { params: Promise<{ jobId: string }> }) {
+   const { jobId } = await params;
+   if (!UUID_RE.test(jobId)) return NextResponse.json({ error: "Job not found" }, { status: 404 });
+ 
+@@ -23,3 +24,5 @@ export async function GET(_request: Request, { params }: { params: Promise<{ job
+     await closeDbClient(db);
+   }
+ }
++
++export const GET = withRouteErrors("/api/cover-letters/[jobId]", handleGET);
+diff --git a/apps/web/src/app/api/cover-letters/[jobId]/run/route.ts b/apps/web/src/app/api/cover-letters/[jobId]/run/route.ts
+index 47b48e7..9ceac88 100644
+--- a/apps/web/src/app/api/cover-letters/[jobId]/run/route.ts
++++ b/apps/web/src/app/api/cover-letters/[jobId]/run/route.ts
+@@ -8,10 +8,11 @@ import { toCoverLetterView } from "../../../../../lib/coverLetter/serializeCover
+ import { toResearchView } from "../../../../../lib/applicationPitch/serializePitch";
+ import { createUsageSink } from "../../../../../lib/aiUsage/createUsageSink";
+ import { budgetExceededResponse } from "../../../../../lib/aiUsage/budgetResponse";
++import { withRouteErrors } from "../../../../../lib/http/withRouteErrors";
+ 
+ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+ 
+-export async function POST(_request: Request, { params }: { params: Promise<{ jobId: string }> }) {
++async function handlePOST(_request: Request, { params }: { params: Promise<{ jobId: string }> }) {
+   const { jobId } = await params;
+   if (!UUID_RE.test(jobId)) return NextResponse.json({ error: "Job not found" }, { status: 404 });
+ 
+@@ -38,3 +39,5 @@ export async function POST(_request: Request, { params }: { params: Promise<{ jo
+     await closeDbClient(db);
+   }
+ }
++
++export const POST = withRouteErrors("/api/cover-letters/[jobId]/run", handlePOST);
+diff --git a/apps/web/src/app/api/documents/[id]/download/route.ts b/apps/web/src/app/api/documents/[id]/download/route.ts
+index 78c1189..4f3abfb 100644
+--- a/apps/web/src/app/api/documents/[id]/download/route.ts
++++ b/apps/web/src/app/api/documents/[id]/download/route.ts
+@@ -6,13 +6,14 @@ import { loadEnv } from "@ai-career/config";
+ import { closeDbClient, createDbClient, schema, withUserContext } from "@ai-career/db";
+ import { createStorageClient, getGeneratedDocument, statGeneratedDocument } from "@ai-career/storage";
+ import { CONTENT_TYPES, contentDisposition } from "../../../../../lib/documents/serializeDocument";
++import { withRouteErrors } from "../../../../../lib/http/withRouteErrors";
+ 
+ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+ const STORAGE_UNAVAILABLE_MESSAGE = "Document storage is unavailable. Try again.";
+ const { generatedDocuments } = schema;
+ 
+ /** The row is looked up under RLS first, so a known id of another user's document is a plain 404. */
+-export async function GET(_request: Request, { params }: { params: Promise<{ id: string }> }) {
++async function handleGET(_request: Request, { params }: { params: Promise<{ id: string }> }) {
+   const { id } = await params;
+   if (!UUID_RE.test(id)) return NextResponse.json({ error: "Document not found" }, { status: 404 });
+ 
+@@ -52,7 +53,7 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
+  * JSON error page. Confirms the object with a cheap `statGeneratedDocument` (no download) rather than
+  * `getGeneratedDocument`'s full stream, since a preflight only needs to know reachability.
+  */
+-export async function HEAD(_request: Request, { params }: { params: Promise<{ id: string }> }) {
++async function handleHEAD(_request: Request, { params }: { params: Promise<{ id: string }> }) {
+   const { id } = await params;
+   if (!UUID_RE.test(id)) return new Response(null, { status: 404 });
+ 
+@@ -77,3 +78,6 @@ export async function HEAD(_request: Request, { params }: { params: Promise<{ id
+     await closeDbClient(db);
+   }
+ }
++
++export const GET = withRouteErrors("/api/documents/[id]/download", handleGET);
++export const HEAD = withRouteErrors("/api/documents/[id]/download", handleHEAD);
+diff --git a/apps/web/src/app/api/documents/route.ts b/apps/web/src/app/api/documents/route.ts
+index 406b7e3..c11822f 100644
+--- a/apps/web/src/app/api/documents/route.ts
++++ b/apps/web/src/app/api/documents/route.ts
+@@ -13,6 +13,7 @@ import { formatValidationError } from "../../../lib/formatValidationError";
+ import { listDocuments } from "../../../lib/documents/listDocuments";
+ import { toDocumentView } from "../../../lib/documents/serializeDocument";
+ import { exportErrorResponse } from "../../../lib/documents/exportErrors";
++import { withRouteErrors } from "../../../lib/http/withRouteErrors";
+ 
+ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+ const ExportBodySchema = z
+@@ -66,7 +67,7 @@ async function sourceVersion(db: DbClient, userId: string, row: GeneratedDocumen
+   });
+ }
+ 
+-export async function POST(request: Request) {
++async function handlePOST(request: Request) {
+   const json = await readJsonBody(request);
+   if (!json.ok) return json.response;
+   const parsed = ExportBodySchema.safeParse(json.body);
+@@ -87,7 +88,7 @@ export async function POST(request: Request) {
+   }
+ }
+ 
+-export async function GET(request: Request) {
++async function handleGET(request: Request) {
+   const jobId = new URL(request.url).searchParams.get("jobId");
+   if (!jobId || !UUID_RE.test(jobId)) return NextResponse.json({ error: "Job not found" }, { status: 404 });
+ 
+@@ -100,3 +101,6 @@ export async function GET(request: Request) {
+     await closeDbClient(db);
+   }
+ }
++
++export const POST = withRouteErrors("/api/documents", handlePOST);
++export const GET = withRouteErrors("/api/documents", handleGET);
+diff --git a/apps/web/src/app/api/health/route.ts b/apps/web/src/app/api/health/route.ts
+index 025a05a..000d093 100644
+--- a/apps/web/src/app/api/health/route.ts
++++ b/apps/web/src/app/api/health/route.ts
+@@ -4,8 +4,9 @@ import { sql } from "drizzle-orm";
+ import Redis from "ioredis";
+ import { loadEnv } from "@ai-career/config";
+ import { getLangfuseExportFailures, isLangfuseConfigured } from "@ai-career/ai";
++import { withRouteErrors } from "../../../lib/http/withRouteErrors";
+ 
+-export async function GET() {
++async function handleGET() {
+   const env = loadEnv();
+   const checks = { database: false, redis: false };
+ 
+@@ -46,3 +47,5 @@ export async function GET() {
+   const aiUsage = { langfuseEnabled: isLangfuseConfigured(env), langfuseExportFailures: getLangfuseExportFailures() };
+   return NextResponse.json({ status, checks, aiUsage }, { status: status === "ok" ? 200 : 503 });
+ }
++
++export const GET = withRouteErrors("/api/health", handleGET);
+diff --git a/apps/web/src/app/api/insights/route.ts b/apps/web/src/app/api/insights/route.ts
+index 05e9393..6f7cee3 100644
+--- a/apps/web/src/app/api/insights/route.ts
++++ b/apps/web/src/app/api/insights/route.ts
+@@ -3,13 +3,14 @@ import { loadEnv } from "@ai-career/config";
+ import { closeDbClient, createDbClient } from "@ai-career/db";
+ import { buildOutcomeDataset, computeInsights, loadInsightInputs } from "@ai-career/insights";
+ import { toModelInsightsView, trainResponseModelSafely } from "../../../lib/insights/responseModel";
++import { withRouteErrors } from "../../../lib/http/withRouteErrors";
+ 
+ /**
+  * Phase 10a spec §7.1. Computed on every request from the stored applications (no cache, no table): at a
+  * single user's scale this is milliseconds, and it can never go stale. Aggregates only -- no notes,
+  * recruiter details, URLs or application ids (spec §8).
+  */
+-export async function GET() {
++async function handleGET() {
+   const env = loadEnv();
+   const db = createDbClient(env);
+   try {
+@@ -27,3 +28,5 @@ export async function GET() {
+     await closeDbClient(db);
+   }
+ }
++
++export const GET = withRouteErrors("/api/insights", handleGET);
+diff --git a/apps/web/src/app/api/interview-preps/[jobId]/route.ts b/apps/web/src/app/api/interview-preps/[jobId]/route.ts
+index a63aac3..a21b517 100644
+--- a/apps/web/src/app/api/interview-preps/[jobId]/route.ts
++++ b/apps/web/src/app/api/interview-preps/[jobId]/route.ts
+@@ -4,10 +4,11 @@ import { loadEnv } from "@ai-career/config";
+ import { closeDbClient, createDbClient, withUserContext } from "@ai-career/db";
+ import { listInterviewPreps } from "../../../../lib/interviewPrep/listInterviewPreps";
+ import { loadResearchForJob } from "../../../../lib/applicationPitch/loadResearchForJob";
++import { withRouteErrors } from "../../../../lib/http/withRouteErrors";
+ 
+ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+ 
+-export async function GET(_request: Request, { params }: { params: Promise<{ jobId: string }> }) {
++async function handleGET(_request: Request, { params }: { params: Promise<{ jobId: string }> }) {
+   const { jobId } = await params;
+   if (!UUID_RE.test(jobId)) return NextResponse.json({ error: "Job not found" }, { status: 404 });
+ 
+@@ -23,3 +24,5 @@ export async function GET(_request: Request, { params }: { params: Promise<{ job
+     await closeDbClient(db);
+   }
+ }
++
++export const GET = withRouteErrors("/api/interview-preps/[jobId]", handleGET);
+diff --git a/apps/web/src/app/api/interview-preps/[jobId]/run/route.ts b/apps/web/src/app/api/interview-preps/[jobId]/run/route.ts
+index ffe611a..9ff7d8a 100644
+--- a/apps/web/src/app/api/interview-preps/[jobId]/run/route.ts
++++ b/apps/web/src/app/api/interview-preps/[jobId]/run/route.ts
+@@ -8,10 +8,11 @@ import { toInterviewPrepView } from "../../../../../lib/interviewPrep/serializeI
+ import { toResearchView } from "../../../../../lib/applicationPitch/serializePitch";
+ import { createUsageSink } from "../../../../../lib/aiUsage/createUsageSink";
+ import { budgetExceededResponse } from "../../../../../lib/aiUsage/budgetResponse";
++import { withRouteErrors } from "../../../../../lib/http/withRouteErrors";
+ 
+ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+ 
+-export async function POST(_request: Request, { params }: { params: Promise<{ jobId: string }> }) {
++async function handlePOST(_request: Request, { params }: { params: Promise<{ jobId: string }> }) {
+   const { jobId } = await params;
+   if (!UUID_RE.test(jobId)) return NextResponse.json({ error: "Job not found" }, { status: 404 });
+ 
+@@ -38,3 +39,5 @@ export async function POST(_request: Request, { params }: { params: Promise<{ jo
+     await closeDbClient(db);
+   }
+ }
++
++export const POST = withRouteErrors("/api/interview-preps/[jobId]/run", handlePOST);
+diff --git a/apps/web/src/app/api/job-sources/[id]/route.ts b/apps/web/src/app/api/job-sources/[id]/route.ts
+index 4acd663..d9ded19 100644
+--- a/apps/web/src/app/api/job-sources/[id]/route.ts
++++ b/apps/web/src/app/api/job-sources/[id]/route.ts
+@@ -6,10 +6,11 @@ import { formatValidationError } from "../../../../lib/formatValidationError";
+ import { readJsonBody } from "../../../../lib/readJsonBody";
+ import { UpdateJobSourceSchema } from "../../../../lib/job-sources/jobSourceSchemas";
+ import { serializeSource } from "../../../../lib/job-sources/serializeSource";
++import { withRouteErrors } from "../../../../lib/http/withRouteErrors";
+ 
+ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+ 
+-export async function PATCH(request: Request, { params }: { params: Promise<{ id: string }> }) {
++async function handlePATCH(request: Request, { params }: { params: Promise<{ id: string }> }) {
+   const { id } = await params;
+   if (!UUID_RE.test(id)) return NextResponse.json({ error: "Job source not found" }, { status: 404 });
+ 
+@@ -50,3 +51,5 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
+     await closeDbClient(db);
+   }
+ }
++
++export const PATCH = withRouteErrors("/api/job-sources/[id]", handlePATCH);
+diff --git a/apps/web/src/app/api/job-sources/[id]/run/route.ts b/apps/web/src/app/api/job-sources/[id]/run/route.ts
+index 55479f2..f2b5802 100644
+--- a/apps/web/src/app/api/job-sources/[id]/run/route.ts
++++ b/apps/web/src/app/api/job-sources/[id]/run/route.ts
+@@ -3,10 +3,11 @@ import { eq } from "drizzle-orm";
+ import { loadEnv } from "@ai-career/config";
+ import { closeDbClient, createDbClient, schema, withUserContext } from "@ai-career/db";
+ import { enqueueIngestion } from "../../../../../lib/job-ingestion/enqueue";
++import { withRouteErrors } from "../../../../../lib/http/withRouteErrors";
+ 
+ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+ 
+-export async function POST(_request: Request, { params }: { params: Promise<{ id: string }> }) {
++async function handlePOST(_request: Request, { params }: { params: Promise<{ id: string }> }) {
+   const { id } = await params;
+   if (!UUID_RE.test(id)) return NextResponse.json({ error: "Job source not found" }, { status: 404 });
+ 
+@@ -42,3 +43,5 @@ export async function POST(_request: Request, { params }: { params: Promise<{ id
+   }
+   return NextResponse.json({ status: "queued" }, { status: 202 });
+ }
++
++export const POST = withRouteErrors("/api/job-sources/[id]/run", handlePOST);
+diff --git a/apps/web/src/app/api/job-sources/route.ts b/apps/web/src/app/api/job-sources/route.ts
+index 75da853..6505bc6 100644
+--- a/apps/web/src/app/api/job-sources/route.ts
++++ b/apps/web/src/app/api/job-sources/route.ts
+@@ -6,8 +6,9 @@ import { isUniqueViolation } from "../../../lib/isUniqueViolation";
+ import { readJsonBody } from "../../../lib/readJsonBody";
+ import { CreateJobSourceSchema } from "../../../lib/job-sources/jobSourceSchemas";
+ import { listJobSourceViews, serializeSource } from "../../../lib/job-sources/serializeSource";
++import { withRouteErrors } from "../../../lib/http/withRouteErrors";
+ 
+-export async function GET() {
++async function handleGET() {
+   const env = loadEnv();
+   const db = createDbClient(env);
+   try {
+@@ -18,7 +19,7 @@ export async function GET() {
+   }
+ }
+ 
+-export async function POST(request: Request) {
++async function handlePOST(request: Request) {
+   const env = loadEnv();
+   const jsonBody = await readJsonBody(request);
+   if (!jsonBody.ok) return jsonBody.response;
+@@ -48,3 +49,6 @@ export async function POST(request: Request) {
+     await closeDbClient(db);
+   }
+ }
++
++export const GET = withRouteErrors("/api/job-sources", handleGET);
++export const POST = withRouteErrors("/api/job-sources", handlePOST);
+diff --git a/apps/web/src/app/api/job-sources/upload/route.ts b/apps/web/src/app/api/job-sources/upload/route.ts
+index f175eed..ff8aa45 100644
+--- a/apps/web/src/app/api/job-sources/upload/route.ts
++++ b/apps/web/src/app/api/job-sources/upload/route.ts
+@@ -3,13 +3,14 @@ import { loadEnv } from "@ai-career/config";
+ import { closeDbClient, createDbClient, withUserContext } from "@ai-career/db";
+ import { UploadParseError, parseUploadFile, storeUpload } from "@ai-career/ingestion";
+ import { enqueueIngestion } from "../../../../lib/job-ingestion/enqueue";
++import { withRouteErrors } from "../../../../lib/http/withRouteErrors";
+ 
+ const MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024;
+ // Content-Length covers the whole multipart envelope, so a file at exactly the cap is slightly larger.
+ // This is only an early, coarse rejection; `file.size` below is the authoritative limit.
+ const CONTENT_LENGTH_SLACK_BYTES = 64 * 1024;
+ 
+-export async function POST(request: Request) {
++async function handlePOST(request: Request) {
+   const env = loadEnv();
+ 
+   // Reject an oversized upload from its declared length BEFORE request.formData() buffers the body.
+@@ -62,3 +63,5 @@ export async function POST(request: Request) {
+   }
+   return NextResponse.json({ sourceId: stored.sourceId, count: stored.count, queued }, { status: 201 });
+ }
++
++export const POST = withRouteErrors("/api/job-sources/upload", handlePOST);
+diff --git a/apps/web/src/app/api/jobs/[id]/route.ts b/apps/web/src/app/api/jobs/[id]/route.ts
+index 1da2547..85922d2 100644
+--- a/apps/web/src/app/api/jobs/[id]/route.ts
++++ b/apps/web/src/app/api/jobs/[id]/route.ts
+@@ -2,10 +2,11 @@ import { NextResponse } from "next/server";
+ import { loadEnv } from "@ai-career/config";
+ import { closeDbClient, createDbClient, withUserContext } from "@ai-career/db";
+ import { getJobDetail } from "../../../../lib/jobs/getJobDetail";
++import { withRouteErrors } from "../../../../lib/http/withRouteErrors";
+ 
+ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+ 
+-export async function GET(_request: Request, { params }: { params: Promise<{ id: string }> }) {
++async function handleGET(_request: Request, { params }: { params: Promise<{ id: string }> }) {
+   const { id } = await params;
+   if (!UUID_RE.test(id)) return NextResponse.json({ error: "Job not found" }, { status: 404 });
+ 
+@@ -19,3 +20,5 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
+     await closeDbClient(db);
+   }
+ }
++
++export const GET = withRouteErrors("/api/jobs/[id]", handleGET);
+diff --git a/apps/web/src/app/api/jobs/route.ts b/apps/web/src/app/api/jobs/route.ts
+index 593671f..9a849b2 100644
+--- a/apps/web/src/app/api/jobs/route.ts
++++ b/apps/web/src/app/api/jobs/route.ts
+@@ -3,8 +3,9 @@ import { loadEnv } from "@ai-career/config";
+ import { closeDbClient, createDbClient, withUserContext } from "@ai-career/db";
+ import { formatValidationError } from "../../../lib/formatValidationError";
+ import { ListJobsQuerySchema, listJobs } from "../../../lib/jobs/listJobs";
++import { withRouteErrors } from "../../../lib/http/withRouteErrors";
+ 
+-export async function GET(request: Request) {
++async function handleGET(request: Request) {
+   const env = loadEnv();
+   const parsed = ListJobsQuerySchema.safeParse(Object.fromEntries(new URL(request.url).searchParams));
+   if (!parsed.success) {
+@@ -19,3 +20,5 @@ export async function GET(request: Request) {
+     await closeDbClient(db);
+   }
+ }
++
++export const GET = withRouteErrors("/api/jobs", handleGET);
+diff --git a/apps/web/src/app/api/matches/[jobId]/route.ts b/apps/web/src/app/api/matches/[jobId]/route.ts
+index 7889826..a410eeb 100644
+--- a/apps/web/src/app/api/matches/[jobId]/route.ts
++++ b/apps/web/src/app/api/matches/[jobId]/route.ts
+@@ -9,10 +9,11 @@ import { loadResponseModel } from "../../../../lib/insights/responseModel";
+ import { formatValidationError } from "../../../../lib/formatValidationError";
+ import { readJsonBody } from "../../../../lib/readJsonBody";
+ import { MatchActionSchema } from "../../../../lib/matching/matchActionSchema";
++import { withRouteErrors } from "../../../../lib/http/withRouteErrors";
+ 
+ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+ 
+-export async function GET(_request: Request, { params }: { params: Promise<{ jobId: string }> }) {
++async function handleGET(_request: Request, { params }: { params: Promise<{ jobId: string }> }) {
+   const { jobId } = await params;
+   if (!UUID_RE.test(jobId)) return NextResponse.json({ error: "Match not found" }, { status: 404 });
+ 
+@@ -38,7 +39,7 @@ export async function GET(_request: Request, { params }: { params: Promise<{ job
+   }
+ }
+ 
+-export async function PATCH(request: Request, { params }: { params: Promise<{ jobId: string }> }) {
++async function handlePATCH(request: Request, { params }: { params: Promise<{ jobId: string }> }) {
+   const { jobId } = await params;
+   if (!UUID_RE.test(jobId)) return NextResponse.json({ error: "Match not found" }, { status: 404 });
+ 
+@@ -70,3 +71,6 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ jo
+     await closeDbClient(db);
+   }
+ }
++
++export const GET = withRouteErrors("/api/matches/[jobId]", handleGET);
++export const PATCH = withRouteErrors("/api/matches/[jobId]", handlePATCH);
+diff --git a/apps/web/src/app/api/matches/route.ts b/apps/web/src/app/api/matches/route.ts
+index 67d1e94..cd14e07 100644
+--- a/apps/web/src/app/api/matches/route.ts
++++ b/apps/web/src/app/api/matches/route.ts
+@@ -4,8 +4,9 @@ import { closeDbClient, createDbClient, withUserContext } from "@ai-career/db";
+ import { formatValidationError } from "../../../lib/formatValidationError";
+ import { ListMatchesQuerySchema, listMatches } from "../../../lib/matching/listMatches";
+ import { loadResponseModel } from "../../../lib/insights/responseModel";
++import { withRouteErrors } from "../../../lib/http/withRouteErrors";
+ 
+-export async function GET(request: Request) {
++async function handleGET(request: Request) {
+   const env = loadEnv();
+   const parsed = ListMatchesQuerySchema.safeParse(Object.fromEntries(new URL(request.url).searchParams));
+   if (!parsed.success) {
+@@ -24,3 +25,5 @@ export async function GET(request: Request) {
+     await closeDbClient(db);
+   }
+ }
++
++export const GET = withRouteErrors("/api/matches", handleGET);
+diff --git a/apps/web/src/app/api/matches/run/route.ts b/apps/web/src/app/api/matches/run/route.ts
+index b372a1a..34d1d04 100644
+--- a/apps/web/src/app/api/matches/run/route.ts
++++ b/apps/web/src/app/api/matches/run/route.ts
+@@ -3,8 +3,9 @@ import { and, eq } from "drizzle-orm";
+ import { loadEnv } from "@ai-career/config";
+ import { closeDbClient, createDbClient, schema, withUserContext } from "@ai-career/db";
+ import { enqueueMatching } from "../../../../lib/matching/enqueue";
++import { withRouteErrors } from "../../../../lib/http/withRouteErrors";
+ 
+-export async function POST() {
++async function handlePOST() {
+   const env = loadEnv();
+   const db = createDbClient(env);
+   let hasActiveGoal: boolean;
+@@ -35,3 +36,5 @@ export async function POST() {
+   }
+   return NextResponse.json({ status: "queued" }, { status: 202 });
+ }
++
++export const POST = withRouteErrors("/api/matches/run", handlePOST);
+diff --git a/apps/web/src/app/api/matches/runs/latest/route.ts b/apps/web/src/app/api/matches/runs/latest/route.ts
+index 3e6198b..76e2a4f 100644
+--- a/apps/web/src/app/api/matches/runs/latest/route.ts
++++ b/apps/web/src/app/api/matches/runs/latest/route.ts
+@@ -2,8 +2,9 @@ import { NextResponse } from "next/server";
+ import { desc } from "drizzle-orm";
+ import { loadEnv } from "@ai-career/config";
+ import { closeDbClient, createDbClient, schema, withUserContext } from "@ai-career/db";
++import { withRouteErrors } from "../../../../../lib/http/withRouteErrors";
+ 
+-export async function GET() {
++async function handleGET() {
+   const env = loadEnv();
+   const db = createDbClient(env);
+   try {
+@@ -26,3 +27,5 @@ export async function GET() {
+     await closeDbClient(db);
+   }
+ }
++
++export const GET = withRouteErrors("/api/matches/runs/latest", handleGET);
+diff --git a/apps/web/src/app/api/profile/confirm/route.ts b/apps/web/src/app/api/profile/confirm/route.ts
+index 0deefdc..1fd05a4 100644
+--- a/apps/web/src/app/api/profile/confirm/route.ts
++++ b/apps/web/src/app/api/profile/confirm/route.ts
+@@ -4,8 +4,9 @@ import { ConfirmedProfileSchema } from "../../../../lib/profile/confirmedProfile
+ import { formatValidationError } from "../../../../lib/formatValidationError";
+ import { readJsonBody } from "../../../../lib/readJsonBody";
+ import { saveConfirmedProfile } from "../../../../lib/profile/saveProfile";
++import { withRouteErrors } from "../../../../lib/http/withRouteErrors";
+ 
+-export async function POST(request: Request) {
++async function handlePOST(request: Request) {
+   const env = loadEnv();
+   const jsonBody = await readJsonBody(request);
+   if (!jsonBody.ok) return jsonBody.response;
+@@ -18,3 +19,5 @@ export async function POST(request: Request) {
+   const result = await saveConfirmedProfile(env, parsed.data);
+   return NextResponse.json({ status: "saved", factsGenerated: result.factsGenerated });
+ }
++
++export const POST = withRouteErrors("/api/profile/confirm", handlePOST);
+diff --git a/apps/web/src/app/api/profile/resume/route.ts b/apps/web/src/app/api/profile/resume/route.ts
+index a01eebd..563087c 100644
+--- a/apps/web/src/app/api/profile/resume/route.ts
++++ b/apps/web/src/app/api/profile/resume/route.ts
+@@ -16,6 +16,7 @@ import {
+ } from "@ai-career/ai";
+ import { createUsageSink } from "../../../../lib/aiUsage/createUsageSink";
+ import { budgetExceededResponse } from "../../../../lib/aiUsage/budgetResponse";
++import { withRouteErrors } from "../../../../lib/http/withRouteErrors";
+ 
+ const MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024;
+ 
+@@ -49,7 +50,7 @@ async function extractWithRetry(
+   }
+ }
+ 
+-export async function POST(request: Request) {
++async function handlePOST(request: Request) {
+   const env = loadEnv();
+ 
+   // Reject an oversized upload from its declared Content-Length BEFORE
+@@ -169,7 +170,7 @@ export async function POST(request: Request) {
+   }
+ }
+ 
+-export async function DELETE() {
++async function handleDELETE() {
+   const env = loadEnv();
+   const db = createDbClient(env);
+   const storageClient = createStorageClient(env);
+@@ -197,3 +198,6 @@ export async function DELETE() {
+     await closeDbClient(db);
+   }
+ }
++
++export const POST = withRouteErrors("/api/profile/resume", handlePOST);
++export const DELETE = withRouteErrors("/api/profile/resume", handleDELETE);
+diff --git a/apps/web/src/app/api/profile/route.ts b/apps/web/src/app/api/profile/route.ts
+index 80e3f7a..2a58dee 100644
+--- a/apps/web/src/app/api/profile/route.ts
++++ b/apps/web/src/app/api/profile/route.ts
+@@ -6,8 +6,9 @@ import { formatValidationError } from "../../../lib/formatValidationError";
+ import { readJsonBody } from "../../../lib/readJsonBody";
+ import { saveConfirmedProfile } from "../../../lib/profile/saveProfile";
+ import { serializeProfile } from "../../../lib/profile/serializeProfile";
++import { withRouteErrors } from "../../../lib/http/withRouteErrors";
+ 
+-export async function GET() {
++async function handleGET() {
+   const env = loadEnv();
+   const db = createDbClient(env);
+   try {
+@@ -18,7 +19,7 @@ export async function GET() {
+   }
+ }
+ 
+-export async function PATCH(request: Request) {
++async function handlePATCH(request: Request) {
+   const env = loadEnv();
+   const jsonBody = await readJsonBody(request);
+   if (!jsonBody.ok) return jsonBody.response;
+@@ -30,3 +31,6 @@ export async function PATCH(request: Request) {
+   const result = await saveConfirmedProfile(env, parsed.data);
+   return NextResponse.json({ status: "saved", factsGenerated: result.factsGenerated });
+ }
++
++export const GET = withRouteErrors("/api/profile", handleGET);
++export const PATCH = withRouteErrors("/api/profile", handlePATCH);
+diff --git a/apps/web/src/app/api/resume-optimizations/[jobId]/route.ts b/apps/web/src/app/api/resume-optimizations/[jobId]/route.ts
+index cc1e05d..6426fd0 100644
+--- a/apps/web/src/app/api/resume-optimizations/[jobId]/route.ts
++++ b/apps/web/src/app/api/resume-optimizations/[jobId]/route.ts
+@@ -3,10 +3,11 @@ import { NextResponse } from "next/server";
+ import { loadEnv } from "@ai-career/config";
+ import { closeDbClient, createDbClient, withUserContext } from "@ai-career/db";
+ import { listOptimizations } from "../../../../lib/resumeOptimization/listOptimizations";
++import { withRouteErrors } from "../../../../lib/http/withRouteErrors";
+ 
+ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+ 
+-export async function GET(_request: Request, { params }: { params: Promise<{ jobId: string }> }) {
++async function handleGET(_request: Request, { params }: { params: Promise<{ jobId: string }> }) {
+   const { jobId } = await params;
+   if (!UUID_RE.test(jobId)) return NextResponse.json({ error: "Job not found" }, { status: 404 });
+ 
+@@ -19,3 +20,5 @@ export async function GET(_request: Request, { params }: { params: Promise<{ job
+     await closeDbClient(db);
+   }
+ }
++
++export const GET = withRouteErrors("/api/resume-optimizations/[jobId]", handleGET);
+diff --git a/apps/web/src/app/api/resume-optimizations/[jobId]/run/route.ts b/apps/web/src/app/api/resume-optimizations/[jobId]/run/route.ts
+index 1fe415a..7336968 100644
+--- a/apps/web/src/app/api/resume-optimizations/[jobId]/run/route.ts
++++ b/apps/web/src/app/api/resume-optimizations/[jobId]/run/route.ts
+@@ -7,10 +7,11 @@ import { runResumeOptimization, ResumeOptimizationError } from "@ai-career/resum
+ import { toOptimizationView } from "../../../../../lib/resumeOptimization/serializeOptimization";
+ import { createUsageSink } from "../../../../../lib/aiUsage/createUsageSink";
+ import { budgetExceededResponse } from "../../../../../lib/aiUsage/budgetResponse";
++import { withRouteErrors } from "../../../../../lib/http/withRouteErrors";
+ 
+ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+ 
+-export async function POST(_request: Request, { params }: { params: Promise<{ jobId: string }> }) {
++async function handlePOST(_request: Request, { params }: { params: Promise<{ jobId: string }> }) {
+   const { jobId } = await params;
+   if (!UUID_RE.test(jobId)) return NextResponse.json({ error: "Job not found" }, { status: 404 });
+ 
+@@ -39,3 +40,5 @@ export async function POST(_request: Request, { params }: { params: Promise<{ jo
+     await closeDbClient(db);
+   }
+ }
++
++export const POST = withRouteErrors("/api/resume-optimizations/[jobId]/run", handlePOST);
+diff --git a/apps/web/src/app/api/usage/route.ts b/apps/web/src/app/api/usage/route.ts
+index 31aadda..6e3d38c 100644
+--- a/apps/web/src/app/api/usage/route.ts
++++ b/apps/web/src/app/api/usage/route.ts
+@@ -4,6 +4,7 @@ import { loadEnv } from "@ai-career/config";
+ import { closeDbClient, createDbClient, schema, withUserContext } from "@ai-career/db";
+ import { utcMonthStart } from "@ai-career/ai";
+ import { summarizeUsage } from "../../../lib/aiUsage/summarizeUsage";
++import { withRouteErrors } from "../../../lib/http/withRouteErrors";
+ 
+ const { aiCalls } = schema;
+ 
+@@ -11,7 +12,7 @@ const { aiCalls } = schema;
+  * Phase 11a design §9. Read-only: this UTC month's ai_calls rows summarized on every request (a single
+  * user's month is at most thousands of rows). Metadata only -- the table holds no prompt or response text.
+  */
+-export async function GET() {
++async function handleGET() {
+   const env = loadEnv();
+   const db = createDbClient(env);
+   const now = new Date();
+@@ -39,3 +40,5 @@ export async function GET() {
+     await closeDbClient(db);
+   }
+ }
++
++export const GET = withRouteErrors("/api/usage", handleGET);

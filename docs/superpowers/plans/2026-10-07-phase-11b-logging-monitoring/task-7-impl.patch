@@ -1,0 +1,207 @@
+diff --git a/packages/monitoring/src/heartbeat.ts b/packages/monitoring/src/heartbeat.ts
+new file mode 100644
+index 0000000..6eadb7c
+--- /dev/null
++++ b/packages/monitoring/src/heartbeat.ts
+@@ -0,0 +1,56 @@
++import { createLogger, type Logger } from "@ai-career/logging";
++import { DEFAULT_KEY_PREFIX, type Heartbeat, type WorkerName } from "./workerState";
++
++export interface HeartbeatOptions {
++  intervalMs?: number;
++  now?: () => Date;
++  keyPrefix?: string;
++  logger?: Logger;
++}
++
++export interface HeartbeatHandle {
++  /** Clears the timer and records a clean stop. Never throws. */
++  stop(): Promise<void>;
++}
++
++/**
++ * Phase 11b design §5.1. Writes `<prefix><worker>` = `{ startedAt, beatAt, pid, stoppedAt }` now and every
++ * `intervalMs` (default 30 s) on an unref()'d timer. The key never expires, so /status can say when a worker was
++ * last seen. Write failures are logged by error name and never thrown: monitoring must not stop a worker.
++ */
++export async function startHeartbeat(
++  redis: { set(key: string, value: string): Promise<unknown> },
++  worker: WorkerName,
++  opts: HeartbeatOptions = {}
++): Promise<HeartbeatHandle> {
++  const now = opts.now ?? (() => new Date());
++  const key = `${opts.keyPrefix ?? DEFAULT_KEY_PREFIX}${worker}`;
++  const log = opts.logger ?? createLogger({ service: "monitoring" });
++  const startedAt = now().toISOString();
++  let stopped = false;
++
++  const write = async (stoppedAt: string | null) => {
++    const beatAt = now().toISOString();
++    const value: Heartbeat = { startedAt, beatAt, pid: process.pid, stoppedAt: stoppedAt === null ? null : beatAt };
++    try {
++      await redis.set(key, JSON.stringify(value));
++    } catch (error) {
++      log.error("heartbeat_failed", { worker, error });
++    }
++  };
++
++  await write(null);
++  const timer = setInterval(() => {
++    if (!stopped) void write(null);
++  }, opts.intervalMs ?? 30_000);
++  timer.unref?.();
++
++  return {
++    stop: async () => {
++      if (stopped) return;
++      stopped = true;
++      clearInterval(timer);
++      await write("stop");
++    },
++  };
++}
+diff --git a/packages/monitoring/src/index.ts b/packages/monitoring/src/index.ts
+new file mode 100644
+index 0000000..26e4320
+--- /dev/null
++++ b/packages/monitoring/src/index.ts
+@@ -0,0 +1,3 @@
++export { WORKERS, QUEUES, DEFAULT_KEY_PREFIX, workerState, failureCode, type WorkerName, type WorkerState, type Heartbeat } from "./workerState";
++export { startHeartbeat, type HeartbeatHandle, type HeartbeatOptions } from "./heartbeat";
++export { readWorkerStatus, readQueueStatus, type WorkerStatus, type QueueStatus } from "./status";
+diff --git a/packages/monitoring/src/status.ts b/packages/monitoring/src/status.ts
+new file mode 100644
+index 0000000..01d049a
+--- /dev/null
++++ b/packages/monitoring/src/status.ts
+@@ -0,0 +1,80 @@
++import { Queue, type ConnectionOptions } from "bullmq";
++import { DEFAULT_KEY_PREFIX, WORKERS, failureCode, workerState, type Heartbeat, type WorkerName, type WorkerState } from "./workerState";
++
++export interface WorkerStatus {
++  worker: WorkerName;
++  optional: boolean;
++  state: WorkerState;
++  startedAt: string | null;
++  lastSeenAt: string | null;
++  stoppedAt: string | null;
++}
++
++export interface QueueStatus {
++  queue: string;
++  waiting: number;
++  active: number;
++  delayed: number;
++  failed: number;
++  lastFailedAt: string | null;
++  lastFailedCode: string | null;
++}
++
++function parseHeartbeat(raw: string | null): Heartbeat | null | "malformed" {
++  if (raw === null) return null;
++  try {
++    const v = JSON.parse(raw) as Partial<Heartbeat>;
++    if (typeof v.startedAt === "string" && typeof v.beatAt === "string" && (v.stoppedAt === null || typeof v.stoppedAt === "string")) {
++      return { startedAt: v.startedAt, beatAt: v.beatAt, pid: typeof v.pid === "number" ? v.pid : 0, stoppedAt: v.stoppedAt };
++    }
++  } catch {
++    // fall through
++  }
++  return "malformed";
++}
++
++/** Design §5.2: every known worker's state, in display order. */
++export async function readWorkerStatus(
++  redis: { mget(...keys: string[]): Promise<(string | null)[]> },
++  now: Date,
++  opts: { staleAfterMs: number; keyPrefix?: string }
++): Promise<WorkerStatus[]> {
++  const prefix = opts.keyPrefix ?? DEFAULT_KEY_PREFIX;
++  const raws = await redis.mget(...WORKERS.map((w) => `${prefix}${w.worker}`));
++  return WORKERS.map(({ worker, optional }, i) => {
++    const beat = parseHeartbeat(raws[i] ?? null);
++    if (beat === "malformed") return { worker, optional, state: "stale" as const, startedAt: null, lastSeenAt: null, stoppedAt: null };
++    return {
++      worker,
++      optional,
++      state: workerState(beat, now, opts.staleAfterMs),
++      startedAt: beat?.startedAt ?? null,
++      lastSeenAt: beat?.beatAt ?? null,
++      stoppedAt: beat?.stoppedAt ?? null,
++    };
++  });
++}
++
++/** Design §5.2: per-queue counts and the most recent failure (its time, and its reason only if code-shaped). */
++export async function readQueueStatus(connection: ConnectionOptions, queueNames: readonly string[]): Promise<QueueStatus[]> {
++  const out: QueueStatus[] = [];
++  for (const name of queueNames) {
++    const queue = new Queue(name, { connection });
++    try {
++      const counts = await queue.getJobCounts("waiting", "active", "delayed", "failed");
++      const [last] = await queue.getFailed(0, 0);
++      out.push({
++        queue: name,
++        waiting: counts.waiting ?? 0,
++        active: counts.active ?? 0,
++        delayed: counts.delayed ?? 0,
++        failed: counts.failed ?? 0,
++        lastFailedAt: last?.finishedOn ? new Date(last.finishedOn).toISOString() : null,
++        lastFailedCode: last ? failureCode(last.failedReason) : null,
++      });
++    } finally {
++      await queue.close();
++    }
++  }
++  return out;
++}
+diff --git a/packages/monitoring/src/workerState.ts b/packages/monitoring/src/workerState.ts
+new file mode 100644
+index 0000000..8d13ee2
+--- /dev/null
++++ b/packages/monitoring/src/workerState.ts
+@@ -0,0 +1,44 @@
++/** Phase 11b design §5. The workers that beat, in display order; `optional` ones are normal to see stopped. */
++export const WORKERS = [
++  { worker: "job-ingestion", optional: false },
++  { worker: "matching", optional: false },
++  { worker: "maintenance", optional: true },
++  { worker: "browser", optional: true },
++] as const;
++
++export type WorkerName = (typeof WORKERS)[number]["worker"];
++export type WorkerState = "running" | "stopped" | "stale" | "never_seen";
++
++/** The queues /status reports (the existing *_QUEUE_NAME values, by value to keep packages free of services). */
++export const QUEUES = ["job-ingestion", "matching", "maintenance", "browser-automation"] as const;
++
++export const DEFAULT_KEY_PREFIX = "careerpilot:worker:";
++
++export interface Heartbeat {
++  startedAt: string;
++  beatAt: string;
++  pid: number;
++  stoppedAt: string | null;
++}
++
++/**
++ * Design §5.2: no heartbeat → never_seen; a clean stop at or after the last beat → stopped; a beat within
++ * `staleAfterMs` (inclusive) → running; otherwise stale (crashed, hung, or the machine slept).
++ */
++export function workerState(beat: Heartbeat | null, now: Date, staleAfterMs: number): WorkerState {
++  if (!beat) return "never_seen";
++  const beatAt = Date.parse(beat.beatAt);
++  if (Number.isNaN(beatAt)) return "stale";
++  if (beat.stoppedAt !== null && Date.parse(beat.stoppedAt) >= beatAt) return "stopped";
++  return now.getTime() - beatAt <= staleAfterMs ? "running" : "stale";
++}
++
++const CODE = /^[a-z_]+(:[a-z0-9_]+)?$/;
++
++/**
++ * BullMQ stores a failed job's raw `error.message`, which can carry content. Only reasons shaped like our own error
++ * codes (e.g. `no_active_goal`) are shown; anything else is withheld (null → "see the worker log").
++ */
++export function failureCode(reason: string | undefined | null): string | null {
++  return typeof reason === "string" && reason.length <= 80 && CODE.test(reason) ? reason : null;
++}
