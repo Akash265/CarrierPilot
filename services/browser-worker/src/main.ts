@@ -2,7 +2,7 @@ import IORedis from "ioredis";
 import { loadEnv } from "@ai-career/config";
 import { closeDbClient, createDbClient, loadRedactionValues } from "@ai-career/db";
 import { createLogger, initProcessLogging } from "@ai-career/logging";
-import { startHeartbeat } from "@ai-career/monitoring";
+import { createShutdown, startHeartbeat } from "@ai-career/monitoring";
 import { createStorageClient } from "@ai-career/storage";
 import { sweepInterruptedSessions } from "@ai-career/browser";
 import { minioFetcher } from "./attachments";
@@ -19,6 +19,9 @@ async function main(): Promise<void> {
     level: env.LOG_LEVEL, load: () => loadRedactionValues(db, env.DEFAULT_USER_ID), logger: log,
   });
   const connection = new IORedis(env.REDIS_URL, { maxRetriesPerRequest: null });
+  // Phase 11b: beat from right after Redis opens, so /status shows this worker running -- and a crash later in
+  // startup reads as "stale" -- at the configured interval; a clean shutdown records "stopped".
+  const heartbeat = await startHeartbeat(connection, "browser", { intervalMs: env.HEARTBEAT_INTERVAL_MS });
   const released = new ReleasedWindows();
 
   // Spec §5. Single-worker assumption: only one browser-worker process is ever expected to run, so any
@@ -40,26 +43,23 @@ async function main(): Promise<void> {
   worker.on("failed", (job, error) => log.error("autofill_failed", { sessionId: job?.data.sessionId, error }));
   // Redis connection errors are re-emitted here; with no listener the worker would crash with Node's raw print.
   worker.on("error", (error) => log.error("worker_error", { error }));
-  // Phase 11b: /status shows this worker running while it beats, and stopped after a clean shutdown.
-  const heartbeat = await startHeartbeat(connection, "browser");
   log.info("worker_started", { sweptSessions: swept, removedTempDirs, headless: env.BROWSER_HEADLESS });
 
-  let stopping = false;
-  const shutdown = async () => {
-    // Both signal handlers can fire for the same shutdown (e.g. a double Ctrl-C); only the first run should
-    // touch the worker/connection/db, the rest of which are not safe to close twice.
-    if (stopping) return;
-    stopping = true;
-    stopRedactionRefresh();
-    // force: an active session may be waiting minutes for the user; the next start sweeps it to failed.
-    await worker.close(true);
-    // closeAll also closes the one active (in-progress) window, if any -- see ReleasedWindows.setActive.
-    await released.closeAll();
-    await heartbeat.stop();
-    await connection.quit();
-    await closeDbClient(db);
-    process.exit(0);
-  };
+  // Runs once however many signals arrive (both handlers can fire for one shutdown, e.g. a double Ctrl-C), exits 0,
+  // and is cut off with exit 1 if a step hangs (Redis unreachable).
+  const shutdown = createShutdown({
+    logger: log,
+    steps: async () => {
+      stopRedactionRefresh();
+      // force: an active session may be waiting minutes for the user; the next start sweeps it to failed.
+      await worker.close(true);
+      // closeAll also closes the one active (in-progress) window, if any -- see ReleasedWindows.setActive.
+      await released.closeAll();
+      await heartbeat.stop();
+      await connection.quit();
+      await closeDbClient(db);
+    },
+  });
   process.on("SIGINT", () => void shutdown());
   process.on("SIGTERM", () => void shutdown());
 }

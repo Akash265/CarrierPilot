@@ -225,7 +225,7 @@ describe("loadEnv", () => {
   });
 
   it("parses and bounds the Phase 11b logging and status settings", () => {
-    const env = loadEnv({ ...validSource, LOG_LEVEL: "debug", STATUS_STALE_AFTER_MS: "5000" });
+    const env = loadEnv({ ...validSource, LOG_LEVEL: "debug", HEARTBEAT_INTERVAL_MS: "1000", STATUS_STALE_AFTER_MS: "5000" });
     expect(env.LOG_LEVEL).toBe("debug");
     expect(env.STATUS_STALE_AFTER_MS).toBe(5000);
     expect(() => loadEnv({ ...validSource, LOG_LEVEL: "verbose" })).toThrow(/LOG_LEVEL/);
@@ -237,5 +237,20 @@ describe("loadEnv", () => {
     const env = loadEnv({ ...validSource, LOG_LEVEL: "", STATUS_STALE_AFTER_MS: " " });
     expect(env.LOG_LEVEL).toBe("info");
     expect(env.STATUS_STALE_AFTER_MS).toBe(90_000);
+  });
+
+  it("defaults the heartbeat interval to 30 s and bounds it", () => {
+    expect(loadEnv(validSource).HEARTBEAT_INTERVAL_MS).toBe(30_000);
+    expect(loadEnv({ ...validSource, HEARTBEAT_INTERVAL_MS: "1000", STATUS_STALE_AFTER_MS: "5000" }).HEARTBEAT_INTERVAL_MS).toBe(1000);
+    expect(() => loadEnv({ ...validSource, HEARTBEAT_INTERVAL_MS: "999" })).toThrow(/HEARTBEAT_INTERVAL_MS/);
+    expect(loadEnv({ ...validSource, HEARTBEAT_INTERVAL_MS: "" }).HEARTBEAT_INTERVAL_MS).toBe(30_000);
+  });
+
+  it("rejects a stale threshold that is not longer than the heartbeat interval (running workers would flicker to stale)", () => {
+    expect(() => loadEnv({ ...validSource, STATUS_STALE_AFTER_MS: "5000" })).toThrow(
+      /STATUS_STALE_AFTER_MS: must be longer than HEARTBEAT_INTERVAL_MS \(30000\)/
+    );
+    expect(() => loadEnv({ ...validSource, STATUS_STALE_AFTER_MS: "30000" })).toThrow(/STATUS_STALE_AFTER_MS/);
+    expect(loadEnv({ ...validSource, STATUS_STALE_AFTER_MS: "30001" }).STATUS_STALE_AFTER_MS).toBe(30_001);
   });
 });

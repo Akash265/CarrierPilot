@@ -2,7 +2,7 @@ import IORedis from "ioredis";
 import { loadEnv } from "@ai-career/config";
 import { DbUsageSink, closeDbClient, createDbClient, loadRedactionValues } from "@ai-career/db";
 import { createLogger, initProcessLogging } from "@ai-career/logging";
-import { startHeartbeat } from "@ai-career/monitoring";
+import { createShutdown, startHeartbeat } from "@ai-career/monitoring";
 import { createAnthropicFor, withLangfuseExport, type AiUsageSink } from "@ai-career/ai";
 import { createMatchingWorker } from "./worker";
 
@@ -22,6 +22,9 @@ async function main(): Promise<void> {
     level: env.LOG_LEVEL, load: () => loadRedactionValues(db, env.DEFAULT_USER_ID), logger: log,
   });
   const connection = new IORedis(env.REDIS_URL, { maxRetriesPerRequest: null });
+  // Phase 11b: beat from right after Redis opens, so /status shows this worker running -- and a crash later in
+  // startup reads as "stale" -- at the configured interval; a clean shutdown records "stopped".
+  const heartbeat = await startHeartbeat(connection, "matching", { intervalMs: env.HEARTBEAT_INTERVAL_MS });
 
   const aiFor = (userId: string) => {
     // Typed as AiUsageSink so the compiler checks DbUsageSink still matches the AI package's interface.
@@ -34,23 +37,19 @@ async function main(): Promise<void> {
   worker.on("failed", (job, error) => log.error("matching_failed", { jobId: job?.id, ...failureFields(error) }));
   // Redis connection errors are re-emitted here; with no listener the worker would crash with Node's raw print.
   worker.on("error", (error) => log.error("worker_error", { error }));
-  // Phase 11b: /status shows this worker running while it beats, and stopped after a clean shutdown.
-  const heartbeat = await startHeartbeat(connection, "matching");
   log.info("worker_started");
 
-  // Both signal handlers can fire for one shutdown (a double Ctrl-C, or a wrapper forwarding the signal); only the
-  // first run may close the worker, heartbeat, Redis and database -- a second connection.quit() crashes the process.
-  let stopping = false;
-  const shutdown = async () => {
-    if (stopping) return;
-    stopping = true;
-    stopRedactionRefresh();
-    await worker.close();
-    await heartbeat.stop();
-    await connection.quit();
-    await closeDbClient(db);
-    process.exit(0);
-  };
+  // Runs once however many signals arrive, exits 0, and is cut off with exit 1 if a step hangs (Redis unreachable).
+  const shutdown = createShutdown({
+    logger: log,
+    steps: async () => {
+      stopRedactionRefresh();
+      await worker.close();
+      await heartbeat.stop();
+      await connection.quit();
+      await closeDbClient(db);
+    },
+  });
   process.on("SIGINT", () => void shutdown());
   process.on("SIGTERM", () => void shutdown());
 }

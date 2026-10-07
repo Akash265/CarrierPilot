@@ -68,4 +68,15 @@ describe("startHeartbeat / readWorkerStatus", () => {
     await expect(heartbeat.stop()).resolves.toBeUndefined();
     expect(logger.error).toHaveBeenCalledWith("heartbeat_failed", { worker: "browser", error: expect.any(Error) });
   });
+
+  it("stop() gives up after stopTimeoutMs when Redis never answers, and never throws", async () => {
+    const hanging = { set: vi.fn((): Promise<unknown> => new Promise(() => undefined)) };
+    hanging.set.mockImplementationOnce(async () => "OK");
+    const logger = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+    const heartbeat = await startHeartbeat(hanging, "browser", { keyPrefix: prefix, intervalMs: 60_000, stopTimeoutMs: 20, logger });
+    const started = Date.now();
+    await expect(heartbeat.stop()).resolves.toBeUndefined();
+    expect(Date.now() - started).toBeLessThan(1000);
+    expect(logger.error).toHaveBeenCalledWith("heartbeat_failed", { worker: "browser", error: expect.objectContaining({ name: "HeartbeatTimeout" }) });
+  });
 });

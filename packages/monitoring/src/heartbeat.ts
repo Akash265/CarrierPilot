@@ -6,6 +6,15 @@ export interface HeartbeatOptions {
   now?: () => Date;
   keyPrefix?: string;
   logger?: Logger;
+  /** stop() waits at most this long for its write (default 2 s): a worker's Redis waits forever when unreachable. */
+  stopTimeoutMs?: number;
+}
+
+class HeartbeatTimeout extends Error {
+  constructor() {
+    super("heartbeat write timed out");
+    this.name = "HeartbeatTimeout";
+  }
 }
 
 export interface HeartbeatHandle {
@@ -29,13 +38,27 @@ export async function startHeartbeat(
   const startedAt = now().toISOString();
   let stopped = false;
 
-  const write = async (stoppedAt: string | null) => {
+  const write = async (stoppedAt: string | null, timeoutMs?: number) => {
     const beatAt = now().toISOString();
     const value: Heartbeat = { startedAt, beatAt, pid: process.pid, stoppedAt: stoppedAt === null ? null : beatAt };
+    let timer: ReturnType<typeof setTimeout> | undefined;
     try {
-      await redis.set(key, JSON.stringify(value));
+      const pending = redis.set(key, JSON.stringify(value));
+      if (timeoutMs === undefined) {
+        await pending;
+      } else {
+        pending.catch(() => undefined);
+        await Promise.race([
+          pending,
+          new Promise<never>((_, reject) => {
+            timer = setTimeout(() => reject(new HeartbeatTimeout()), timeoutMs);
+          }),
+        ]);
+      }
     } catch (error) {
       log.error("heartbeat_failed", { worker, error });
+    } finally {
+      if (timer) clearTimeout(timer);
     }
   };
 
@@ -50,7 +73,7 @@ export async function startHeartbeat(
       if (stopped) return;
       stopped = true;
       clearInterval(timer);
-      await write("stop");
+      await write("stop", opts.stopTimeoutMs ?? 2000);
     },
   };
 }

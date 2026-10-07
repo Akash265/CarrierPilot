@@ -3,7 +3,7 @@ import { Queue } from "bullmq";
 import { loadEnv } from "@ai-career/config";
 import { closeDbClient, createDbClient, loadRedactionValues } from "@ai-career/db";
 import { createLogger, initProcessLogging } from "@ai-career/logging";
-import { startHeartbeat } from "@ai-career/monitoring";
+import { createShutdown, startHeartbeat } from "@ai-career/monitoring";
 import { INGEST_QUEUE_NAME, createAdapterFor, type IngestJobData } from "@ai-career/ingestion";
 import { reconcileSchedules } from "./reconcile";
 import { createIngestWorker } from "./worker";
@@ -25,6 +25,9 @@ async function main(): Promise<void> {
   });
   // BullMQ workers require maxRetriesPerRequest: null on their connection.
   const connection = new IORedis(env.REDIS_URL, { maxRetriesPerRequest: null });
+  // Phase 11b: beat from right after Redis opens, so /status shows this worker running -- and a crash later in
+  // startup reads as "stale" -- at the configured interval; a clean shutdown records "stopped".
+  const heartbeat = await startHeartbeat(connection, "job-ingestion", { intervalMs: env.HEARTBEAT_INTERVAL_MS });
   const queue = new Queue<IngestJobData>(INGEST_QUEUE_NAME, { connection });
   const adapterFor = createAdapterFor({
     db,
@@ -53,25 +56,21 @@ async function main(): Promise<void> {
   await reconcile(true);
   // The database is the source of truth: pick up sources enabled/disabled from the web app.
   const timer = setInterval(() => void reconcile(false), 60_000);
-  // Phase 11b: /status shows this worker running while it beats, and stopped after a clean shutdown.
-  const heartbeat = await startHeartbeat(connection, "job-ingestion");
   log.info("worker_started", { everyMinutes: env.INGEST_INTERVAL_MINUTES });
 
-  // Both signal handlers can fire for one shutdown (a double Ctrl-C, or a wrapper forwarding the signal); only the
-  // first run may close the worker, heartbeat, Redis and database -- a second connection.quit() crashes the process.
-  let stopping = false;
-  const shutdown = async () => {
-    if (stopping) return;
-    stopping = true;
-    clearInterval(timer);
-    stopRedactionRefresh();
-    await worker.close();
-    await queue.close();
-    await heartbeat.stop();
-    await connection.quit();
-    await closeDbClient(db);
-    process.exit(0);
-  };
+  // Runs once however many signals arrive, exits 0, and is cut off with exit 1 if a step hangs (Redis unreachable).
+  const shutdown = createShutdown({
+    logger: log,
+    steps: async () => {
+      clearInterval(timer);
+      stopRedactionRefresh();
+      await worker.close();
+      await queue.close();
+      await heartbeat.stop();
+      await connection.quit();
+      await closeDbClient(db);
+    },
+  });
   process.on("SIGINT", () => void shutdown());
   process.on("SIGTERM", () => void shutdown());
 }

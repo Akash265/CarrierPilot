@@ -4,9 +4,11 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 /**
- * Phase 11b design §5.1: every worker process beats under its /status name and records a clean stop on SIGINT/SIGTERM
- * before closing its Redis connection. The entry points are not unit-testable (they start real workers), so this
- * pins the wiring structurally; the E2E exercises it for real.
+ * Phase 11b design §5.1 and the review fixes (D174): every worker process beats under its /status name, at the
+ * configured interval, from right after its Redis connection opens (so a crash later in startup reads as "stale",
+ * not as an old "Stopped"); and it shuts down through createShutdown -- once, with a deadline -- recording a clean
+ * stop before closing Redis. The entry points are not unit-testable (they start real workers), so this pins the
+ * wiring structurally; the E2E exercises it for real.
  */
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
 const WIRING: Array<[string, string]> = [
@@ -16,22 +18,28 @@ const WIRING: Array<[string, string]> = [
   ["services/browser-worker/src/main.ts", "browser"],
 ];
 
+const read = (file: string) => readFileSync(path.join(REPO, file), "utf8");
+
 describe("every worker beats", () => {
-  it.each(WIRING)("%s beats as %s and stops before closing Redis", (file, name) => {
-    const source = readFileSync(path.join(REPO, file), "utf8");
-    expect(source).toContain(`const heartbeat = await startHeartbeat(connection, "${name}");`);
-    const shutdown = source.slice(source.indexOf("const shutdown = async () => {"));
+  it.each(WIRING)("%s beats as %s at the configured interval, right after opening Redis", (file, name) => {
+    const source = read(file);
+    expect(source).toMatch(
+      new RegExp(
+        `const connection = new IORedis\\([^\\n]*\\);\\n(\\s*//[^\\n]*\\n)*\\s*const heartbeat = await startHeartbeat\\(connection, "${name}", \\{ intervalMs: env\\.HEARTBEAT_INTERVAL_MS \\}\\);`
+      )
+    );
+  });
+
+  it.each(WIRING)("%s shuts down through createShutdown, stopping the heartbeat before closing Redis", (file) => {
+    const source = read(file);
+    const shutdown = source.slice(source.indexOf("const shutdown = createShutdown({"));
+    expect(shutdown.length).toBeLessThan(source.length);
     const stopAt = shutdown.indexOf("await heartbeat.stop();");
     expect(stopAt).toBeGreaterThan(0);
     expect(stopAt).toBeLessThan(shutdown.indexOf("await connection.quit();"));
-  });
-
-  // Found while wiring heartbeats: a second SIGINT/SIGTERM (a double Ctrl-C, or a wrapper forwarding the signal)
-  // re-entered shutdown, and the second run's connection.quit() closed Redis under the first run's -- an unhandled
-  // "Connection is closed" crash. Every worker's shutdown must run once.
-  it.each(WIRING)("%s runs its shutdown only once", (file) => {
-    const source = readFileSync(path.join(REPO, file), "utf8");
-    const shutdown = source.slice(source.indexOf("const shutdown = async () => {"));
-    expect(shutdown).toMatch(/^const shutdown = async \(\) => \{\s*(\/\/[^\n]*\s*)*if \(stopping\) return;\s*stopping = true;/);
+    expect(source).not.toContain("process.exit(0)");
+    expect(source).not.toContain("let stopping");
+    expect(source).toContain('process.on("SIGINT", () => void shutdown());');
+    expect(source).toContain('process.on("SIGTERM", () => void shutdown());');
   });
 });
