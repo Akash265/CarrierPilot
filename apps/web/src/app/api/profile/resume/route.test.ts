@@ -13,6 +13,9 @@ const {
   dbInsertMock,
   dbValuesMock,
   extractProfileFromResumeMock,
+  anthropicForMock,
+  createAnthropicForMock,
+  dbSetMock,
   dbSelectWhereMock,
   dbSelectFromMock,
   dbSelectMock,
@@ -27,6 +30,9 @@ const {
   const dbValuesMock = vi.fn(() => ({ returning: dbInsertReturningMock }));
   const dbInsertMock = vi.fn(() => ({ values: dbValuesMock }));
   const extractProfileFromResumeMock = vi.fn();
+  // Phase 11a: the route asks for a labelled, budget-checked client; the fake records the label it was asked for.
+  const anthropicForMock = vi.fn((operation: string) => ({ operation }));
+  const createAnthropicForMock = vi.fn(() => anthropicForMock);
 
   // Chain shapes for the DELETE handler: `.select().from(...).where(...)`
   // and `.delete(...).where(...)`, each mirroring the same "one link
@@ -44,6 +50,9 @@ const {
     dbInsertMock,
     dbValuesMock,
     extractProfileFromResumeMock,
+    anthropicForMock,
+    createAnthropicForMock,
+    dbSetMock,
     dbSelectWhereMock,
     dbSelectFromMock,
     dbSelectMock,
@@ -59,6 +68,10 @@ vi.mock("@ai-career/db", () => ({
   withUserContext: async (_db: unknown, _userId: string, fn: (tx: unknown) => unknown) =>
     fn({ update: dbUpdateMock, insert: dbInsertMock, select: dbSelectMock, delete: dbDeleteMock }),
   schema: { resumeDocuments: { isActive: "isActive", id: "id" } },
+  DbUsageSink: class {
+    spendSinceUsd = async () => 0;
+    record = async () => undefined;
+  },
 }));
 
 vi.mock("@ai-career/storage", () => ({
@@ -67,11 +80,13 @@ vi.mock("@ai-career/storage", () => ({
   deleteResume: deleteResumeMock,
 }));
 
-vi.mock("@ai-career/ai", () => ({
+vi.mock("@ai-career/ai", async (importOriginal) => ({
+  AiBudgetExceededError: (await importOriginal<typeof import("@ai-career/ai")>()).AiBudgetExceededError,
+  withLangfuseExport: (sink: unknown) => sink,
   detectResumeFileType: vi.fn().mockResolvedValue("pdf"),
   extractText: vi.fn().mockResolvedValue("plain resume text"),
   extractProfileFromResume: extractProfileFromResumeMock,
-  createAnthropicClient: () => ({}),
+  createAnthropicFor: createAnthropicForMock,
   UnsupportedFileTypeError: class UnsupportedFileTypeError extends Error {},
   ExtractionValidationError: class ExtractionValidationError extends Error {},
 }));
@@ -97,7 +112,9 @@ beforeEach(async () => {
   dbDeleteMock.mockClear();
   dbValuesMock.mockClear();
   dbUpdateMock.mockClear();
+  dbSetMock.mockClear();
   dbInsertMock.mockClear();
+  anthropicForMock.mockClear();
   deleteResumeMock.mockReset().mockResolvedValue(undefined);
   const { detectResumeFileType } = await import("@ai-career/ai");
   vi.mocked(detectResumeFileType).mockReset().mockResolvedValue("pdf");
@@ -113,6 +130,27 @@ describe("POST /api/profile/resume", () => {
     expect(res.status).toBe(200);
     expect(body.status).toBe("extracted");
     expect(body.draft.contact.fullName).toBe("Ada");
+  });
+
+  it("extracts with a client labelled resume_extraction", async () => {
+    extractProfileFromResumeMock.mockResolvedValue({ contact: { fullName: "Ada" } });
+    await POST(makeRequest());
+    expect(anthropicForMock).toHaveBeenCalledWith("resume_extraction");
+    expect(extractProfileFromResumeMock.mock.calls[0][0]).toEqual({ operation: "resume_extraction" });
+  });
+
+  it("answers 429 with the budget message, does not retry, and marks the upload's extraction failed", async () => {
+    const { AiBudgetExceededError } = await import("@ai-career/ai");
+    extractProfileFromResumeMock.mockRejectedValue(new AiBudgetExceededError(20, 20, new Date("2026-11-01T00:00:00Z")));
+
+    const res = await POST(makeRequest());
+    const body = await res.json();
+
+    expect(res.status).toBe(429);
+    expect(body).toMatchObject({ resumeDocumentId: "resume-doc-1", status: "failed", code: "ai_budget_exceeded" });
+    expect(body.error).toMatch(/^Monthly AI budget reached/);
+    expect(extractProfileFromResumeMock).toHaveBeenCalledTimes(1);
+    expect(dbSetMock).toHaveBeenCalledWith({ extractionStatus: "failed", extractionError: "ai_budget_exceeded" });
   });
 
   it("returns a failed status without a server error when extraction fails twice", async () => {

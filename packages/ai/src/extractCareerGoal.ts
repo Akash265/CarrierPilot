@@ -1,5 +1,6 @@
 import { randomBytes } from "node:crypto";
 import Anthropic from "@anthropic-ai/sdk";
+import type { MessagesClient } from "./usage/anthropicFor";
 import { CareerGoalExtractionSchema, type CareerGoalExtractionDraft } from "./careerGoalExtractionSchema";
 import type { Env } from "@ai-career/config";
 
@@ -38,7 +39,7 @@ const EXTRACTION_TOOL_INPUT_SCHEMA = {
 export class CareerGoalExtractionValidationError extends Error {}
 
 export async function extractCareerGoal(
-  client: Pick<Anthropic, "messages">,
+  client: MessagesClient,
   env: Pick<Env, "ANTHROPIC_MODEL_FAST">,
   rawText: string
 ): Promise<CareerGoalExtractionDraft> {

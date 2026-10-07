@@ -1,5 +1,6 @@
 import { randomBytes } from "node:crypto";
 import Anthropic from "@anthropic-ai/sdk";
+import type { MessagesClient } from "./usage/anthropicFor";
 import { ResumeExtractionSchema, type ResumeExtractionDraft } from "./extractionSchema";
 import type { Env } from "@ai-career/config";
 
@@ -89,7 +90,7 @@ const EXTRACTION_TOOL_INPUT_SCHEMA = {
 export class ExtractionValidationError extends Error {}
 
 export async function extractProfileFromResume(
-  client: Pick<Anthropic, "messages">,
+  client: MessagesClient,
   env: Pick<Env, "ANTHROPIC_MODEL_FAST">,
   resumeText: string
 ): Promise<ResumeExtractionDraft> {

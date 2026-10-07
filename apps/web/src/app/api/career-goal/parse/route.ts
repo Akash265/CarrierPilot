@@ -7,16 +7,20 @@ import { lockUserCareerGoals } from "../../../../lib/career-goal/lockUserCareerG
 import { createDbClient, closeDbClient, withUserContext, schema } from "@ai-career/db";
 import {
   extractCareerGoal,
-  createAnthropicClient,
+  createAnthropicFor,
+  AiBudgetExceededError,
   parseSalaryFloor,
   CareerGoalExtractionValidationError,
   type CareerGoalExtractionDraft,
+  type MessagesClient,
 } from "@ai-career/ai";
+import { createUsageSink } from "../../../../lib/aiUsage/createUsageSink";
+import { budgetExceededResponse } from "../../../../lib/aiUsage/budgetResponse";
 
 const MAX_RAW_TEXT_LENGTH = 4000;
 
 async function extractWithRetry(
-  anthropic: ReturnType<typeof createAnthropicClient>,
+  anthropic: MessagesClient,
   env: Parameters<typeof extractCareerGoal>[1],
   text: string
 ): Promise<CareerGoalExtractionDraft> {
@@ -68,11 +72,20 @@ export async function POST(request: Request) {
       return row;
     });
 
-    const anthropic = createAnthropicClient(env);
+    const anthropic = createAnthropicFor(env, createUsageSink(db, env))("career_goal_parse");
     let extracted: CareerGoalExtractionDraft;
     try {
       extracted = await extractWithRetry(anthropic, env, rawText);
     } catch (error) {
+      if (error instanceof AiBudgetExceededError) {
+        await withUserContext(db, env.DEFAULT_USER_ID, (tx) =>
+          tx
+            .update(schema.careerGoals)
+            .set({ parseStatus: "failed", parseError: "ai_budget_exceeded" })
+            .where(eq(schema.careerGoals.id, goal.id))
+        );
+        return budgetExceededResponse(error, { goalId: goal.id, version: goal.version, status: "failed" });
+      }
       // The audit trail (parse_error) keeps a validation failure's message but
       // only the class name of anything else: an SDK/network error message can
       // echo the request, i.e. the user's goal text.
