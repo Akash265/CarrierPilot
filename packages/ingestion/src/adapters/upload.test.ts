@@ -367,3 +367,15 @@ describe("parseUploadFile — adversarial input", { timeout: HEAVY_INPUT_TIMEOUT
     }
   });
 });
+
+describe("parseUploadFile — header names cannot reach object prototypes (Phase 11c, D180)", () => {
+  it("treats a __proto__ / constructor header as data, never as the row's prototype", () => {
+    const csv = "__proto__,__proto__,constructor,title,company\npolluted,polluted,x,Engineer,Acme\n";
+    const records = parseUploadFile(Buffer.from(csv), "jobs.csv");
+    expect(records).toHaveLength(1);
+    const payload = records[0].payload as Record<string, unknown>;
+    expect(Object.getPrototypeOf(payload) === Object.prototype || Object.getPrototypeOf(payload) === null).toBe(true);
+    expect((payload as { polluted?: unknown }).polluted).toBeUndefined();
+    expect(({} as { polluted?: unknown }).polluted).toBeUndefined();
+  });
+});

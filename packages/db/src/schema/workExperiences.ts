@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { pgTable, uuid, text, integer } from "drizzle-orm/pg-core";
+import { pgTable, uuid, text, integer, index } from "drizzle-orm/pg-core";
 
 export const workExperiences = pgTable("work_experiences", {
   id: uuid("id").primaryKey().defaultRandom(),
@@ -25,4 +25,7 @@ export const workExperienceBullets = pgTable("work_experience_bullets", {
     .references(() => workExperiences.id, { onDelete: "cascade" }),
   text: text("text").notNull(),
   displayOrder: integer("display_order").notNull().default(0),
-});
+}, (t) => ({
+  // Phase 11c (D181): one index per foreign key, so a change to the parent row never scans this table.
+  workExperienceIdFkIdx: index("work_experience_bullets_work_experience_id_idx").on(t.workExperienceId),
+}));

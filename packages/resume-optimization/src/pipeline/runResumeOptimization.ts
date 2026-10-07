@@ -31,6 +31,7 @@ export interface RunResumeOptimizationEnv {
   ANTHROPIC_MODEL_FAST: string;
   EMBEDDING_PROVIDER: "voyage" | "self-hosted";
   VOYAGE_API_KEY?: string;
+  VOYAGE_API_BASE?: string;
   VOYAGE_EMBEDDING_MODEL: string;
   AI_MONTHLY_BUDGET_USD: number;
 }

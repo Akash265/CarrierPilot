@@ -50,5 +50,9 @@ export const automationSessions = pgTable(
       "automation_sessions_ended_at_matches_status",
       sql`(${t.status}::text IN ('submission_detected', 'abandoned', 'needs_manual', 'failed')) = (${t.endedAt} IS NOT NULL)`
     ),
+    // Phase 11c (D181): one index per foreign key, so a change to the parent row never scans this table.
+    coverLetterDocumentIdFkIdx: index("automation_sessions_cover_letter_document_id_idx").on(t.coverLetterDocumentId).where(sql`${t.coverLetterDocumentId} IS NOT NULL`),
+    jobIdFkIdx: index("automation_sessions_job_id_idx").on(t.jobId),
+    resumeDocumentIdFkIdx: index("automation_sessions_resume_document_id_idx").on(t.resumeDocumentId).where(sql`${t.resumeDocumentId} IS NOT NULL`),
   })
 );

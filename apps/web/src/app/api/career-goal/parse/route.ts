@@ -17,6 +17,7 @@ import {
 import { createUsageSink } from "../../../../lib/aiUsage/createUsageSink";
 import { budgetExceededResponse } from "../../../../lib/aiUsage/budgetResponse";
 import { withRouteErrors } from "../../../../lib/http/withRouteErrors";
+import { withRateLimit } from "../../../../lib/http/rateLimit";
 
 const MAX_RAW_TEXT_LENGTH = 4000;
 
@@ -142,4 +143,4 @@ async function handlePOST(request: Request) {
   }
 }
 
-export const POST = withRouteErrors("/api/career-goal/parse", handlePOST);
+export const POST = withRouteErrors("/api/career-goal/parse", withRateLimit("ai", "/api/career-goal/parse", handlePOST));

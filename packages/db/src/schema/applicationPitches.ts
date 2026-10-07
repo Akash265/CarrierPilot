@@ -1,6 +1,7 @@
 import { sql } from "drizzle-orm";
 import {
   pgTable, pgEnum, uuid, text, integer, boolean, jsonb, timestamp, uniqueIndex, check, type AnyPgColumn,
+  index,
 } from "drizzle-orm/pg-core";
 import { jobs } from "./jobs";
 import { companyResearch, companyResearchStatusEnum } from "./companyResearch";
@@ -46,5 +47,9 @@ export const applicationPitches = pgTable(
       "application_pitches_bullets_three",
       sql`CASE WHEN jsonb_typeof(${t.bullets}) = 'array' THEN jsonb_array_length(${t.bullets}) = 3 ELSE false END`
     ),
+    // Phase 11c (D181): one index per foreign key, so a change to the parent row never scans this table.
+    companyResearchIdFkIdx: index("application_pitches_company_research_id_idx").on(t.companyResearchId).where(sql`${t.companyResearchId} IS NOT NULL`),
+    jobIdFkIdx: index("application_pitches_job_id_idx").on(t.jobId),
+    parentPitchIdFkIdx: index("application_pitches_parent_pitch_id_idx").on(t.parentPitchId).where(sql`${t.parentPitchId} IS NOT NULL`),
   })
 );

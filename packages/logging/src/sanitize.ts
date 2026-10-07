@@ -83,7 +83,12 @@ export function serializeError(error: Error, redactor: Redactor = new Redactor()
   };
   if (typeof code === "string" && CODE.test(code)) out.code = code;
   const cause = (error as { cause?: unknown }).cause;
-  if (isErrorLike(cause)) out.causeName = safeName(cause.name, redactor);
+  if (isErrorLike(cause)) {
+    out.causeName = safeName(cause.name, redactor);
+    // drizzle-orm wraps the driver's error, so the SQLSTATE lives on the cause (D180).
+    const causeCode = (cause as { code?: unknown }).code;
+    if (!out.code && typeof causeCode === "string" && CODE.test(causeCode)) out.code = causeCode;
+  }
   // Key order for readable lines: name, code, causeName, frames.
   return { name: out.name, ...(out.code ? { code: out.code } : {}), ...(out.causeName ? { causeName: out.causeName } : {}), frames: out.frames };
 }

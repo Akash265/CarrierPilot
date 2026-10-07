@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { pgTable, uuid, text, integer, boolean, jsonb, timestamp, uniqueIndex } from "drizzle-orm/pg-core";
+import { pgTable, uuid, text, integer, boolean, jsonb, timestamp, uniqueIndex, index } from "drizzle-orm/pg-core";
 import { jobs } from "./jobs";
 import { careerGoals } from "./careerGoals";
 
@@ -37,5 +37,8 @@ export const resumeOptimizations = pgTable(
   },
   (t) => ({
     userJobVersionUniq: uniqueIndex("resume_optimizations_user_job_version_uniq").on(t.userId, t.jobId, t.version),
+    // Phase 11c (D181): one index per foreign key, so a change to the parent row never scans this table.
+    careerGoalIdFkIdx: index("resume_optimizations_career_goal_id_idx").on(t.careerGoalId),
+    jobIdFkIdx: index("resume_optimizations_job_id_idx").on(t.jobId),
   })
 );

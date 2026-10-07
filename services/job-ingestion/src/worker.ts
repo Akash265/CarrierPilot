@@ -1,3 +1,4 @@
+import { contentFreeJobError } from "@ai-career/monitoring";
 import { Worker, UnrecoverableError, type ConnectionOptions } from "bullmq";
 import type { DbClient } from "@ai-career/db";
 import {
@@ -33,7 +34,7 @@ export function createIngestWorker(deps: IngestWorkerDeps): Worker<IngestJobData
         await runIngestion(deps.db, { userId: deps.userId, sourceId: job.data.sourceId, adapterFor: deps.adapterFor });
       } catch (error) {
         if (error instanceof IngestError && !error.retryable) throw new UnrecoverableError(error.errorClass);
-        throw error;
+        throw contentFreeJobError(error);
       }
     },
     { connection: deps.connection, concurrency: 1 }

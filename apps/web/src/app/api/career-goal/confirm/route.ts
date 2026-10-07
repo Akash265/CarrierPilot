@@ -9,6 +9,7 @@ import {
   CareerGoalStateError,
 } from "../../../../lib/career-goal/saveCareerGoal";
 import { withRouteErrors } from "../../../../lib/http/withRouteErrors";
+import { withRateLimit } from "../../../../lib/http/rateLimit";
 
 async function handlePOST(request: Request) {
   const env = loadEnv();
@@ -34,4 +35,4 @@ async function handlePOST(request: Request) {
   return NextResponse.json({ status: "confirmed" });
 }
 
-export const POST = withRouteErrors("/api/career-goal/confirm", handlePOST);
+export const POST = withRouteErrors("/api/career-goal/confirm", withRateLimit("ai", "/api/career-goal/confirm", handlePOST));

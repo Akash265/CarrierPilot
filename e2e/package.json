@@ -1,0 +1,13 @@
+{
+  "name": "@ai-career/e2e",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "e2e": "node run.mjs"
+  },
+  "dependencies": {
+    "ioredis": "^5.4.0",
+    "playwright-core": "^1.63.0",
+    "postgres": "^3.4.0"
+  }
+}

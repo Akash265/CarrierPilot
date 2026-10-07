@@ -11,3 +11,9 @@ import { cleanup } from "@testing-library/react";
 afterEach(() => {
   cleanup();
 });
+
+// Phase 11c (D178): route tests call rate-limited handlers many times, and the counters live in a Redis shared by every
+// test run, so limits would make them order- and timing-dependent. They are off in tests; rateLimit.test.ts injects
+// its own limits and store.
+process.env.RATE_LIMIT_AI_PER_MINUTE = "0";
+process.env.RATE_LIMIT_JOBS_PER_MINUTE = "0";

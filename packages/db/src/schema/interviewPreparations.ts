@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { pgTable, uuid, text, integer, boolean, jsonb, timestamp, uniqueIndex, check } from "drizzle-orm/pg-core";
+import { pgTable, uuid, text, integer, boolean, jsonb, timestamp, uniqueIndex, check, index } from "drizzle-orm/pg-core";
 import { jobs } from "./jobs";
 import { companyResearch, companyResearchStatusEnum } from "./companyResearch";
 
@@ -36,5 +36,8 @@ export const interviewPreparations = pgTable(
     versionPositive: check("interview_preparations_version_positive", sql`${t.version} >= 1`),
     sectionsIsObject: check("interview_preparations_sections_object", sql`jsonb_typeof(${t.sections}) = 'object'`),
     gapTermsIsArray: check("interview_preparations_gap_terms_array", sql`jsonb_typeof(${t.gapTermsSnapshot}) = 'array'`),
+    // Phase 11c (D181): one index per foreign key, so a change to the parent row never scans this table.
+    companyResearchIdFkIdx: index("interview_preparations_company_research_id_idx").on(t.companyResearchId).where(sql`${t.companyResearchId} IS NOT NULL`),
+    jobIdFkIdx: index("interview_preparations_job_id_idx").on(t.jobId),
   })
 );

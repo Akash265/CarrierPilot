@@ -153,3 +153,13 @@ describe("embedTexts", () => {
     expect(sink.events).toEqual([]);
   });
 });
+
+describe("embedTexts — VOYAGE_API_BASE (Phase 11d, D183)", () => {
+  it("posts to the configured base, trailing slash or not, so E2E can use a local stand-in", async () => {
+    for (const base of ["http://127.0.0.1:4013", "http://127.0.0.1:4013/"]) {
+      const d = deps([new Response(JSON.stringify({ data: [{ embedding: [1] }], usage: { total_tokens: 1 } }), { status: 200 })]);
+      await embedTexts({ ...ENV, VOYAGE_API_BASE: base } as typeof ENV, ["a"], { sink: recordingSink(), operation: "profile_fact_embedding" }, d);
+      expect((d.fetchFn.mock.calls[0] as unknown as [string])[0]).toBe("http://127.0.0.1:4013/v1/embeddings");
+    }
+  });
+});

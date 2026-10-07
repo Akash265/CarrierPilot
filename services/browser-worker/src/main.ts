@@ -2,7 +2,7 @@ import IORedis from "ioredis";
 import { loadEnv } from "@ai-career/config";
 import { closeDbClient, createDbClient, loadRedactionValues } from "@ai-career/db";
 import { createLogger, initProcessLogging, throttleErrorLog } from "@ai-career/logging";
-import { createShutdown, startHeartbeat } from "@ai-career/monitoring";
+import { createShutdown, originalJobError, startHeartbeat } from "@ai-career/monitoring";
 import { createStorageClient } from "@ai-career/storage";
 import { sweepInterruptedSessions } from "@ai-career/browser";
 import { minioFetcher } from "./attachments";
@@ -40,7 +40,10 @@ async function main(): Promise<void> {
     released,
   });
   worker.on("completed", (job, result) => log.info("autofill_completed", { sessionId: job.data.sessionId, result }));
-  worker.on("failed", (job, error) => log.error("autofill_failed", { sessionId: job?.data.sessionId, error }));
+  worker.on("failed", (job, rawError) => {
+    const error = originalJobError(rawError);
+    log.error("autofill_failed", { sessionId: job?.data.sessionId, error });
+  });
   // Redis connection errors are re-emitted here; with no listener the worker would crash with Node's raw print.
   worker.on("error", throttleErrorLog(log, "worker_error"));
   log.info("worker_started", { sweptSessions: swept, removedTempDirs, headless: env.BROWSER_HEADLESS });

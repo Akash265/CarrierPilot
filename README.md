@@ -100,7 +100,13 @@ the whole suite:
 (Suites that start together on an empty database can collide creating the same
 enum; CI does this step first for the same reason, see `DECISIONS.md` D38.)
 
-## End-to-end smoke test (optional)
+## End-to-end tests
+
+`pnpm build && pnpm e2e` runs the browser smoke suite (`e2e/`) against the
+test database — see [docs/development.md](docs/development.md#e2e-suite). It
+is what CI runs. The older ingestion smoke below is kept for its fake ATS.
+
+### Ingestion smoke (fake ATS)
 
 `services/job-ingestion/e2e/smoke.ts` drives the real web app, queue and worker
 against a fake ATS server (see its header comment). It expects a **fresh
@@ -277,3 +283,20 @@ each worker is running, stopped or stale (no heartbeat for
 `STATUS_STALE_AFTER_MS`, default 90 s; it must be longer than
 `HEARTBEAT_INTERVAL_MS`, the 30 s beat) and what is waiting or failed in
 each queue.
+
+Phase 11c (Security Hardening) complete: the web app listens on 127.0.0.1
+only (`APP_HOST`), refuses requests for unknown host names (`ALLOWED_HOSTS`) and
+writes coming from other websites, and — if you set `APP_ACCESS_TOKEN` to open
+it to your network — asks for that token once per browser at `/unlock`. Routes
+that spend AI money or start background work are rate limited per minute
+(`RATE_LIMIT_AI_PER_MINUTE`, default 10; `RATE_LIMIT_JOBS_PER_MINUTE`, default
+20). Security headers are set, every foreign key is indexed, and the
+dependency audit's critical and high findings are fixed. Run
+`pnpm --filter @ai-career/db db:migrate` for migration `0030`.
+
+Phase 11d (E2E & Docs) complete: `pnpm build && pnpm e2e` runs a headless
+browser through the whole flow (unlock → profile → goal → jobs → matching →
+application → status pages) against the test database with local stand-ins
+for Anthropic and Voyage; CI is set up to run it on every push, after the tests. See
+[docs/development.md](docs/development.md), [docs/api.md](docs/api.md) and
+[docs/ai-system.md](docs/ai-system.md).

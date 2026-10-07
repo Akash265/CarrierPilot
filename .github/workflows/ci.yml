@@ -152,6 +152,20 @@ jobs:
       - run: pnpm build
       - run: pnpm typecheck
       - run: pnpm test
+      # Phase 11d (DECISIONS.md D182): the browser smoke suite against the app built above, the test database,
+      # Redis database 1 and local stand-ins for Anthropic and Voyage (no key, no network). Runs in this job so it
+      # reuses the services, the app role, .env and the build instead of repeating them.
+      - name: Install Chromium for the E2E suite
+        run: pnpm --filter @ai-career/e2e exec playwright-core install --with-deps chromium
+      - name: E2E smoke suite
+        run: pnpm e2e
+      - name: Upload E2E logs and screenshot
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-output
+          path: e2e/.out/
+          if-no-files-found: ignore
       - name: Build the maintenance-worker image (DECISIONS.md D125)
         # Catches a broken Dockerfile. The step above wrote a .env into the build context, so this also
         # proves .dockerignore keeps it (and every other secret) out of the image.

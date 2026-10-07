@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { pgTable, pgEnum, uuid, integer, text, timestamp } from "drizzle-orm/pg-core";
+import { pgTable, pgEnum, uuid, integer, text, timestamp, index } from "drizzle-orm/pg-core";
 import { careerGoals } from "./careerGoals";
 
 export const matchingRunStatusEnum = pgEnum("matching_run_status", ["running", "completed", "failed"]);
@@ -27,4 +27,7 @@ export const matchingRuns = pgTable("matching_runs", {
   // in logs.
   jobsEmbedded: integer("jobs_embedded"),
   jobsEmbeddingFailed: integer("jobs_embedding_failed"),
-});
+}, (t) => ({
+  // Phase 11c (D181): one index per foreign key, so a change to the parent row never scans this table.
+  careerGoalIdFkIdx: index("matching_runs_career_goal_id_idx").on(t.careerGoalId),
+}));

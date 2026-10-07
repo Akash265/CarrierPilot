@@ -7,6 +7,7 @@ import { readJsonBody } from "../../../lib/readJsonBody";
 import { saveConfirmedProfile } from "../../../lib/profile/saveProfile";
 import { serializeProfile } from "../../../lib/profile/serializeProfile";
 import { withRouteErrors } from "../../../lib/http/withRouteErrors";
+import { withRateLimit } from "../../../lib/http/rateLimit";
 
 async function handleGET() {
   const env = loadEnv();
@@ -33,4 +34,4 @@ async function handlePATCH(request: Request) {
 }
 
 export const GET = withRouteErrors("/api/profile", handleGET);
-export const PATCH = withRouteErrors("/api/profile", handlePATCH);
+export const PATCH = withRouteErrors("/api/profile", withRateLimit("ai", "/api/profile", handlePATCH));

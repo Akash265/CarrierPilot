@@ -102,21 +102,24 @@ describe("ai_calls — DbUsageSink, RLS and constraints", () => {
     expect(await new DbUsageSink(db, USER_A).spendSinceUsd(new Date(0))).toBe(1);
   });
 
+  // Since drizzle-orm 0.45 a failed query is a DrizzleQueryError wrapping the driver's error as `cause` (D180).
+  const dbError = (pattern: RegExp) => ({ cause: expect.objectContaining({ message: expect.stringMatching(pattern) }) });
+
   it("rejects an insert claiming another user's id", async () => {
     await expect(
       withUserContext(db, USER_A, (tx) =>
         tx.execute(sql`INSERT INTO ai_calls (user_id, operation, provider, model, latency_ms, estimated_cost_usd, price_known, outcome)
                        VALUES (${USER_B}, 'x', 'anthropic', 'm', 0, 0, true, 'ok')`)
       )
-    ).rejects.toThrow(/row-level security/);
+    ).rejects.toMatchObject(dbError(/row-level security/));
   });
 
   it("enforces provider, outcome and non-negative CHECKs", async () => {
     const sink = new DbUsageSink(db, USER_A);
-    await expect(sink.record(event({ provider: "openai" as never }))).rejects.toThrow(/ai_calls_provider_valid/);
-    await expect(sink.record(event({ outcome: "invalid_output" as never }))).rejects.toThrow(/ai_calls_outcome_valid/);
-    await expect(sink.record(event({ inputTokens: -1 }))).rejects.toThrow(/ai_calls_counts_non_negative/);
-    await expect(sink.record(event({ estimatedCostUsd: -0.01 }))).rejects.toThrow(/ai_calls_cost_non_negative/);
+    await expect(sink.record(event({ provider: "openai" as never }))).rejects.toMatchObject(dbError(/ai_calls_provider_valid/));
+    await expect(sink.record(event({ outcome: "invalid_output" as never }))).rejects.toMatchObject(dbError(/ai_calls_outcome_valid/));
+    await expect(sink.record(event({ inputTokens: -1 }))).rejects.toMatchObject(dbError(/ai_calls_counts_non_negative/));
+    await expect(sink.record(event({ estimatedCostUsd: -0.01 }))).rejects.toMatchObject(dbError(/ai_calls_cost_non_negative/));
   });
 
   it("keeps whole micro-dollars exactly (no float drift in the sum)", async () => {
