@@ -5,3 +5,4 @@ export { MODEL_PRICES, findPrice, estimateCostUsd, type ModelPrice } from "./pri
 export {
   AiBudgetExceededError, checkBudget, budgetState, utcMonthStart, utcNextMonthStart, type BudgetEnv, type BudgetState,
 } from "./budget";
+export { createAnthropicFor, anthropicErrorCode, type AnthropicFor, type AnthropicForDeps, type MessagesClient } from "./anthropicFor";
