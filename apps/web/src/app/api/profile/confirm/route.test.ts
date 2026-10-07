@@ -11,6 +11,10 @@ vi.mock("@ai-career/ai", async (importOriginal) => ({
   embedTexts: vi.fn(async (_env: unknown, texts: string[]) => texts.map(() => new Array(1024).fill(0.01))),
 }));
 
+// Phase 11b review fix: a saved profile invalidates the web process's D9 values so the next error log reloads them.
+vi.mock("../../../../lib/webLogging", () => ({ refreshWebRedactions: vi.fn(async () => undefined), invalidateWebRedactions: vi.fn() }));
+import { invalidateWebRedactions } from "../../../../lib/webLogging";
+
 vi.mock("@ai-career/config", () => ({
   loadEnv: () => ({
     DEFAULT_USER_ID: "00000000-0000-0000-0000-00000000000c",
@@ -66,13 +70,16 @@ describe("POST /api/profile/confirm", () => {
     expect(res.status).toBe(200);
     // 1 work-experience bullet + 1 skill = 2 facts
     expect(body.factsGenerated).toBe(2);
+    expect(invalidateWebRedactions).toHaveBeenCalledTimes(1);
   });
 
   it("rejects a malformed payload with 400 and a human-readable error, not a raw Zod dump", async () => {
+    vi.mocked(invalidateWebRedactions).mockClear();
     const res = await POST(makeRequest({ contact: { fullName: 123 } }));
     const body = await res.json();
 
     expect(res.status).toBe(400);
+    expect(invalidateWebRedactions).not.toHaveBeenCalled();
     // Zod's default ZodError.message is a JSON-stringified issue array --
     // asserting the response is NOT that (no literal "[" opening the
     // string) guards against silently reverting to the raw dump.

@@ -34,3 +34,11 @@ export async function refreshWebRedactions(): Promise<void> {
     // loadEnv failed: nothing to load from. The email pattern still applies.
   }
 }
+
+/**
+ * Phase 11b review fix: the user's profile values changed, so the next error log must reload them rather than wait
+ * out the minute. A no-op before the first error (nothing is loaded yet; the first error loads fresh values).
+ */
+export function invalidateWebRedactions(): void {
+  refresher?.invalidate();
+}
