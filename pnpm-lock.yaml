@@ -667,6 +667,9 @@ importers:
       '@ai-career/logging':
         specifier: workspace:*
         version: link:../../packages/logging
+      '@ai-career/monitoring':
+        specifier: workspace:*
+        version: link:../../packages/monitoring
       '@ai-career/storage':
         specifier: workspace:*
         version: link:../../packages/storage
@@ -722,6 +725,9 @@ importers:
       '@ai-career/logging':
         specifier: workspace:*
         version: link:../../packages/logging
+      '@ai-career/monitoring':
+        specifier: workspace:*
+        version: link:../../packages/monitoring
       bullmq:
         specifier: ^5.34.0
         version: 5.81.5
@@ -771,6 +777,9 @@ importers:
       '@ai-career/logging':
         specifier: workspace:*
         version: link:../../packages/logging
+      '@ai-career/monitoring':
+        specifier: workspace:*
+        version: link:../../packages/monitoring
       '@ai-career/storage':
         specifier: workspace:*
         version: link:../../packages/storage
@@ -826,6 +835,9 @@ importers:
       '@ai-career/matching':
         specifier: workspace:*
         version: link:../../packages/matching
+      '@ai-career/monitoring':
+        specifier: workspace:*
+        version: link:../../packages/monitoring
       '@anthropic-ai/sdk':
         specifier: ^0.128.0
         version: 0.128.0(zod@3.25.76)

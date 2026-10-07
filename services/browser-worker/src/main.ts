@@ -2,6 +2,7 @@ import IORedis from "ioredis";
 import { loadEnv } from "@ai-career/config";
 import { closeDbClient, createDbClient, loadRedactionValues } from "@ai-career/db";
 import { createLogger, initProcessLogging } from "@ai-career/logging";
+import { startHeartbeat } from "@ai-career/monitoring";
 import { createStorageClient } from "@ai-career/storage";
 import { sweepInterruptedSessions } from "@ai-career/browser";
 import { minioFetcher } from "./attachments";
@@ -37,6 +38,8 @@ async function main(): Promise<void> {
   });
   worker.on("completed", (job, result) => log.info("autofill_completed", { sessionId: job.data.sessionId, result }));
   worker.on("failed", (job, error) => log.error("autofill_failed", { sessionId: job?.data.sessionId, error }));
+  // Phase 11b: /status shows this worker running while it beats, and stopped after a clean shutdown.
+  const heartbeat = await startHeartbeat(connection, "browser");
   log.info("worker_started", { sweptSessions: swept, removedTempDirs, headless: env.BROWSER_HEADLESS });
 
   let stopping = false;
@@ -50,6 +53,7 @@ async function main(): Promise<void> {
     await worker.close(true);
     // closeAll also closes the one active (in-progress) window, if any -- see ReleasedWindows.setActive.
     await released.closeAll();
+    await heartbeat.stop();
     await connection.quit();
     await closeDbClient(db);
     process.exit(0);

@@ -2,6 +2,7 @@ import IORedis from "ioredis";
 import { loadEnv } from "@ai-career/config";
 import { DbUsageSink, closeDbClient, createDbClient, loadRedactionValues } from "@ai-career/db";
 import { createLogger, initProcessLogging } from "@ai-career/logging";
+import { startHeartbeat } from "@ai-career/monitoring";
 import { createAnthropicFor, withLangfuseExport, type AiUsageSink } from "@ai-career/ai";
 import { createMatchingWorker } from "./worker";
 
@@ -31,11 +32,19 @@ async function main(): Promise<void> {
   const worker = createMatchingWorker({ connection, db, aiFor, env });
   worker.on("completed", (job) => log.info("matching_completed", { jobId: job.id }));
   worker.on("failed", (job, error) => log.error("matching_failed", { jobId: job?.id, ...failureFields(error) }));
+  // Phase 11b: /status shows this worker running while it beats, and stopped after a clean shutdown.
+  const heartbeat = await startHeartbeat(connection, "matching");
   log.info("worker_started");
 
+  // Both signal handlers can fire for one shutdown (a double Ctrl-C, or a wrapper forwarding the signal); only the
+  // first run may close the worker, heartbeat, Redis and database -- a second connection.quit() crashes the process.
+  let stopping = false;
   const shutdown = async () => {
+    if (stopping) return;
+    stopping = true;
     stopRedactionRefresh();
     await worker.close();
+    await heartbeat.stop();
     await connection.quit();
     await closeDbClient(db);
     process.exit(0);

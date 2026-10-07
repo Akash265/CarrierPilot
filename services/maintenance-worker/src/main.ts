@@ -3,6 +3,7 @@ import { Queue } from "bullmq";
 import { loadEnv } from "@ai-career/config";
 import { closeDbClient, createDbClient, loadRedactionValues } from "@ai-career/db";
 import { createLogger, initProcessLogging } from "@ai-career/logging";
+import { startHeartbeat } from "@ai-career/monitoring";
 import { createStorageClient } from "@ai-career/storage";
 import { createRetentionStorage } from "./storageAdapter";
 import { createMaintenanceWorker, scheduleRetention } from "./worker";
@@ -25,12 +26,20 @@ async function main(): Promise<void> {
   worker.on("completed", (job, result) => log.info("maintenance_completed", { jobId: job.id, name: job.name, ...result }));
   worker.on("failed", (job, error) => log.error("maintenance_failed", { jobId: job?.id, name: job?.name, error }));
   await scheduleRetention(queue);
+  // Phase 11b: /status shows this worker running while it beats, and stopped after a clean shutdown.
+  const heartbeat = await startHeartbeat(connection, "maintenance");
   log.info("worker_started", { retentionDays: env.RETENTION_DAYS });
 
+  // Both signal handlers can fire for one shutdown (a double Ctrl-C, or a wrapper forwarding the signal); only the
+  // first run may close the worker, heartbeat, Redis and database -- a second connection.quit() crashes the process.
+  let stopping = false;
   const shutdown = async () => {
+    if (stopping) return;
+    stopping = true;
     stopRedactionRefresh();
     await worker.close();
     await queue.close();
+    await heartbeat.stop();
     await connection.quit();
     await closeDbClient(db);
     process.exit(0);
