@@ -1,7 +1,7 @@
 # Phase 11b — Structured Logging, PII Scrubbing & Monitoring: Design
 
 Date: 2026-10-07
-Status: Approved in brainstorming (sections 1–3) and as a written spec on 2026-10-07. §10 records what planning changed; where it disagrees with an earlier section, §10 wins.
+Status: Implemented and merged to main (merge ae061fc, 2026-10-07). Approved in brainstorming (sections 1–3) and as a written spec on 2026-10-07. §10 records what planning changed; where it disagrees with an earlier section, §10 wins. The two reviews added D173–D175 (message-free frames and crash handlers; shutdown deadline, fail-closed frames, throttled worker errors).
 Spec sources: project spec §21 (Phase 11 — "monitoring"), §23 principle 12 ("Every important AI workflow should be observable"); CLAUDE.md §9 ("Do not log resume contents unnecessarily", "Do not expose personal information in debugging output"); DECISIONS.md D9 (PII log scrubbing — decided in Phase 0, never built); architecture §9 ("Structured logging only; no resume/profile content in production logs regardless of scrubbing (defense in depth)"). Follows Phase 11a (D154–D164) and the D165 CI fix; decisions start at **D166**.
 
 ## 1. Scope
