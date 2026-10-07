@@ -1,7 +1,7 @@
 # Phase 11a — AI Usage Observability & Cost Control: Design
 
 Date: 2026-10-07
-Status: Approved in brainstorming (sections 1–3) and as a written spec on 2026-10-07. §14 records what planning changed; where it disagrees with an earlier section, §14 wins.
+Status: Implemented and merged to main (merge 4cd2367, 2026-10-07). Approved in brainstorming (sections 1–3) and as a written spec on 2026-10-07. §14 records what planning changed; where it disagrees with an earlier section, §14 wins. The final review added D164 (a response without token usage is charged an estimate, never $0).
 Spec sources: project spec §17 ("Observability — Langfuse Cloud or self-hosted"; "start the application locally without requiring paid SaaS services"), §21 (Phase 11 — Observability & Production Hardening: "Langfuse … retries … cost controls, monitoring"), §23 principles 12 ("Every important AI workflow should be observable") and 13 ("Prefer local/OSS-compatible infrastructure and keep cloud services optional"). Fulfils the unenforced half of DECISIONS.md D8 ("A monthly spend ceiling is enforced via Langfuse alerting").
 
 ## 1. Scope
