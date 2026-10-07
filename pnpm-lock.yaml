@@ -50,6 +50,9 @@ importers:
       '@ai-career/matching':
         specifier: workspace:*
         version: link:../../packages/matching
+      '@ai-career/monitoring':
+        specifier: workspace:*
+        version: link:../../packages/monitoring
       '@ai-career/resume-optimization':
         specifier: workspace:*
         version: link:../../packages/resume-optimization

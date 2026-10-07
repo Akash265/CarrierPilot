@@ -22,6 +22,7 @@
     "@ai-career/insights": "workspace:*",
     "@ai-career/logging": "workspace:*",
     "@ai-career/matching": "workspace:*",
+    "@ai-career/monitoring": "workspace:*",
     "@ai-career/resume-optimization": "workspace:*",
     "@ai-career/storage": "workspace:*",
     "bullmq": "^5.34.0",
