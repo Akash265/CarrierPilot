@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { createLogger } from "@ai-career/logging";
 import { AiBudgetExceededError, checkBudget, type BudgetEnv } from "./budget";
 import { estimateCostUsd } from "./prices";
 import { ZERO_USAGE, type AiCallEvent, type AiOperation, type AiProvider, type AiUsageSink, type UsageCounts } from "./types";
@@ -29,13 +30,15 @@ export interface TrackedResult<T> {
   servedModel?: string;
 }
 
+const log = createLogger({ service: "ai" });
+
 /** A failed `record` must never fail a call that already happened (and may have been paid for). */
 async function safeRecord(sink: AiUsageSink, event: AiCallEvent): Promise<void> {
   try {
     await sink.record(event);
   } catch (error) {
-    const code = typeof (error as { code?: unknown })?.code === "string" ? (error as { code: string }).code : "unknown";
-    console.error(JSON.stringify({ event: "ai_usage_record_failed", operation: event.operation, code }));
+    // The logger keeps the error's name, a code-like `code` (e.g. a Postgres SQLSTATE) and frames -- never its message.
+    log.error("ai_usage_record_failed", { operation: event.operation, error });
   }
 }
 

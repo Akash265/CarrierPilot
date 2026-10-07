@@ -1,22 +1,25 @@
 import IORedis from "ioredis";
 import { loadEnv } from "@ai-career/config";
-import { DbUsageSink, closeDbClient, createDbClient } from "@ai-career/db";
+import { DbUsageSink, closeDbClient, createDbClient, loadRedactionValues } from "@ai-career/db";
+import { createLogger, initProcessLogging } from "@ai-career/logging";
 import { createAnthropicFor, withLangfuseExport, type AiUsageSink } from "@ai-career/ai";
 import { createMatchingWorker } from "./worker";
 
-const log = (event: string, fields: Record<string, unknown> = {}) =>
-  console.log(JSON.stringify({ event, at: new Date().toISOString(), ...fields }));
+// Structured logs only: ids and error classes, never job or profile content (CLAUDE.md §9, Phase 11b).
+const log = createLogger({ service: "matching-worker" });
 
-const safeErrorLabel = (error: unknown): string =>
-  error instanceof Error && (error.name === "UnrecoverableError" || error.name === "MatchingError")
-    ? error.message
-    : error instanceof Error
-      ? error.name
-      : "unknown";
+/** Our own error classes carry a fixed error class as their message, so that one message is safe to log. */
+const failureFields = (error: unknown) => ({
+  error,
+  ...(error instanceof Error && (error.name === "UnrecoverableError" || error.name === "MatchingError") ? { errorClass: error.message } : {}),
+});
 
 async function main(): Promise<void> {
   const env = loadEnv();
   const db = createDbClient(env);
+  const stopRedactionRefresh = await initProcessLogging({
+    level: env.LOG_LEVEL, load: () => loadRedactionValues(db, env.DEFAULT_USER_ID), logger: log,
+  });
   const connection = new IORedis(env.REDIS_URL, { maxRetriesPerRequest: null });
 
   const aiFor = (userId: string) => {
@@ -26,11 +29,12 @@ async function main(): Promise<void> {
   };
 
   const worker = createMatchingWorker({ connection, db, aiFor, env });
-  worker.on("completed", (job) => log("matching_completed", { jobId: job.id }));
-  worker.on("failed", (job, error) => log("matching_failed", { jobId: job?.id, error: safeErrorLabel(error) }));
-  log("worker_started", {});
+  worker.on("completed", (job) => log.info("matching_completed", { jobId: job.id }));
+  worker.on("failed", (job, error) => log.error("matching_failed", { jobId: job?.id, ...failureFields(error) }));
+  log.info("worker_started");
 
   const shutdown = async () => {
+    stopRedactionRefresh();
     await worker.close();
     await connection.quit();
     await closeDbClient(db);
@@ -41,6 +45,6 @@ async function main(): Promise<void> {
 }
 
 main().catch((error) => {
-  log("worker_crashed", { error: safeErrorLabel(error) });
+  log.error("worker_crashed", failureFields(error));
   process.exit(1);
 });

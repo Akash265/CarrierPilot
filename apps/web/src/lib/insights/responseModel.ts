@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { log } from "../log";
 import type { DbClient } from "@ai-career/db";
 import {
   buildOutcomeDataset, describeFactors, loadInsightInputs, summarizeModel, trainResponseModel, trainingRows,
@@ -44,11 +45,11 @@ function cacheKey(records: readonly OutcomeRecord[], env: ResponseModelEnv): str
 }
 
 /**
- * Phase 10b spec §5: the model must never make a request fail. The error is logged by class name only
- * (CLAUDE.md §9 -- no application content) and reported as `no_pattern`, which keeps the default ranking.
+ * Phase 10b spec §5: the model must never make a request fail. The error is logged by class name and
+ * stack frames only, never its message (CLAUDE.md §9 -- no application content) and reported as `no_pattern`, which keeps the default ranking.
  */
 function failed(error: unknown, env: ResponseModelEnv): LoadedResponseModel {
-  console.error(JSON.stringify({ event: "response_model_failed", error: error instanceof Error ? error.name : "unknown" }));
+  log.error("response_model_failed", { error });
   const result: ModelResult = {
     status: "no_pattern", decided: 0, responses: 0, nonResponses: 0,
     minDecided: env.OUTCOME_MODEL_MIN_DECIDED, minPerClass: env.OUTCOME_MODEL_MIN_PER_CLASS,

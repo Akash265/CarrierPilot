@@ -1,20 +1,22 @@
 import IORedis from "ioredis";
 import { loadEnv } from "@ai-career/config";
-import { closeDbClient, createDbClient } from "@ai-career/db";
+import { closeDbClient, createDbClient, loadRedactionValues } from "@ai-career/db";
+import { createLogger, initProcessLogging } from "@ai-career/logging";
 import { createStorageClient } from "@ai-career/storage";
 import { sweepInterruptedSessions } from "@ai-career/browser";
 import { minioFetcher } from "./attachments";
 import { ReleasedWindows, removeStaleSessionDirs } from "./browser";
 import { createBrowserWorker } from "./worker";
 
-// Structured logs only: ids, statuses and error classes -- never field values, labels or URLs (CLAUDE.md §9).
-const log = (event: string, fields: Record<string, unknown> = {}) =>
-  console.log(JSON.stringify({ event, at: new Date().toISOString(), ...fields }));
-const safeErrorLabel = (error: unknown): string => (error instanceof Error ? error.name : "unknown");
+// Structured logs only: ids, statuses and error classes -- never field values, labels or URLs (CLAUDE.md §9, Phase 11b).
+const log = createLogger({ service: "browser-worker" });
 
 async function main(): Promise<void> {
   const env = loadEnv();
   const db = createDbClient(env);
+  const stopRedactionRefresh = await initProcessLogging({
+    level: env.LOG_LEVEL, load: () => loadRedactionValues(db, env.DEFAULT_USER_ID), logger: log,
+  });
   const connection = new IORedis(env.REDIS_URL, { maxRetriesPerRequest: null });
   const released = new ReleasedWindows();
 
@@ -33,9 +35,9 @@ async function main(): Promise<void> {
     timeoutMs: env.BROWSER_SESSION_TIMEOUT_MIN * 60_000,
     released,
   });
-  worker.on("completed", (job, result) => log("autofill_completed", { sessionId: job.data.sessionId, result }));
-  worker.on("failed", (job, error) => log("autofill_failed", { sessionId: job?.data.sessionId, error: safeErrorLabel(error) }));
-  log("worker_started", { sweptSessions: swept, removedTempDirs, headless: env.BROWSER_HEADLESS });
+  worker.on("completed", (job, result) => log.info("autofill_completed", { sessionId: job.data.sessionId, result }));
+  worker.on("failed", (job, error) => log.error("autofill_failed", { sessionId: job?.data.sessionId, error }));
+  log.info("worker_started", { sweptSessions: swept, removedTempDirs, headless: env.BROWSER_HEADLESS });
 
   let stopping = false;
   const shutdown = async () => {
@@ -43,6 +45,7 @@ async function main(): Promise<void> {
     // touch the worker/connection/db, the rest of which are not safe to close twice.
     if (stopping) return;
     stopping = true;
+    stopRedactionRefresh();
     // force: an active session may be waiting minutes for the user; the next start sweeps it to failed.
     await worker.close(true);
     // closeAll also closes the one active (in-progress) window, if any -- see ReleasedWindows.setActive.
@@ -56,6 +59,6 @@ async function main(): Promise<void> {
 }
 
 main().catch((error) => {
-  log("worker_crashed", { error: safeErrorLabel(error) });
+  log.error("worker_crashed", { error });
   process.exit(1);
 });

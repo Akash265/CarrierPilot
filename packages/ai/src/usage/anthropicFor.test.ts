@@ -167,19 +167,23 @@ describe("createAnthropicFor", () => {
     expect(sink.events[0].outcome).toBe("ok");
   });
 
-  it("still returns the result when recording fails, logging only a code (no content)", async () => {
-    const errorLog = vi.spyOn(console, "error").mockImplementation(() => undefined);
+  it("still returns the result when recording fails, logging the error's name and code only (no content)", async () => {
+    const written: string[] = [];
+    const errorWrite = vi.spyOn(process.stderr, "write").mockImplementation((chunk) => (written.push(String(chunk)), true));
     const msg = message({ input_tokens: 1, output_tokens: 1 } as Anthropic.Usage);
     const sink: AiUsageSink = {
       spendSinceUsd: async () => 0,
       record: async () => { throw Object.assign(new Error("insert failed SENTINEL-PROMPT-TEXT"), { code: "53300" }); },
     };
     const result = await createAnthropicFor(ENV, sink, { client: fakeClient(async () => msg) })("resume_extraction").messages.create(PARAMS);
+    errorWrite.mockRestore();
     expect(result).toBe(msg);
-    expect(errorLog).toHaveBeenCalledTimes(1);
-    const logged = String(errorLog.mock.calls[0][0]);
-    expect(JSON.parse(logged)).toEqual({ event: "ai_usage_record_failed", operation: "resume_extraction", code: "53300" });
-    expect(logged).not.toContain("SENTINEL");
+    const lines = written.filter((w) => w.includes("ai_usage_record_failed"));
+    expect(lines).toHaveLength(1);
+    expect(JSON.parse(lines[0])).toMatchObject({
+      level: "error", service: "ai", event: "ai_usage_record_failed", operation: "resume_extraction", error: { name: "Error", code: "53300" },
+    });
+    expect(lines[0]).not.toContain("SENTINEL");
   });
 
   it("never puts prompt or response text into the recorded event", async () => {
